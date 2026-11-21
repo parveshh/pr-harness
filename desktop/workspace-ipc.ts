@@ -122,7 +122,7 @@ export function registerWorkspace(
       postingReplies.delete(key);
     }
   });
-  const publisher = reviewPublisher(store);
+  const publisher = reviewPublisher(store, undefined, undefined, shutdown.signal);
   handle('drafts:list', (_, url) => store.drafts.get(pullRequestUrl.parse(url)));
   handle('drafts:edit', (_, input, request) => {
     const { url, version } = bundleKey.parse(input);

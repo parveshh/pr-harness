@@ -69,10 +69,12 @@ export function reviewPublisher(
   store: ReturnType<typeof openStore>,
   api = githubApi,
   post = postReview,
+  // Aborting cancels GitHub reads. A review POST already in flight is left to finish
+  // and is reconciled through its pending marker.
+  signal: AbortSignal = new AbortController().signal,
 ) {
   const drafts = store.drafts;
   const active = new Set<string>();
-  const signal = new AbortController().signal;
   function current(url: string, version: number) {
     const bundle = drafts.get(url);
     if (bundle.version !== version) throw Error('Drafts changed. Reopen the review preview.');
@@ -194,7 +196,8 @@ export function reviewPublisher(
     active.add(url);
     try {
       const [snapshot, who] = await Promise.all([fetchSnapshot(url, signal, api), identity()]);
-      if (actor !== who) throw Error('Your GitHub identity changed. Preview the review again.');
+      if (actor.toLowerCase() !== who.toLowerCase())
+        throw Error('Your GitHub identity changed. Preview the review again.');
       if (
         store.reader.active() !== url ||
         store.reader.revisions.identify(url, snapshot.revision, snapshot.meta.baseBranch) !==

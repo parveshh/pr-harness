@@ -149,3 +149,87 @@ await test('deleted ranges retain all lines, reject gaps and check the middle of
   await publisher.publish(key);
   assert.equal(posts, 1);
 });
+
+await test('a lost receipt locks the drafts until the review GitHub accepted is reconciled once', async (t) => {
+  const url = 'https://github.com/example/project/pull/3';
+  const db = openStore(':memory:');
+  t.after(() => db.close());
+  let remote: unknown[] = [],
+    posts = 0,
+    sentBody = '';
+  const api = (path: string) =>
+    Promise.resolve(
+      JSON.stringify(
+        path === 'user'
+          ? { login: 'reviewer' }
+          : path.includes('/reviews?')
+            ? remote
+            : path.includes('/files?')
+              ? [
+                  {
+                    filename: 'f.ts',
+                    status: 'modified',
+                    sha: 'blob',
+                    additions: 1,
+                    deletions: 1,
+                    patch: '@@ -1 +1 @@\n-old\n+new',
+                  },
+                ]
+              : {
+                  title: 'Test',
+                  body: '',
+                  user: { login: 'author' },
+                  base: { sha: 'base', ref: 'main' },
+                  head: { sha: 'head1', ref: 'feature' },
+                  changed_files: 1,
+                },
+      ),
+    );
+  db.save(url);
+  db.reader.select(url);
+  const snapshot = await fetchSnapshot(url, new AbortController().signal, api);
+  db.reader.install(url, snapshot);
+  const publisher = reviewPublisher(db, api, (_, payload) => {
+    posts++;
+    sentBody = payload.body;
+    return Promise.reject(Error('timed out'));
+  });
+  const saved = publisher.edit(url, 0, {
+    action: 'draft',
+    id: null,
+    body: 'Check this line.',
+    target: { path: 'f.ts', hunk: 0, side: 'new', line: 1, revision: snapshot.revision },
+  });
+  // GitHub logins are case-insensitive, so a differently cased preview identity still matches.
+  const key = { url, version: saved.version, revision: snapshot.revision, actor: 'Reviewer' };
+  await assert.rejects(publisher.publish(key), /outcome unknown/);
+  const locked = db.drafts.get(url);
+  assert.ok(locked.pending);
+  assert.equal(locked.comments.length, 1);
+  assert.throws(
+    () => publisher.edit(url, locked.version, { action: 'discard', id: saved.comments[0]!.id }),
+    /Check the previous submission/,
+  );
+  await assert.rejects(
+    publisher.publish({ ...key, version: locked.version }),
+    /Check the previous submission/,
+  );
+  await assert.rejects(publisher.reconcile(url), /No matching review/);
+  await assert.rejects(publisher.reconcile(url, true, locked.version), /Allow one minute/);
+  assert.deepEqual(db.drafts.get(url), locked);
+  remote = [
+    {
+      id: 76,
+      user: { login: 'reviewer' },
+      body: 'Unrelated',
+      commit_id: 'head1',
+      state: 'COMMENTED',
+    },
+    { id: 77, user: { login: 'Reviewer' }, body: sentBody, commit_id: 'head1', state: 'COMMENTED' },
+  ];
+  const published = await publisher.reconcile(url);
+  assert.equal(published.receipt, 77);
+  assert.equal(published.pending, null);
+  assert.equal(published.comments.length, 0);
+  assert.equal(posts, 1);
+});
