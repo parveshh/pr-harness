@@ -4,6 +4,8 @@ import {
   type DiscussionMessage,
   type DiscussionThread,
   type DiscussionReply,
+  type ResolveRequest,
+  type ThreadResolution,
 } from '../shared/discussions.js';
 import { pullRequestUrl } from '../shared/reviews.js';
 import { githubApi, replySession, UnconfirmedReply } from './github.js';
@@ -40,6 +42,67 @@ function endpoints(url: string) {
     conversation: root + '/issues/' + number + '/comments',
     review: root + '/pulls/' + number + '/reviews',
   };
+}
+const reviewThreads = z.object({
+  data: z.object({
+    repository: z.object({
+      pullRequest: z.object({
+        reviewThreads: z.object({
+          pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+          nodes: z.array(
+            z.object({
+              id: z.string(),
+              isResolved: z.boolean(),
+              viewerCanResolve: z.boolean(),
+              viewerCanUnresolve: z.boolean(),
+              comments: z.object({
+                nodes: z.array(z.object({ databaseId: z.number().int().positive().nullable() })),
+              }),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
+type Session = Awaited<ReturnType<typeof replySession>>;
+// Maps each review thread's first comment to its resolution. REST comments carry neither
+// the thread ID nor its resolved state, so this is a second, GraphQL read.
+async function threadResolutions(url: string, session: Session, signal: AbortSignal) {
+  const [, owner = '', name = '', , number = ''] = new URL(
+    pullRequestUrl.parse(url),
+  ).pathname.split('/');
+  const byRoot = new Map<number, ThreadResolution>();
+  let after: string | null = null;
+  for (let page = 0; page < 50; page++) {
+    const query: string =
+      'query($owner:String!,$name:String!' +
+      (after ? ',$after:String!' : '') +
+      '){repository(owner:$owner,name:$name){pullRequest(number:' +
+      Number(number) +
+      '){reviewThreads(first:100' +
+      (after ? ',after:$after' : '') +
+      '){pageInfo{hasNextPage endCursor} nodes{id isResolved viewerCanResolve viewerCanUnresolve comments(first:1){nodes{databaseId}}}}}}}';
+    const result: z.infer<typeof reviewThreads> = reviewThreads.parse(
+      JSON.parse(
+        await session.graphql(query, { owner, name, ...(after ? { after } : {}) }, signal),
+      ),
+    );
+    const threads = result.data.repository.pullRequest.reviewThreads;
+    for (const thread of threads.nodes) {
+      const root = thread.comments.nodes[0]?.databaseId;
+      if (root)
+        byRoot.set(root, {
+          node: thread.id,
+          resolved: thread.isResolved,
+          canResolve: thread.viewerCanResolve,
+          canUnresolve: thread.viewerCanUnresolve,
+        });
+    }
+    after = threads.pageInfo.endCursor;
+    if (!threads.pageInfo.hasNextPage || !after) return byRoot;
+  }
+  return byRoot;
 }
 async function activeAccount(signal: AbortSignal) {
   return z
@@ -84,10 +147,15 @@ export async function listDiscussions(
     }
     return [...rows.values()];
   }
-  const [inline, conversation, reviews] = await Promise.all([
+  const [inline, conversation, reviews, resolutions] = await Promise.all([
     pages(routes.inline),
     pages(routes.conversation),
     pages(routes.review),
+    // Comments are still worth showing when their resolved state cannot be read.
+    threadResolutions(url, session, signal).catch(() => {
+      signal.throwIfAborted();
+      return null;
+    }),
   ]);
   function thread(kind: DiscussionThread['kind'], row: Remote): DiscussionThread {
     return {
@@ -102,7 +170,9 @@ export async function listDiscussions(
       messages: [message(row)],
     };
   }
-  const threads = inline.filter((r) => !r.in_reply_to_id).map((row) => thread('inline', row));
+  const threads: DiscussionThread[] = inline
+    .filter((r) => !r.in_reply_to_id)
+    .map((row) => ({ ...thread('inline', row), resolution: resolutions?.get(row.id) ?? null }));
   const byRoot = new Map(threads.map((t) => [t.id, t]));
   for (const row of inline.filter((r) => r.in_reply_to_id).sort((a, b) => a.id - b.id)) {
     const root = byRoot.get(row.in_reply_to_id ?? 0);
@@ -171,4 +241,42 @@ export async function sendDiscussionReply(
       'GitHub returned an unreadable reply receipt. Refresh the discussion and check before posting again.',
     );
   }
+}
+
+const resolved = z.object({ thread: z.object({ isResolved: z.boolean() }) });
+const resolveOutcome = z.object({
+  data: z.object({
+    resolveReviewThread: resolved.optional(),
+    unresolveReviewThread: resolved.optional(),
+  }),
+});
+// Resolving is idempotent on GitHub, so a lost response is safe to repeat.
+export async function resolveDiscussion(
+  req: ResolveRequest,
+  signal: AbortSignal,
+  connect = replySession,
+) {
+  const session = await connect(signal);
+  if (session.actor !== req.account)
+    throw Error('The connected GitHub account changed. Refresh the discussions and try again.');
+  const mutation = req.resolved ? 'resolveReviewThread' : 'unresolveReviewThread';
+  let response: string;
+  try {
+    response = await session.graphql(
+      'mutation($thread:ID!){' + mutation + '(input:{threadId:$thread}){thread{isResolved}}}',
+      { thread: req.node },
+      signal,
+    );
+  } catch (error) {
+    signal.throwIfAborted();
+    throw new Error(
+      'GitHub did not ' +
+        (req.resolved ? 'resolve' : 'reopen') +
+        ' the conversation. Check your connection and your permission on this PR, then refresh the discussions.',
+      { cause: error },
+    );
+  }
+  const outcome = resolveOutcome.parse(JSON.parse(response)).data[mutation];
+  if (!outcome) throw Error('GitHub did not confirm the change. Refresh the discussions.');
+  return { resolved: outcome.thread.isResolved };
 }

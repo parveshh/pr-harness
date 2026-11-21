@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { listDiscussions, sendDiscussionReply } from './discussions.js';
+import { listDiscussions, resolveDiscussion, sendDiscussionReply } from './discussions.js';
 
 await test('discussion pagination, reply targets, account switching and recovery after a lost receipt', async () => {
   const url = 'https://github.com/example/pull/pull/7';
@@ -44,6 +44,8 @@ await test('discussion pagination, reply targets, account switching and recovery
         const page = path.endsWith('page=1') ? [root, ...replies.slice(0, 99)] : replies.slice(99);
         return Promise.resolve(JSON.stringify(page));
       },
+      // This PR's resolved state cannot be read. Its comments are listed all the same.
+      graphql: () => Promise.reject(Error('GraphQL unavailable')),
       postComment: (endpoint: string, body: string) => {
         writes.push(endpoint);
         const receipt = { ...row(1000 + writes.length, body), in_reply_to_id: 1 };
@@ -58,6 +60,7 @@ await test('discussion pagination, reply targets, account switching and recovery
   const snapshot = await listDiscussions(url, signal, connect, identity);
   assert.equal(snapshot.threads.length, 3);
   assert.equal(snapshot.threads.find((t) => t.kind === 'inline')?.messages.length, 100);
+  assert.equal(snapshot.threads.find((t) => t.kind === 'inline')?.resolution, null);
   await assert.rejects(
     listDiscussions(url, signal, connect, () => Promise.resolve('other')),
     /account changed/,
@@ -86,4 +89,106 @@ await test('discussion pagination, reply targets, account switching and recovery
     assert.ok(result.body.includes(url + '#' + anchor));
     assert.equal(writes.at(-1), 'repos/example/pull/issues/7/comments');
   }
+});
+
+await test('review threads carry their resolved state across pages and can be resolved or reopened', async () => {
+  const url = 'https://github.com/example/project/pull/7';
+  const signal = new AbortController().signal;
+  const resolved = new Set(['T_two']);
+  const calls: [string, Record<string, string>][] = [];
+  const comment = (id: number) => ({
+    id,
+    body: 'Question?',
+    user: { login: 'alice' },
+    created_at: '2026-01-01T00:00:00Z',
+    path: 'src/feature.ts',
+    line: id,
+  });
+  const node = (id: string, root: number | null) => ({
+    id,
+    isResolved: resolved.has(id),
+    viewerCanResolve: !resolved.has(id),
+    viewerCanUnresolve: resolved.has(id),
+    comments: { nodes: root ? [{ databaseId: root }] : [] },
+  });
+  const connect = () =>
+    Promise.resolve({
+      actor: 'alice',
+      serverTime: Date.now(),
+      api: (path: string) =>
+        Promise.resolve(
+          JSON.stringify(
+            path.includes('/pulls/7/comments?') ? [comment(1), comment(2), comment(3)] : [],
+          ),
+        ),
+      postComment: () => Promise.reject(Error('unused')),
+      graphql: (query: string, variables: Record<string, string>) => {
+        calls.push([query, variables]);
+        if (query.startsWith('mutation')) {
+          const mutation = query.includes('unresolveReviewThread')
+            ? 'unresolveReviewThread'
+            : 'resolveReviewThread';
+          if (variables.thread === 'T_gone') return Promise.resolve(JSON.stringify({ data: {} }));
+          if (mutation === 'resolveReviewThread') resolved.add(variables.thread ?? '');
+          else resolved.delete(variables.thread ?? '');
+          const thread = { isResolved: resolved.has(variables.thread ?? '') };
+          return Promise.resolve(JSON.stringify({ data: { [mutation]: { thread } } }));
+        }
+        const first = !variables.after;
+        return Promise.resolve(
+          JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    pageInfo: { hasNextPage: first, endCursor: first ? 'cursor-1' : null },
+                    nodes: first ? [node('T_one', 1), node('T_empty', null)] : [node('T_two', 2)],
+                  },
+                },
+              },
+            },
+          }),
+        );
+      },
+    });
+  const list = async () =>
+    new Map(
+      (await listDiscussions(url, signal, connect, () => Promise.resolve('alice'))).threads.map(
+        (t) => [t.id, t.resolution],
+      ),
+    );
+  assert.deepEqual(
+    await list(),
+    new Map([
+      [1, { node: 'T_one', resolved: false, canResolve: true, canUnresolve: false }],
+      [2, { node: 'T_two', resolved: true, canResolve: false, canUnresolve: true }],
+      // A comment GitHub reports no thread for cannot be resolved here.
+      [3, null],
+    ]),
+  );
+  assert.deepEqual(calls.at(-1)?.[1], { owner: 'example', name: 'project', after: 'cursor-1' });
+  assert.match(
+    calls.at(-1)?.[0] ?? '',
+    /pullRequest\(number:7\)\{reviewThreads\(first:100,after:\$after\)/,
+  );
+  const request = { url, account: 'alice', node: 'T_one', resolved: true };
+  assert.deepEqual(await resolveDiscussion(request, signal, connect), { resolved: true });
+  assert.deepEqual(calls.at(-1), [
+    'mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{isResolved}}}',
+    { thread: 'T_one' },
+  ]);
+  assert.equal((await list()).get(1)?.resolved, true);
+  assert.deepEqual(await resolveDiscussion({ ...request, resolved: false }, signal, connect), {
+    resolved: false,
+  });
+  const before = calls.length;
+  await assert.rejects(
+    resolveDiscussion({ ...request, account: 'bob' }, signal, connect),
+    /account changed/,
+  );
+  assert.equal(calls.length, before);
+  await assert.rejects(
+    resolveDiscussion({ ...request, node: 'T_gone' }, signal, connect),
+    /did not confirm/,
+  );
 });

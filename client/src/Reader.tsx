@@ -37,6 +37,7 @@ import {
 import { FullFile, type FileFocus } from './FullFile.js';
 import { usePrDiscussions, discussionsByLine } from './PrDiscussions.js';
 import { ReviewChat } from './ReviewChat.js';
+import { PipelineStatus } from './Pipelines.js';
 import type { AgentCatalog, Anchor } from '../../shared/assistant.js';
 
 type Position = Pick<ReaderFile, 'hunk' | 'scroll' | 'reviewed'>;
@@ -347,6 +348,7 @@ export function Reader({
             <span>Pinned questions</span> {questions.filter((q) => !q.addressed).length}
           </button>
         )}
+        {view && <PipelineStatus url={url} head={view.meta.head} />}
         {headerAction}
       </header>
       {view && questionPanel && (

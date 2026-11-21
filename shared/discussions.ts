@@ -9,6 +9,15 @@ export const discussionMessage = z.object({
   body: z.string(),
   created: z.string(),
 });
+// A review thread's GitHub node ID and whether it is resolved. Absent when GitHub did not
+// report it, for example on conversation comments, which cannot be resolved.
+const threadNode = z.string().regex(/^[\w=+/-]{1,200}$/);
+export const threadResolution = z.object({
+  node: threadNode,
+  resolved: z.boolean(),
+  canResolve: z.boolean(),
+  canUnresolve: z.boolean(),
+});
 export const discussionThread = z.object({
   id,
   kind: discussionKind,
@@ -19,6 +28,7 @@ export const discussionThread = z.object({
   startLine: id.nullish(),
   startSide: z.enum(['LEFT', 'RIGHT']).nullish(),
   messages: z.array(discussionMessage).min(1),
+  resolution: threadResolution.nullish(),
 });
 export const discussionRevision = z.object({
   head: z.string(),
@@ -38,6 +48,15 @@ export const discussionReply = z.object({
   kind: discussionKind,
   body: z.string().trim().min(1).max(60000),
 });
+export const resolveRequest = z.object({
+  url: pullRequestUrl,
+  account: z.string().min(1),
+  node: threadNode,
+  resolved: z.boolean(),
+});
+export const resolveResult = z.object({ resolved: z.boolean() });
+export type ResolveRequest = z.infer<typeof resolveRequest>;
+export type ThreadResolution = z.infer<typeof threadResolution>;
 export type Discussions = z.infer<typeof discussions>;
 export type DiscussionThread = z.infer<typeof discussionThread>;
 export type DiscussionReply = z.infer<typeof discussionReply>;

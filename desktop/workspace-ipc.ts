@@ -1,6 +1,6 @@
 import { UnconfirmedReply } from './github.js';
-import { discussionReply } from '../shared/discussions.js';
-import { listDiscussions, sendDiscussionReply } from './discussions.js';
+import { discussionReply, resolveRequest } from '../shared/discussions.js';
+import { listDiscussions, resolveDiscussion, sendDiscussionReply } from './discussions.js';
 import type { SourceCitation } from '../shared/assistant.js';
 import { fileKey, type ReaderView } from '../shared/reader.js';
 import { join } from 'node:path';
@@ -28,6 +28,7 @@ import { replyMonitor } from './replies.js';
 import { githubLogin } from './account.js';
 import { monitor } from './monitor.js';
 import { chatRuns } from './chat-runs.js';
+import { pipelineReader } from './pipelines.js';
 import type { openStore } from './store.js';
 
 export function registerWorkspace(
@@ -109,9 +110,17 @@ export function registerWorkspace(
       );
     }
   });
-  handle('discussions:list', (_, input) =>
-    listDiscussions(pullRequestUrl.parse(input), shutdown.signal, undefined, undefined, true),
-  );
+  // Review threads last listed for each PR. Only those may be resolved from the window.
+  const listedThreads = new Map<string, Set<string>>();
+  handle('discussions:list', async (_, input) => {
+    const url = pullRequestUrl.parse(input);
+    const result = await listDiscussions(url, shutdown.signal, undefined, undefined, true);
+    listedThreads.set(
+      url,
+      new Set(result.threads.flatMap((t) => (t.resolution ? [t.resolution.node] : []))),
+    );
+    return result;
+  });
   const postingReplies = new Set<string>();
   handle('discussions:reply', async (_, input) => {
     const req = discussionReply.parse(input);
@@ -130,6 +139,21 @@ export function registerWorkspace(
     } finally {
       postingReplies.delete(key);
     }
+  });
+  handle('discussions:resolve', (_, input) => {
+    const req = resolveRequest.parse(input);
+    if (store.reader.active() !== req.url) throw Error('Reopen this PR before resolving.');
+    if (!listedThreads.get(req.url)?.has(req.node))
+      throw Error('This conversation is no longer listed. Refresh the discussions.');
+    return resolveDiscussion(req, shutdown.signal);
+  });
+  const readPipelines = pipelineReader();
+  handle('pipelines:list', (_, input) => {
+    const url = pullRequestUrl.parse(input);
+    // Checks are read for the commit under review, which may trail the PR's newest push.
+    const head = store.reader.read(url)?.meta.head;
+    if (!head) throw Error('Open this PR before checking its pipeline.');
+    return readPipelines(url, head, shutdown.signal);
   });
   const publisher = reviewPublisher(store, undefined, undefined, shutdown.signal);
   handle('drafts:list', (_, url) => store.drafts.get(pullRequestUrl.parse(url)));

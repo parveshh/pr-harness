@@ -866,6 +866,122 @@
 .monitored-pr[data-approved] .monitored-actions button:last-child {
   color: #8fdcb1;
 }
+.discussion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.discussion-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.discussion-resolved {
+  color: #8fdcb1;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+/* A resolved thread stays readable but steps back. */
+.pr-discussion[data-resolved] .discussion-message {
+  opacity: 0.62;
+}
+/* Pipeline: the title bar button, and the runs, jobs and steps behind it. */
+.pipeline-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+[data-outcome='passed'] {
+  color: #8fdcb1;
+}
+[data-outcome='failed'] {
+  color: #f2a3a3;
+}
+[data-outcome='running'],
+[data-outcome='queued'],
+[data-outcome='waiting'] {
+  color: #ecc98b;
+}
+[data-outcome='skipped'] {
+  color: var(--muted);
+}
+.pipeline-trigger[data-outcome] span {
+  color: var(--ink);
+}
+.pipeline-view {
+  display: grid;
+  gap: 12px;
+  font-size: 0.8125rem;
+}
+.pipeline-toolbar,
+.pipeline-run-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pipeline-toolbar > span,
+.pipeline-run-head > div {
+  flex: 1;
+  min-width: 0;
+}
+.pipeline-view button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+}
+.pipeline-run {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--editor);
+}
+.pipeline-run-head small,
+.pipeline-job small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+/* A run that a newer one of the same workflow has replaced. */
+.pipeline-run[data-superseded] {
+  opacity: 0.6;
+}
+.pipeline-mark {
+  display: inline-flex;
+  flex: none;
+}
+.pipeline-job {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.pipeline-job summary,
+.pipeline-job li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pipeline-job summary {
+  cursor: pointer;
+  font-weight: 550;
+}
+.pipeline-job summary small,
+.pipeline-job li small {
+  margin-left: auto;
+  flex: none;
+}
+.pipeline-job ol {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0 0 0 22px;
+  display: grid;
+  gap: 5px;
+}
+.pipeline-job li span:nth-child(2) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 /* Work in progress: a turning ring, held still for reviewers who prefer less motion. */
 @keyframes spin {
   to {

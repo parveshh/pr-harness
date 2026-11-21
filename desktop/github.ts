@@ -61,20 +61,17 @@ export type Graphql = (
   signal: AbortSignal,
 ) => Promise<string>;
 // Variables travel as raw string fields, so gh never reads a value as a file or a number.
+const graphqlArgs = (query: string, variables: Record<string, string>) => [
+  'api',
+  'graphql',
+  '--hostname',
+  'github.com',
+  '-f',
+  'query=' + query,
+  ...Object.entries(variables).flatMap(([name, value]) => ['-f', name + '=' + value]),
+];
 export const githubGraphql: Graphql = (query, variables, signal) =>
-  runGh(
-    [
-      'api',
-      'graphql',
-      '--hostname',
-      'github.com',
-      '-f',
-      'query=' + query,
-      ...Object.entries(variables).flatMap(([name, value]) => ['-f', name + '=' + value]),
-    ],
-    signal,
-    githubEnvironment(),
-  );
+  runGh(graphqlArgs(query, variables), signal, githubEnvironment());
 async function runGh(args: string[], signal: AbortSignal, env: NodeJS.ProcessEnv) {
   try {
     const result = await run('gh', args, {
@@ -167,7 +164,9 @@ export async function replySession(signal: AbortSignal) {
       child.stdin?.end(JSON.stringify({ body }));
     });
   }
-  return { actor: login.toLowerCase(), serverTime, api, postComment };
+  const graphql: Graphql = (query, variables, signal) =>
+    runGh(graphqlArgs(query, variables), signal, env);
+  return { actor: login.toLowerCase(), serverTime, api, postComment, graphql };
 }
 
 function completePatch(patch: string, file: Entry) {
