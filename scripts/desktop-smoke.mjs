@@ -505,6 +505,14 @@ try {
         .getByLabel('Review prompt')
         .fill('Check the before and after behaviour with citations.');
       await settings.getByLabel('Save instructions for').selectOption('review');
+      // React Aria gives a new overlay an inline opacity of 0 until it has finished entering,
+      // so a screenshot taken straight after opening would be empty.
+      await page.waitForFunction(
+        () =>
+          globalThis.getComputedStyle(globalThis.document.querySelector('.overlay')).opacity ===
+          '1',
+      );
+      await capture(page, 'instructions');
       await settings.getByRole('button', { name: 'Close' }).click();
       assert.equal(await chat.getByLabel('Model', { exact: true }).count(), 0);
       await chooseHarness(page, { model: 'fixture-model' });

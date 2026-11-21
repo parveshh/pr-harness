@@ -408,9 +408,6 @@
 .dialog-title {
   border: 0;
   padding: 0;
-  margin: 18px 0 8px;
-  font-size: 1.5625rem;
-  letter-spacing: -0.045em;
 }
 .repo-dialog p {
   margin: 8px 0 20px;
@@ -1518,21 +1515,13 @@ body,
 }
 .chat-settings label {
   display: grid;
-  gap: 5px;
-  margin: 10px 0;
 }
 .chat-settings :is(select, textarea) {
   width: 100%;
   background: var(--editor);
   border: 1px solid var(--line);
   color: var(--ink);
-  border-radius: 6px;
-  padding: 8px;
   font: inherit;
-}
-.chat-settings button {
-  padding: 7px 10px;
-  margin: 3px 0;
 }
 .pane-switch {
   display: none;
@@ -1829,6 +1818,9 @@ body,
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.pin-evidence input[type='checkbox'] {
+  flex: none;
 }
 .pin-evidence h3 {
   margin-bottom: 4px;
@@ -2428,6 +2420,7 @@ body,
 }
 .file-view-toggle button {
   padding: 3px 10px;
+  border-radius: 5px;
   font-size: 0.8rem;
   border: 0;
   background: transparent;
@@ -2550,16 +2543,12 @@ body,
   gap: 6px;
   margin-top: 6px;
 }
-/* A drawn chevron, so the arrow keeps clear of the border. */
 .review-chat .composer-box select {
   width: auto;
   flex: none;
-  appearance: none;
-  padding: 6px 28px 6px 10px;
+  padding: 6px 10px;
   border-radius: 6px;
-  background: var(--raised)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='none' stroke='%23c3cccb' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E")
-    no-repeat right 10px center / 9px;
+  background-color: var(--raised);
   font-size: 0.75rem;
   text-overflow: ellipsis;
 }
@@ -2573,13 +2562,91 @@ body,
   .review-chat .composer-box:has(textarea:focus-visible) {
     outline-color: Highlight;
   }
-  .review-chat .composer-box select {
+}
+.review-chat .composer-box .composer-actions > button {
+  flex: none;
+  margin-left: auto;
+}
+
+/* Every dropdown shares one drawn chevron with room around it. */
+:root {
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='none' stroke='%23c3cccb' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+}
+:root:root select:not([multiple]) {
+  appearance: none;
+  padding-right: 32px;
+  background-image: var(--chevron);
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 9px;
+  text-overflow: ellipsis;
+}
+@media (forced-colors: active) {
+  :root:root select:not([multiple]) {
     appearance: auto;
     padding-right: 10px;
     background-image: none;
   }
 }
-.review-chat .composer-box .composer-actions > button {
+
+/* Dialogs: the title sits on the same line as its icon, and fields are roomier. */
+.dialog-head {
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.dialog-emblem {
   flex: none;
-  margin-left: auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+}
+.dialog-head .dialog-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+.dialog-head .icon-control {
+  align-self: center;
+}
+.repo-dialog :is(select, textarea),
+.dialog-body input:not([type='checkbox'], [type='radio']) {
+  min-height: 40px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.repo-dialog textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+.repo-dialog :is(select, textarea, input):focus-visible {
+  outline-offset: 0;
+  border-color: var(--control);
+}
+.chat-settings label {
+  gap: 7px;
+  margin: 16px 0;
+  font-size: 0.8125rem;
+}
+/* Fields sit inside their label; they should not take its weight. */
+.chat-settings :is(select, textarea) {
+  font-weight: 400;
+}
+.chat-settings textarea {
+  min-height: 300px;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.chat-settings button {
+  padding: 9px 14px;
+  margin: 4px 6px 4px 0;
+}
+.repo-dialog .quiet {
+  border: 1px solid var(--line);
+  color: var(--ink);
 }

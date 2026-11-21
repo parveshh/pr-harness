@@ -209,6 +209,7 @@ export function ReviewChat({
                 <WorkspaceDialog
                   title="Review instructions"
                   icon={<Sparkles size={18} />}
+                  wide
                   onClose={() => setSettingsOpen(false)}
                 >
                   <div className="chat-settings">
@@ -233,6 +234,7 @@ export function ReviewChat({
                     {config.scope !== 'default' && (
                       <button
                         type="button"
+                        className="quiet"
                         onClick={() => {
                           window.reviewer
                             .clearPrompt(url, config.scope)
@@ -249,7 +251,7 @@ export function ReviewChat({
                     <label>
                       Review prompt
                       <textarea
-                        rows={6}
+                        rows={14}
                         value={prompt}
                         onChange={(e) => {
                           setPrompt(e.target.value);
@@ -259,6 +261,7 @@ export function ReviewChat({
                     </label>
                     <button
                       type="button"
+                      className="quiet"
                       onClick={() => {
                         setPrompt(defaultPrompt);
                         setNotice('');
