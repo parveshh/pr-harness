@@ -96,9 +96,20 @@ if (!live) {
       "const update = fs.existsSync(updatePath) ? JSON.parse(fs.readFileSync(updatePath,'utf8')) : null;",
       "if(update){ response.meta.head.sha=update.head; response.meta.base.sha=update.base; response.files[1].patch=response.files[1].patch.replace('+new line 1\\n','+'+update.line+'\\n'); response.files[1].sha=update.line; }",
       // The reviewer counts as having approved once the grouped review has been posted.
-      "if(process.argv.includes('graphql')){const query=process.argv.find(a=>a.startsWith('query='));const state=fs.existsSync(" +
+      "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('latestOpinionatedReviews'))){const query=process.argv.find(a=>a.startsWith('query='));const state=fs.existsSync(" +
         JSON.stringify(posted) +
         ")?[{author:{login:'fixture-reviewer'},state:'APPROVED'}]:[];console.log(JSON.stringify({data:{viewer:{login:'fixture-reviewer'},repository:Object.fromEntries([...query.matchAll(/(p\\d+):pullRequest/g)].map(m=>[m[1],{latestOpinionatedReviews:{nodes:state}}]))}}));return;}",
+      // One workflow run that is building until the test marks it finished.
+      'const pipelineDone = fs.existsSync(' +
+        JSON.stringify(join(directory, 'pipeline-done')) +
+        ');',
+      "const pipelineStep=(number,name,done)=>({number,name,status:done?'completed':'in_progress',conclusion:done?'success':null,started_at:'2025-01-01T00:00:00Z',completed_at:done?'2025-01-01T00:00:42Z':null});",
+      "if(process.argv.some(a=>a.includes('/actions/runs?'))){console.log(JSON.stringify({total_count:1,workflow_runs:[{id:900,name:'Check scaffold',display_title:'Preserve review progress',event:'pull_request',status:pipelineDone?'completed':'in_progress',conclusion:pipelineDone?'success':null,run_attempt:1,run_number:7,workflow_id:70,run_started_at:'2025-01-01T00:00:00Z',html_url:'https://github.com/example/project/actions/runs/900',created_at:'2025-01-01T00:00:00Z',updated_at:'2025-01-01T00:01:05Z'}]}));return;}",
+      "if(process.argv.some(a=>a.includes('/actions/runs/900/jobs'))){console.log(JSON.stringify({jobs:[{id:901,name:'check',status:pipelineDone?'completed':'in_progress',conclusion:pipelineDone?'success':null,started_at:'2025-01-01T00:00:00Z',completed_at:pipelineDone?'2025-01-01T00:01:05Z':null,html_url:'https://github.com/example/project/actions/runs/900/job/901',steps:[pipelineStep(1,'Set up job',true),pipelineStep(2,'Run npm test',pipelineDone)]}]}));return;}",
+      // Review threads and whether each is resolved.
+      'const resolvedFile = ' + JSON.stringify(join(directory, 'resolved')) + ';',
+      "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('ReviewThread('))){const on=process.argv.some(a=>a.includes('mutation($thread:ID!){resolveReviewThread'));if(on)fs.writeFileSync(resolvedFile,'');else if(fs.existsSync(resolvedFile))fs.unlinkSync(resolvedFile);console.log(JSON.stringify({data:{[on?'resolveReviewThread':'unresolveReviewThread']:{thread:{isResolved:on}}}}));return;}",
+      "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('reviewThreads('))){const done=fs.existsSync(resolvedFile);console.log(JSON.stringify({data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:'PRRT_fixture56',isResolved:done,viewerCanResolve:!done,viewerCanUnresolve:done,comments:{nodes:[{databaseId:56}]}}]}}}}}));return;}",
       'const repliesFile = ' + JSON.stringify(repliesFile) + ';',
       'const loginRelease = ' + JSON.stringify(loginRelease) + ';',
       'const signedOut = ' + JSON.stringify(signedOut) + ';',
@@ -292,6 +303,34 @@ try {
       await discussionThread.getByText('See the caller integration test.').waitFor();
       await page.getByRole('button', { name: 'Diff only', exact: true }).click();
       await discussionThread.getByText('See the caller integration test.').waitFor();
+      // A review thread can be resolved on GitHub from its place in the diff, and reopened.
+      await discussionThread
+        .getByRole('button', { name: 'Resolve conversation', exact: true })
+        .click();
+      await discussionThread.getByText('Resolved', { exact: true }).waitFor();
+      assert.equal(await discussionThread.getAttribute('data-resolved'), 'true');
+      await discussionThread
+        .getByRole('button', { name: 'Reopen conversation', exact: true })
+        .click();
+      await discussionThread
+        .getByRole('button', { name: 'Resolve conversation', exact: true })
+        .waitFor();
+      assert.equal(await discussionThread.getByText('Resolved', { exact: true }).count(), 0);
+      // The pipeline view follows the run for the commit under review down to its steps.
+      await page.getByRole('button', { name: 'Pipeline: Running', exact: true }).click();
+      const pipelineView = page.getByRole('dialog', { name: 'Pipeline', exact: true });
+      const pipelineRun = pipelineView.getByRole('region', { name: 'Check scaffold run 7' });
+      await pipelineRun.getByText('Running · pull_request · run #7', { exact: true }).waitFor();
+      const testStep = pipelineRun.getByRole('listitem').filter({ hasText: 'Run npm test' });
+      await testStep.getByText('Running', { exact: true }).waitFor();
+      await capture(page, 'pipeline');
+      await writeFile(join(directory, 'pipeline-done'), '');
+      await pipelineView.getByRole('button', { name: 'Refresh' }).click();
+      await pipelineRun
+        .getByText('Passed · pull_request · run #7 · 1m 5s', { exact: true })
+        .waitFor();
+      await pipelineView.getByRole('button', { name: 'Close' }).click();
+      await page.getByRole('button', { name: 'Pipeline: Passed', exact: true }).waitFor();
       const general = discussions
         .getByRole('article')
         .filter({ hasText: 'Is this ready to ship?' });

@@ -1,4 +1,4 @@
-import { discussionMessage, discussions } from '../shared/discussions.js';
+import { discussionMessage, discussions, resolveResult } from '../shared/discussions.js';
 import { typography, signIn, inbox } from '../shared/workspace.js';
 import { appearance } from '../shared/appearance.js';
 import { contextBridge, ipcRenderer } from 'electron';
@@ -8,12 +8,16 @@ import { pinnedQuestion, questionEvidence } from '../shared/questions.js';
 import { changeEvidence } from '../shared/rereview.js';
 import { readerView } from '../shared/reader.js';
 import { z } from 'zod';
+import { pipelines } from '../shared/pipelines.js';
 import { repository, config, agentCatalog, turn, activity } from '../shared/assistant.js';
 
 const reviewer: ReviewerBridge = {
   discussions: async (url) => discussions.parse(await ipcRenderer.invoke('discussions:list', url)),
   replyToDiscussion: async (req) =>
     discussionMessage.parse(await ipcRenderer.invoke('discussions:reply', req)),
+  pipelines: async (url) => pipelines.parse(await ipcRenderer.invoke('pipelines:list', url)),
+  resolveDiscussion: async (req) =>
+    resolveResult.parse(await ipcRenderer.invoke('discussions:resolve', req)),
   typography: async () => typography.parse(await ipcRenderer.invoke('settings:type')),
   saveTypography: async (value) =>
     typography.parse(await ipcRenderer.invoke('settings:save-type', value)),

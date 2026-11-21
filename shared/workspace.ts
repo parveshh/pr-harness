@@ -1,4 +1,9 @@
-import type { DiscussionMessage, DiscussionReply, Discussions } from './discussions.js';
+import type {
+  DiscussionMessage,
+  DiscussionReply,
+  Discussions,
+  ResolveRequest,
+} from './discussions.js';
 import { z } from 'zod';
 import { pullRequestUrl } from './reviews.js';
 export const typography = z.object({
@@ -34,6 +39,7 @@ export const webLink = z.url({ protocol: /^https?$/, normalize: true });
 export interface WorkspaceBridge {
   discussions(url: string): Promise<Discussions>;
   replyToDiscussion(request: DiscussionReply): Promise<DiscussionMessage>;
+  resolveDiscussion(request: ResolveRequest): Promise<{ resolved: boolean }>;
   openChatLink(url: string): Promise<void>;
   typography(): Promise<Typography>;
   saveTypography(value: Typography): Promise<Typography>;

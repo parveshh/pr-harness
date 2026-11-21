@@ -48,6 +48,9 @@ export function usePrDiscussions(
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<PendingReplies>({});
   const [needsRefresh, setNeedsRefresh] = useState(false);
+  // The thread being resolved or reopened, and the last failure to do so.
+  const [resolving, setResolving] = useState('');
+  const [resolveError, setResolveError] = useState<{ key: string; message: string } | null>(null);
   const actor = useRef('');
   const version = useRef(0);
   const scope = useRef(epoch);
@@ -137,7 +140,7 @@ export function usePrDiscussions(
   async function post(thread: DiscussionThread) {
     const key = keyOf(thread);
     const body = drafts[key]?.trim();
-    if (!data || !body || posting || loading || needsRefresh) return;
+    if (!data || !body || posting || resolving || loading || needsRefresh) return;
     const started = version.current;
     const reconcile = () => {
       if (scope.current === epoch && actor.current === data.account) {
@@ -224,6 +227,52 @@ export function usePrDiscussions(
       setPosting(false);
     }
   }
+  // Resolving is sent to GitHub at once. It is idempotent there, so a retry is safe.
+  async function resolve(thread: DiscussionThread, resolved: boolean) {
+    const key = keyOf(thread);
+    if (!data || !thread.resolution || resolving || posting || loading || needsRefresh) return;
+    const started = version.current;
+    setResolving(key);
+    setResolveError(null);
+    try {
+      const result = await window.reviewer.resolveDiscussion({
+        url,
+        account: data.account,
+        node: thread.resolution.node,
+        resolved,
+      });
+      // A refresh or account change owns the visible data and already has the new state.
+      if (started !== version.current || scope.current !== epoch) return;
+      // Apply to whatever is loaded now, so a change made meanwhile is kept.
+      setLoaded((current) =>
+        current?.epoch !== epoch
+          ? current
+          : {
+              epoch,
+              value: {
+                ...current.value,
+                threads: current.value.threads.map((t) =>
+                  keyOf(t) === key && t.resolution
+                    ? {
+                        ...t,
+                        resolution: {
+                          ...t.resolution,
+                          resolved: result.resolved,
+                          canResolve: !result.resolved,
+                          canUnresolve: result.resolved,
+                        },
+                      }
+                    : t,
+                ),
+              },
+            },
+      );
+    } catch (e) {
+      if (scope.current === epoch) setResolveError({ key, message: readableError(e) });
+    } finally {
+      setResolving('');
+    }
+  }
   const reload = useCallback(() => {
     version.current++;
     setLoading(true);
@@ -234,15 +283,19 @@ export function usePrDiscussions(
   function renderThread(thread: DiscussionThread) {
     if (!data) return null;
     const key = keyOf(thread);
+    const resolution = thread.resolution ?? null;
+    const idle = !resolving && !posting && !loading && !needsRefresh;
     return (
       <section
         role="article"
         className="pr-discussion"
+        data-resolved={resolution?.resolved || undefined}
         aria-label={location(thread) + ' · ' + thread.messages[0]?.author + ' · ' + thread.id}
         key={key}
       >
         <div className="discussion-heading">
           <strong>{location(thread)}</strong>
+          {resolution?.resolved && <span className="discussion-resolved">Resolved</span>}
         </div>
         {thread.messages.map((m) => (
           <div className="discussion-message" key={m.id}>
@@ -321,26 +374,49 @@ export function usePrDiscussions(
               </button>
               <button
                 type="submit"
-                disabled={posting || loading || needsRefresh || !drafts[key]?.trim()}
+                disabled={posting || !!resolving || loading || needsRefresh || !drafts[key]?.trim()}
               >
                 {pending[key] ? 'Retry unconfirmed reply' : 'Post reply to GitHub'}
               </button>
             </div>
           </form>
         ) : (
-          <button
-            type="button"
-            className="secondary"
-            disabled={posting || loading || needsRefresh}
-            ref={(node) => {
-              if (node) replyButtons.current.set(key, node);
-              else replyButtons.current.delete(key);
-            }}
-            onClick={() => setActive(key)}
-          >
-            Reply
-          </button>
+          <div className="discussion-actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={posting || loading || needsRefresh}
+              ref={(node) => {
+                if (node) replyButtons.current.set(key, node);
+                else replyButtons.current.delete(key);
+              }}
+              onClick={() => setActive(key)}
+            >
+              Reply
+            </button>
+            {resolution && !resolution.resolved && resolution.canResolve && (
+              <button
+                type="button"
+                className="secondary"
+                disabled={!idle}
+                onClick={() => void resolve(thread, true)}
+              >
+                {resolving === key ? 'Resolving…' : 'Resolve conversation'}
+              </button>
+            )}
+            {resolution?.resolved && resolution.canUnresolve && (
+              <button
+                type="button"
+                className="secondary"
+                disabled={!idle}
+                onClick={() => void resolve(thread, false)}
+              >
+                {resolving === key ? 'Reopening…' : 'Reopen conversation'}
+              </button>
+            )}
+          </div>
         )}
+        {resolveError?.key === key && <p role="alert">{resolveError.message}</p>}
       </section>
     );
   }

@@ -1,4 +1,5 @@
 import type { WorkspaceBridge } from './workspace.js';
+import type { PipelineBridge } from './pipelines.js';
 import type { PinnedQuestion, QuestionKey, PinQuestion, QuestionEvidence } from './questions.js';
 import type { ChangeEvidence } from './rereview.js';
 import type { Appearance } from './appearance.js';
@@ -25,7 +26,8 @@ export const pullRequestUrl = z
 export const savedReview = z.object({ url: pullRequestUrl, savedAt: z.iso.datetime() });
 export const reviewList = z.array(savedReview);
 export type SavedReview = z.infer<typeof savedReview>;
-export interface ReviewerBridge extends AssistantBridge, PublishBridge, WorkspaceBridge {
+export interface ReviewerBridge
+  extends AssistantBridge, PublishBridge, WorkspaceBridge, PipelineBridge {
   readonly integratedTitleBar: boolean;
   getAppearance(): Promise<Appearance>;
   saveAppearance(value: Appearance): Promise<void>;

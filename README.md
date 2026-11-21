@@ -42,7 +42,13 @@ Open **Review drafts** to read, edit, or discard comments together. Add a summar
 
 If GitHub receives a submission but its response is lost, **Check GitHub** locates the receipt using a hidden tracking ID in the review body. Drafts remain saved while the outcome is unknown. **Open published review** opens the receipt in your browser.
 
-Published line comments and their replies appear beneath the matching old or new diff line. Expand **PR conversation** beneath the description for review summaries, general questions, and threads without a current line anchor. Choose **Reply** and then **Post reply to GitHub** to send from the displayed account. Line replies stay in their original thread. Replies to a conversation comment or review summary link back to it in the PR timeline. **Refresh discussions** retrieves the latest messages. Full PR chat can also look up these discussions when a question refers to earlier feedback.
+Published line comments and their replies appear beneath the matching old or new diff line. Expand **PR conversation** beneath the description for review summaries, general questions, and threads without a current line anchor. Choose **Reply** and then **Post reply to GitHub** to send from the displayed account. Line replies stay in their original thread. Replies to a conversation comment or review summary link back to it in the PR timeline. A line comment thread shows **Resolve conversation**, which marks it resolved on GitHub straight away, and a resolved thread shows **Reopen conversation**. Resolved threads stay in place, dimmed and labelled. The buttons appear only where your account is allowed to resolve the thread. **Refresh discussions** retrieves the latest messages. Full PR chat can also look up these discussions when a question refers to earlier feedback.
+
+## Follow the pipeline
+
+The **Pipeline** button in a PR's title bar shows how GitHub Actions stands for the commit you are reviewing: running, queued, awaiting approval, failed, passed, or no runs. Only the newest run of each workflow counts towards that standing; an earlier run that was cancelled or re-triggered is shown dimmed as superseded. A fork PR whose workflows need a maintainer's approval shows as awaiting approval. Click it to see each workflow run, its jobs, and every step with its result and duration. Jobs that failed or are still running start expanded. **Open on GitHub** opens the run in your browser for logs and re-runs.
+
+The view refreshes about every ten seconds while it is open and up to three runs are unfinished, and more slowly otherwise. It pauses while the window is hidden. **Refresh** reads it at once. It covers GitHub Actions for the reviewed commit, up to fifteen runs. After a push, open the update to follow the new commit's runs. Checks from other CI services are not listed.
 
 ## Monitor repositories
 
