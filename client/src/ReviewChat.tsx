@@ -494,7 +494,11 @@ const Answer = memo(function Answer({
         />
       </div>
       {current && draft && onDraft && (
-        <button className="secondary" onClick={() => onDraft(draft.anchor, draft.body)}>
+        <button
+          className="secondary"
+          title="Start an editable review comment from this answer, on the first line it cites"
+          onClick={() => onDraft(draft.anchor, draft.body)}
+        >
           Draft from answer
         </button>
       )}

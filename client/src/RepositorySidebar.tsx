@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { login, readableError, repoName, type Repository } from '../../shared/assistant.js';
 
 import {
@@ -29,7 +29,6 @@ export function RepositorySidebar({
   activeUrl,
   collapsed,
   onToggle,
-  appearancePicker,
   openInbox,
   openSettings,
   unread,
@@ -43,7 +42,6 @@ export function RepositorySidebar({
   activeUrl: string | null;
   collapsed: boolean;
   onToggle: () => void;
-  appearancePicker: ReactNode;
   openInbox: () => void;
   openSettings: () => void;
   unread: number;
@@ -309,7 +307,6 @@ export function RepositorySidebar({
           <span className="local-status">
             <HardDrive size={13} /> Local workspace
           </span>
-          {appearancePicker}
         </div>
       )}
       {adding && (

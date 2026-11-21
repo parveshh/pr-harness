@@ -10,7 +10,6 @@ import {
 import { AgentPicker } from './components/AgentPicker.js';
 import { useScrollIndicators } from './useScrollIndicators.js';
 import type { Appearance } from '../../shared/appearance.js';
-import { AppearancePicker } from './components/AppearancePicker.js';
 import { useCallback, useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import { pullRequestUrl, type SavedReview } from '../../shared/reviews.js';
 import { RepositorySidebar } from './RepositorySidebar.js';
@@ -40,7 +39,6 @@ export function Workspace({
       })
       .catch(() => setAppearanceError('Could not save appearance. Please try again.'));
   }
-  const picker = <AppearancePicker theme={theme} onChange={chooseTheme} compact={collapsed} />;
   const [agents, setAgents] = useState<AgentCatalog | null>(null);
   const [agentError, setAgentError] = useState('');
   const [agentLoad, setAgentLoad] = useState(0);
@@ -293,7 +291,6 @@ export function Workspace({
           unread={inbox.items.filter((i) => i.unread).length}
           collapsed={collapsed}
           onToggle={() => setCollapsed(!collapsed)}
-          appearancePicker={picker}
           activeUrl={activeUrl}
           onOpen={openMonitored}
           onSummarise={(pr) => openMonitored(pr, 'summarise')}
@@ -347,12 +344,7 @@ export function Workspace({
         {activeUrl ? (
           <Reader
             accountEpoch={inbox.account}
-            headerAction={
-              <>
-                {agentPicker}
-                {collapsed && picker}
-              </>
-            }
+            headerAction={agentPicker}
             agents={agents}
             command={command?.url === activeUrl ? command : null}
             onPublished={() => setReviewEpoch((n) => n + 1)}
@@ -364,7 +356,6 @@ export function Workspace({
           <div className="shell">
             <header className="home-bar">
               <Inbox size={16} /> All reviews {agentPicker}
-              {collapsed && picker}
             </header>
             <main>
               <div className="workspace-hero">

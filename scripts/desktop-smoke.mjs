@@ -214,16 +214,27 @@ try {
           globalThis.document.documentElement.dataset.textSize === 'large',
       );
       await capture(page, 'settings');
-      await settingsPane.getByText('Petrol', { exact: true }).click();
+      // Every theme is chosen in Settings, the only place it can be changed.
+      for (const [name, id] of [
+        ['Smoked Bronze', 'bronze'],
+        ['Titanium', 'titanium'],
+        ['Graphite', 'graphite'],
+        ['Forest', 'forest'],
+        ['Aubergine', 'aubergine'],
+        ['Arctic', 'arctic'],
+        ['Rosewood', 'rosewood'],
+        ['Petrol', 'petrol'],
+        ['Ink', 'ink'],
+      ]) {
+        await settingsPane.getByText(name, { exact: true }).click();
+        await page.waitForFunction(
+          (palette) => globalThis.document.documentElement.dataset.palette === palette,
+          id,
+        );
+      }
       await settingsPane.getByText('Default', { exact: true }).click();
       await settingsPane.getByRole('button', { name: 'Close' }).click();
-      let current = 'Petrol';
-      for (const next of ['Midnight', 'Smoked Bronze', 'Titanium', 'Graphite', 'Petrol']) {
-        await page.getByRole('button', { name: 'Appearance: ' + current, exact: true }).click();
-        await page.getByRole('menuitemradio', { name: next, exact: true }).click();
-        await page.getByRole('button', { name: 'Appearance: ' + next, exact: true }).waitFor();
-        current = next;
-      }
+      assert.equal(await page.getByRole('button', { name: /^Appearance/ }).count(), 0);
     }
     if (process.platform === 'darwin') {
       const pos = await app.evaluate(({ BrowserWindow }) =>
@@ -236,11 +247,6 @@ try {
       await collapse.click();
       const expand = page.getByRole('button', { name: 'Expand sidebar' });
       assert.deepEqual(await expand.boundingBox(), pinned);
-      if (!live) {
-        await page.locator('header').getByRole('button', { name: 'Appearance: Petrol' }).click();
-        await page.getByRole('menuitemradio', { name: 'Midnight' }).click();
-        await page.getByRole('button', { name: 'Appearance: Midnight' }).waitFor();
-      }
       await expand.click();
     }
     if (!live) {
@@ -703,13 +709,13 @@ try {
     const region = page.getByRole('region', { name: 'File diff' });
     await region.waitFor();
     if (!live) {
-      if (process.platform === 'darwin') {
-        await page.getByRole('button', { name: 'Appearance: Midnight' }).click();
-        await page.getByRole('menuitemradio', { name: 'Petrol' }).click();
-      }
-      assert.equal(
-        await page.evaluate(() => globalThis.document.documentElement.dataset.font),
-        'humanist',
+      // The theme and font chosen in Settings survive the restart.
+      assert.deepEqual(
+        await page.evaluate(() => {
+          const { palette, font } = globalThis.document.documentElement.dataset;
+          return { palette, font };
+        }),
+        { palette: 'ink', font: 'humanist' },
       );
       await page
         .getByText(/claude · fixture-model.*Full PR/)
