@@ -6,7 +6,7 @@ An Electron desktop workspace for reading GitHub pull requests file by file. SQL
 
 Use the Node version in `.nvmrc`, then run `npm ci` and `npm run dev`. This launches Electron with live renderer updates. For a production build, run `npm run build` followed by `npm start`. The first launch may download the Electron binary.
 
-Install GitHub CLI and sign in with `gh auth login` to fetch PRs. Save a GitHub PR URL and click the saved entry. Choose a file, move between hunks, and mark files reviewed as you go. Closing the app restores the active PR on the next launch. Returning to **Workspace** leaves the file checkpoints saved for the next time you open that PR.
+Install GitHub CLI and sign in with `gh auth login` to fetch PRs. Save a GitHub PR URL and click the saved entry. Choose a file, move between hunks, and mark files reviewed as you go. A file with published line comments shows a comment icon and their count at the right of its row. Closing the app restores the active PR on the next launch. Returning to **Workspace** leaves the file checkpoints saved for the next time you open that PR.
 
 The reader shows cached diffs while refreshing from GitHub. Unchanged files keep their progress. GitHub's file-list limit is 3,000 files. The reader labels incomplete lists and patches and distinguishes binary files from text changes when GitHub supplies that information.
 
@@ -45,6 +45,8 @@ Published line comments and their replies appear beneath the matching old or new
 ## Monitor repositories
 
 In the sidebar, click **+** beside **Repositories**, enter a GitHub URL or `owner/repository`, and choose **Add repository**. Select authors from the contributor and recent PR lists, or enter a GitHub username. The sidebar lists their open PRs and refreshes about every two minutes while the app is open. Open a PR directly from the sidebar. The last successful list stays available offline.
+
+Each PR row in the sidebar has two icons. The sparkle opens the PR and starts **Summarise PR** in Review chat. The check opens the PR's review with **Approve** already chosen; nothing is sent until you preview and submit it. A PR whose latest review from your GitHub CLI account is an approval has a green background and a green check. That state is read from GitHub when the list refreshes and right after you submit a review, so an approval made on github.com shows too. GitHub keeps an approval after new commits unless it is dismissed, so a green row does not mean you have seen the latest push.
 
 ## Project layout
 

@@ -16,7 +16,7 @@ import { pullRequestUrl, type SavedReview } from '../../shared/reviews.js';
 import { RepositorySidebar } from './RepositorySidebar.js';
 import { GitPullRequest, Inbox, ArrowUpRight, Link2, Bell, X } from 'lucide-react';
 import { EmptyState } from './components/EmptyState.js';
-import { Reader } from './Reader.js';
+import { Reader, type PrCommand } from './Reader.js';
 
 const emptyInbox: ReplyInbox = { account: null, items: [], added: 0, error: null };
 export function Workspace({
@@ -218,10 +218,17 @@ export function Workspace({
     refreshInbox();
     setPanel('replies');
   }
-  function select(url: string | null) {
+  // A sidebar action to carry out once its PR is open. Opening anything else drops it.
+  const [command, setCommand] = useState<PrCommand | null>(null);
+  const [reviewEpoch, setReviewEpoch] = useState(0);
+  const commandId = useRef(0);
+  function select(url: string | null, kind: PrCommand['kind'] | null = null) {
     window.reviewer
       .selectReview(url)
-      .then(() => setActiveUrl(url))
+      .then(() => {
+        setActiveUrl(url);
+        setCommand(url && kind ? { id: ++commandId.current, url, kind } : null);
+      })
       .catch(() => setError('Could not change the active review. Try again.'));
   }
 
@@ -251,12 +258,12 @@ export function Workspace({
       .finally(() => setBusy(false));
   }
 
-  function openMonitored(pr: string) {
+  function openMonitored(pr: string, kind: PrCommand['kind'] | null = null) {
     window.reviewer
       .saveReview(pr)
       .then((items) => {
         setReviews(items);
-        select(pr);
+        select(pr, kind);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not open the PR.'));
   }
@@ -286,6 +293,9 @@ export function Workspace({
           appearancePicker={picker}
           activeUrl={activeUrl}
           onOpen={openMonitored}
+          onSummarise={(pr) => openMonitored(pr, 'summarise')}
+          onApprove={(pr) => openMonitored(pr, 'approve')}
+          refresh={reviewEpoch}
           onHome={() => select(null)}
         />
       </ResizablePanel>
@@ -341,6 +351,8 @@ export function Workspace({
               </>
             }
             agents={agents}
+            command={command?.url === activeUrl ? command : null}
+            onPublished={() => setReviewEpoch((n) => n + 1)}
             key={activeUrl}
             url={activeUrl}
             onBack={() => select(null)}

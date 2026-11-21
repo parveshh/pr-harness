@@ -43,17 +43,40 @@ export function githubEnvironment() {
 
 export const githubApi: Api = (endpoint, signal, diff) =>
   apiRequest(endpoint, signal, githubEnvironment(), diff);
-async function apiRequest(
+function apiRequest(
   endpoint: string,
   signal: AbortSignal,
   env: NodeJS.ProcessEnv,
   diff?: boolean,
   headers = false,
 ) {
+  const args = ['api', '--hostname', 'github.com', endpoint];
+  if (headers) args.push('--include');
+  if (diff) args.push('-H', 'Accept: application/vnd.github.diff');
+  return runGh(args, signal, env);
+}
+export type Graphql = (
+  query: string,
+  variables: Record<string, string>,
+  signal: AbortSignal,
+) => Promise<string>;
+// Variables travel as raw string fields, so gh never reads a value as a file or a number.
+export const githubGraphql: Graphql = (query, variables, signal) =>
+  runGh(
+    [
+      'api',
+      'graphql',
+      '--hostname',
+      'github.com',
+      '-f',
+      'query=' + query,
+      ...Object.entries(variables).flatMap(([name, value]) => ['-f', name + '=' + value]),
+    ],
+    signal,
+    githubEnvironment(),
+  );
+async function runGh(args: string[], signal: AbortSignal, env: NodeJS.ProcessEnv) {
   try {
-    const args = ['api', '--hostname', 'github.com', endpoint];
-    if (headers) args.push('--include');
-    if (diff) args.push('-H', 'Accept: application/vnd.github.diff');
     const result = await run('gh', args, {
       signal,
       timeout: 30_000,

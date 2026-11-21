@@ -814,10 +814,70 @@
   app-region: no-drag;
 }
 
-.repo-sidebar .monitored-pr[aria-current='page'] {
+.repo-sidebar .monitored-pr[data-current] {
   background: var(--selection);
   border-left: 2px solid var(--control);
   color: var(--ink-bright);
+}
+/* A PR row holds the button that opens it and its actions side by side. */
+.repo-group .monitored-pr {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0;
+}
+.monitored-pr .monitored-open {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  padding: 8px 4px 8px 10px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border-radius: 0;
+  overflow-wrap: anywhere;
+}
+.monitored-actions {
+  display: flex;
+  flex: none;
+  gap: 1px;
+  padding: 6px 5px 0 0;
+}
+.monitored-actions button {
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+}
+.monitored-actions button:hover {
+  background: var(--hover);
+  color: var(--ink-bright);
+}
+/* A PR the signed-in reviewer has approved. */
+.repo-sidebar .monitored-pr[data-approved] {
+  background: color-mix(in srgb, var(--addition) 78%, transparent);
+  border-left: 2px solid #6fc79a;
+}
+.repo-sidebar .monitored-pr[data-approved][data-current] {
+  background: color-mix(in srgb, var(--addition) 65%, var(--selection));
+}
+.monitored-pr[data-approved] .monitored-actions button:last-child {
+  color: #8fdcb1;
+}
+.file-comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  line-height: 1.6;
+}
+.file-comments + span {
+  margin-left: 0;
 }
 .repo-sidebar .monitored-pr {
   line-height: 1.45;

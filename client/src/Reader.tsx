@@ -32,6 +32,7 @@ import {
   Files,
   Pin,
   MessageSquarePlus,
+  MessageSquare,
 } from 'lucide-react';
 import { FullFile, type FileFocus } from './FullFile.js';
 import { usePrDiscussions, discussionsByLine } from './PrDiscussions.js';
@@ -45,17 +46,24 @@ function message(error: unknown) {
     : 'Could not load this review.';
 }
 
+// An action chosen on a PR's sidebar row, carried out once that PR is open.
+export type PrCommand = { id: number; url: string; kind: 'summarise' | 'approve' };
+
 export function Reader({
   url,
   onBack,
   headerAction,
   agents,
+  command,
+  onPublished,
   accountEpoch,
 }: {
   url: string;
   onBack: () => void;
   headerAction: ReactNode;
   agents: AgentCatalog | null;
+  command: PrCommand | null;
+  onPublished: () => void;
   accountEpoch: string | null;
 }) {
   const [fullFile, setFullFile] = useState(false);
@@ -77,6 +85,24 @@ export function Reader({
   const [bundle, setBundle] = useState<Bundle | null>(null);
   const [editor, setEditor] = useState<DraftEditor | null>(null);
   const [paneName, setPaneName] = useState<'files' | 'diff' | 'chat'>('diff');
+  // Each sidebar command becomes a one-shot request for the pane that carries it out.
+  const [seenCommand, setSeenCommand] = useState<number | null>(null);
+  const [summaryRequest, setSummaryRequest] = useState<number | null>(null);
+  const [approveRequest, setApproveRequest] = useState<number | null>(null);
+  if (command && command.id !== seenCommand) {
+    setSeenCommand(command.id);
+    if (command.kind === 'summarise') {
+      setSummaryRequest(command.id);
+      setPaneName('chat');
+    } else setApproveRequest(command.id);
+  }
+  const commentCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const thread of discussions.data?.threads ?? [])
+      if (thread.kind === 'inline' && thread.path)
+        counts.set(thread.path, (counts.get(thread.path) ?? 0) + thread.messages.length);
+    return counts;
+  }, [discussions.data]);
   const rangeOrigin = useRef<(Anchor & { revision: string }) | null>(null);
   const [rangeHint, setRangeHint] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -384,8 +410,10 @@ export function Reader({
               url={url}
               view={view}
               bundle={bundle}
+              approveRequest={approveRequest}
               onChange={(b) => {
                 setBundle(b);
+                if (b.receipt && b.receipt !== bundle.receipt) onPublished();
                 if (b.receipt && b.receipt !== bundle.receipt)
                   window.reviewer
                     .cachedReview(url)
@@ -506,31 +534,46 @@ export function Reader({
                     />
                   </div>
                   <div className="files-scroll">
-                    {files.map((f) => (
-                      <button
-                        key={f.path}
-                        className="file-row"
-                        aria-label={f.path + ', ' + f.status + (f.reviewed ? ', reviewed' : '')}
-                        title={f.path}
-                        aria-current={f.path === selected?.path ? 'true' : undefined}
-                        onClick={() => {
-                          move(f);
-                          setPaneName('diff');
-                        }}
-                      >
-                        <span className={'change-tag ' + f.status} title={f.status}>
-                          {f.status.slice(0, 1).toUpperCase()}
-                        </span>
-                        <span className="file-path">
-                          <strong>{f.path.split('/').at(-1)}</strong>
-                          {f.path.includes('/') && (
-                            <small>{f.path.slice(0, f.path.lastIndexOf('/') + 1)}</small>
+                    {files.map((f) => {
+                      const comments = commentCounts.get(f.path) ?? 0;
+                      const commentLabel = comments + (comments === 1 ? ' comment' : ' comments');
+                      return (
+                        <button
+                          key={f.path}
+                          className="file-row"
+                          aria-label={
+                            f.path +
+                            ', ' +
+                            f.status +
+                            (f.reviewed ? ', reviewed' : '') +
+                            (comments ? ', ' + commentLabel : '')
+                          }
+                          title={f.path}
+                          aria-current={f.path === selected?.path ? 'true' : undefined}
+                          onClick={() => {
+                            move(f);
+                            setPaneName('diff');
+                          }}
+                        >
+                          <span className={'change-tag ' + f.status} title={f.status}>
+                            {f.status.slice(0, 1).toUpperCase()}
+                          </span>
+                          <span className="file-path">
+                            <strong>{f.path.split('/').at(-1)}</strong>
+                            {f.path.includes('/') && (
+                              <small>{f.path.slice(0, f.path.lastIndexOf('/') + 1)}</small>
+                            )}
+                          </span>
+                          {f.needsReview && <small>Needs another look</small>}
+                          {comments > 0 && (
+                            <span className="file-comments" title={commentLabel + ' on GitHub'}>
+                              <MessageSquare size={12} /> {comments}
+                            </span>
                           )}
-                        </span>
-                        {f.needsReview && <small>Needs another look</small>}
-                        {f.reviewed && <span aria-label="Reviewed">✓</span>}
-                      </button>
-                    ))}
+                          {f.reviewed && <span aria-label="Reviewed">✓</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </nav>
               </ResizablePanel>
@@ -747,6 +790,8 @@ export function Reader({
                   <ResizablePanel id="review-chat" defaultSize="28%" minSize="235px">
                     <ReviewChat
                       agents={agents}
+                      summaryRequest={summaryRequest}
+                      onSummaryStarted={() => setSummaryRequest(null)}
                       url={url}
                       view={view}
                       file={selected}

@@ -97,6 +97,8 @@ export const watchPr = z.object({
   number: z.number().int().positive(),
   title: z.string(),
   author: login,
+  // Whether the signed-in reviewer's latest review on GitHub approves the PR.
+  approved: z.boolean().default(false),
 });
 export const repository = z.object({
   name: repoName,

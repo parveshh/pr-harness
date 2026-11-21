@@ -13,11 +13,16 @@ import {
   HardDrive,
   Bell,
   Settings,
+  Sparkles,
+  CircleCheck,
 } from 'lucide-react';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 
 export function RepositorySidebar({
   onOpen,
+  onSummarise,
+  onApprove,
+  refresh,
   onHome,
   activeUrl,
   collapsed,
@@ -28,6 +33,10 @@ export function RepositorySidebar({
   unread,
 }: {
   onOpen: (url: string) => void;
+  onSummarise: (url: string) => void;
+  onApprove: (url: string) => void;
+  // Changes when the PR list should be read from GitHub again, such as after a review.
+  refresh: number;
   onHome: () => void;
   activeUrl: string | null;
   collapsed: boolean;
@@ -83,7 +92,7 @@ export function RepositorySidebar({
       clearInterval(timer);
       window.removeEventListener('focus', focus);
     };
-  }, []);
+  }, [refresh]);
   function update(work: () => Promise<Repository[]>, done?: () => void) {
     setBusy(true);
     setError('');
@@ -200,23 +209,52 @@ export function RepositorySidebar({
                   </small>
                   {r.pulls
                     .filter((p) => r.watching.includes(p.author))
-                    .map((p) => (
-                      <button
-                        key={p.number}
-                        className="monitored-pr"
-                        aria-current={
-                          activeUrl === 'https://github.com/' + r.name + '/pull/' + p.number
-                            ? 'page'
-                            : undefined
-                        }
-                        onClick={() => onOpen('https://github.com/' + r.name + '/pull/' + p.number)}
-                      >
-                        <span>
-                          <GitPullRequest size={12} /> #{p.number} · {p.author}
-                        </span>
-                        {p.title}
-                      </button>
-                    ))}
+                    .map((p) => {
+                      const pr = 'https://github.com/' + r.name + '/pull/' + p.number;
+                      return (
+                        <div
+                          key={p.number}
+                          className="monitored-pr"
+                          data-current={activeUrl === pr || undefined}
+                          data-approved={p.approved || undefined}
+                        >
+                          <button
+                            className="monitored-open"
+                            aria-current={activeUrl === pr ? 'page' : undefined}
+                            onClick={() => onOpen(pr)}
+                          >
+                            <span>
+                              <GitPullRequest size={12} /> #{p.number} · {p.author}
+                            </span>
+                            {p.title}
+                          </button>
+                          <span className="monitored-actions">
+                            <button
+                              aria-label={'Summarise pull request #' + p.number}
+                              title="Summarise this PR"
+                              onClick={() => onSummarise(pr)}
+                            >
+                              <Sparkles size={14} />
+                            </button>
+                            <button
+                              aria-label={
+                                (p.approved ? 'Approved. Review' : 'Approve') +
+                                ' pull request #' +
+                                p.number
+                              }
+                              title={
+                                p.approved
+                                  ? 'You approved this PR. Review it again'
+                                  : 'Approve this PR. You confirm before it is sent'
+                              }
+                              onClick={() => onApprove(pr)}
+                            >
+                              <CircleCheck size={14} />
+                            </button>
+                          </span>
+                        </div>
+                      );
+                    })}
                 </>
               )}
               {r.error && <small role="status">Refresh failed · cached results</small>}

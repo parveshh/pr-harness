@@ -95,6 +95,10 @@ if (!live) {
       'const updatePath = ' + JSON.stringify(revisionFixture) + ';',
       "const update = fs.existsSync(updatePath) ? JSON.parse(fs.readFileSync(updatePath,'utf8')) : null;",
       "if(update){ response.meta.head.sha=update.head; response.meta.base.sha=update.base; response.files[1].patch=response.files[1].patch.replace('+new line 1\\n','+'+update.line+'\\n'); response.files[1].sha=update.line; }",
+      // The reviewer counts as having approved once the grouped review has been posted.
+      "if(process.argv.includes('graphql')){const query=process.argv.find(a=>a.startsWith('query='));const state=fs.existsSync(" +
+        JSON.stringify(posted) +
+        ")?[{author:{login:'fixture-reviewer'},state:'APPROVED'}]:[];console.log(JSON.stringify({data:{viewer:{login:'fixture-reviewer'},repository:Object.fromEntries([...query.matchAll(/(p\\d+):pullRequest/g)].map(m=>[m[1],{latestOpinionatedReviews:{nodes:state}}]))}}));return;}",
       'const repliesFile = ' + JSON.stringify(repliesFile) + ';',
       'const loginRelease = ' + JSON.stringify(loginRelease) + ';',
       'const signedOut = ' + JSON.stringify(signedOut) + ';',
@@ -264,7 +268,7 @@ try {
       await sidebar.getByRole('button', { name: /Tracked PR/ }).click();
       assert.equal(await sidebar.getByRole('button', { name: /Other PR/ }).count(), 0);
       assert.equal(await page.getByRole('button', { name: 'PR discussions' }).count(), 0);
-      await page.getByRole('button', { name: 'src/reader.ts, modified', exact: true }).click();
+      await page.getByRole('button', { name: /^src\/reader\.ts, modified/ }).click();
       const discussions = page.locator('details.pr-conversation');
       await discussions.locator('summary').click();
       const discussionThread = page
@@ -343,7 +347,20 @@ try {
         .getByRole('button', { name: 'Reply', exact: true })
         .click({ trial: true });
       await rm(switchedAccount);
-      await page.getByRole('button', { name: 'partial.ts, modified', exact: true }).click();
+      // Each file shows how many published comments it has.
+      const partialRow = page.getByRole('button', {
+        name: 'partial.ts, modified, 2 comments',
+        exact: true,
+      });
+      assert.equal(await partialRow.locator('.file-comments').innerText(), '2');
+      assert.equal(
+        await page
+          .getByRole('button', { name: /^README\.md, added/ })
+          .locator('.file-comments')
+          .count(),
+        0,
+      );
+      await partialRow.click();
       const oldQuestion = page
         .locator('.published-threads [role="article"]')
         .filter({ hasText: 'Later visible line?' });
@@ -448,10 +465,29 @@ try {
       const summary = chat
         .locator('.exchange')
         .filter({ hasText: 'Summarise this whole pull request.' });
-      await summary.getByText('Read from the local PR copy.', { exact: true }).waitFor();
-      await summary.getByText(/claude · fixture-model · \w+ · Full PR/).waitFor();
+      await summary.first().getByText('Read from the local PR copy.', { exact: true }).waitFor();
+      await summary
+        .first()
+        .getByText(/claude · fixture-model · \w+ · Full PR/)
+        .waitFor();
       assert.equal(await chat.getByLabel('Context', { exact: true }).inputValue(), 'focused');
       assert.equal(await chat.getByLabel('Ask about the diff').inputValue(), 'Half-typed question');
+      // The same summary and an approval can be started from the PR's row in the sidebar.
+      const trackedRow = page
+        .getByRole('complementary', { name: 'Repository sidebar' })
+        .locator('.monitored-pr');
+      await trackedRow
+        .getByRole('button', { name: 'Summarise pull request #12', exact: true })
+        .click();
+      await summary.nth(1).getByText('Read from the local PR copy.', { exact: true }).waitFor();
+      assert.equal(await trackedRow.getAttribute('data-approved'), null);
+      await trackedRow
+        .getByRole('button', { name: 'Approve pull request #12', exact: true })
+        .click();
+      const decision = page.getByLabel('Review decision');
+      assert.equal(await decision.inputValue(), 'APPROVE');
+      await page.keyboard.press('Escape');
+      await decision.waitFor({ state: 'hidden' });
       await chat.getByLabel('Ask about the diff').fill('Wait for cancellation');
       await chat.getByRole('button', { name: 'Send', exact: true }).click();
       await chat.getByText('Waiting for cancellation', { exact: true }).waitFor();
@@ -601,7 +637,7 @@ try {
       await page.getByRole('button', { name: /Tracked PR/ }).waitFor();
       assert.equal(
         await page.getByRole('region', { name: 'Review chat' }).locator('.exchange').count(),
-        3,
+        4,
       );
       await page.getByText('Hunk 2 of 2').waitFor();
       await page
@@ -620,6 +656,12 @@ try {
       await page.getByRole('button', { name: 'Submit review to GitHub', exact: true }).click();
       await page.getByRole('button', { name: 'Check GitHub', exact: true }).click();
       await page.getByRole('button', { name: /Open published review/ }).waitFor();
+      // Publishing refreshes the sidebar, which marks the PR as approved by this reviewer.
+      const approvedRow = page.locator('.monitored-pr[data-approved]');
+      await approvedRow.waitFor();
+      await approvedRow
+        .getByRole('button', { name: 'Approved. Review pull request #12', exact: true })
+        .waitFor();
       const payload = JSON.parse((await readFile(posted, 'utf8')).trim());
       assert.deepEqual(
         payload.comments.map((c) => [c.side, c.line, c.body]),

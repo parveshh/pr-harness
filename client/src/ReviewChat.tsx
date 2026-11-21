@@ -1,7 +1,7 @@
 import { replaceCitations } from '../../shared/markdown-citations.js';
 import { ChatMarkdown } from './components/ChatMarkdown.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import {
   agentNames,
   defaultPrompt,
@@ -23,6 +23,8 @@ import type { ReaderView, ReaderFile } from '../../shared/reader.js';
 
 export function ReviewChat({
   agents,
+  summaryRequest,
+  onSummaryStarted,
   url,
   view,
   file,
@@ -31,6 +33,9 @@ export function ReviewChat({
   onDraft,
 }: {
   agents: AgentCatalog | null;
+  // Set when a summary was asked for outside this pane, such as from the sidebar.
+  summaryRequest: number | null;
+  onSummaryStarted: () => void;
   url: string;
   view: ReaderView;
   file: ReaderFile;
@@ -50,7 +55,8 @@ export function ReviewChat({
     [running, setRunning] = useState(false),
     [partial, setPartial] = useState(''),
     [pending, setPending] = useState(''),
-    [notice, setNotice] = useState('');
+    [notice, setNotice] = useState(''),
+    [configFailed, setConfigFailed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const active = useRef<string | null>(null),
     alive = useRef(false),
@@ -71,7 +77,9 @@ export function ReviewChat({
         }
       })
       .catch((e) => {
-        if (current) setError(readableError(e));
+        if (!current) return;
+        setError(readableError(e));
+        setConfigFailed(true);
       });
     const off = window.reviewer.onActivity((e) => {
       if (current && active.current === e.run) setPartial(e.text);
@@ -155,6 +163,28 @@ export function ReviewChat({
       active.current = null;
     }
   }
+  const canSummarise = !!agent && !running && prompt !== null;
+  // A summary asked for from the sidebar waits only while the harness list or the prompt is
+  // still loading. After that it either starts or says why not, so it never fires later.
+  const takeSummaryRequest = useEffectEvent(() => {
+    if (!agents || (prompt === null && !configFailed)) return;
+    onSummaryStarted();
+    if (canSummarise) void send(summaryQuestion, 'full-pr');
+    else
+      setError(
+        running
+          ? 'Another answer is running. Summarise the PR when it finishes.'
+          : agent
+            ? 'Review instructions could not be loaded, so the summary did not start.'
+            : 'Choose an installed harness in the title bar, then summarise the PR.',
+      );
+  });
+  useEffect(() => {
+    // Starting a run is the external action here, and marking it as running or refused is
+    // part of answering the request. The request is cleared in the same step.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (summaryRequest !== null) takeSummaryRequest();
+  }, [summaryRequest, agents, prompt, configFailed]);
   const canAsk =
     !!agent && !running && (contextMode === 'full-pr' || ['text', 'partial'].includes(file.kind));
   return (
@@ -347,7 +377,7 @@ export function ReviewChat({
           <button
             type="button"
             className="summarise-pr"
-            disabled={!agent || running || prompt === null}
+            disabled={!canSummarise}
             title="Uses Full PR context"
             onClick={() => void send(summaryQuestion, 'full-pr')}
           >

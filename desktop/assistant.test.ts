@@ -157,7 +157,27 @@ await test('repository monitoring filters issues and other authors, pages result
   const repo = 'example/project';
   let offline = false;
   let nextPr = 4;
-  const sync = monitor(data, new AbortController().signal, (endpoint) => {
+  // The latest opinionated review of each person, as GitHub reports them for the PR.
+  let reviews: [login: string, state: string][] | Error = [];
+  const queries: [string, Record<string, string>][] = [];
+  const graphql = (query: string, variables: Record<string, string>) => {
+    queries.push([query, variables]);
+    if (reviews instanceof Error) return Promise.reject(reviews);
+    const nodes = reviews.map(([login, state]) => ({ author: { login }, state }));
+    return Promise.resolve(
+      JSON.stringify({
+        data: {
+          viewer: { login: 'Reviewer' },
+          repository: {
+            ['p' + nextPr]: {
+              latestOpinionatedReviews: { nodes: [...nodes, { author: null, state: 'APPROVED' }] },
+            },
+          },
+        },
+      }),
+    );
+  };
+  const api = (endpoint: string) => {
     if (offline) return Promise.reject(Error('Offline'));
     const item = {
       number: nextPr,
@@ -180,7 +200,8 @@ await test('repository monitoring filters issues and other authors, pages result
           : [item, { ...item, number: 9, user: { login: 'unwatched' } }],
       ),
     );
-  });
+  };
+  const sync = monitor(data, new AbortController().signal, api, graphql);
   data.add(repo);
   assert.deepEqual((await sync(repo, true))[0]?.authors, ['guest', 'octo']);
   data.watch(repo, ['octo']);
@@ -188,11 +209,33 @@ await test('repository monitoring filters issues and other authors, pages result
     (await sync(repo, false))[0]?.pulls.map((p) => p.number),
     [4],
   );
+  assert.deepEqual(queries.at(-1), [
+    'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){p4:pullRequest(number:4){latestOpinionatedReviews(first:100){nodes{author{login} state}}}}}',
+    { owner: 'example', name: 'project' },
+  ]);
   nextPr = 10;
-  assert.deepEqual(
-    (await sync(repo, false))[0]?.pulls.map((p) => p.number),
-    [10],
-  );
+  const approved = () => data.repositories()[0]?.pulls.map((p) => [p.number, p.approved]);
+  for (const [state, expected] of [
+    // Only the signed-in reviewer's own approval counts, whatever the login's case.
+    [[['reviewer', 'APPROVED']], true],
+    [[['reviewer', 'CHANGES_REQUESTED']], false],
+    [[['someone-else', 'APPROVED']], false],
+    [[['reviewer', 'DISMISSED']], false],
+    [
+      [
+        ['someone-else', 'CHANGES_REQUESTED'],
+        ['REVIEWER', 'APPROVED'],
+      ],
+      true,
+    ],
+    // The PR list is still saved, with the last known approval, when review states fail.
+    [Error('GraphQL unavailable'), true],
+  ] as const) {
+    reviews = state instanceof Error ? state : state.map(([login, s]) => [login, s]);
+    await sync(repo, false);
+    assert.deepEqual(approved(), [[10, expected]]);
+    assert.equal(data.repositories()[0]?.error, null);
+  }
   offline = true;
   const cached = (await sync(repo, false))[0];
   assert.deepEqual(

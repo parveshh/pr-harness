@@ -27,12 +27,15 @@ export function DraftReview({
   bundle,
   onChange,
   selection,
+  approveRequest,
 }: {
   url: string;
   view: ReaderView;
   bundle: Bundle;
   onChange: (b: Bundle) => void;
   selection: CommentAnchor | null;
+  // Changes when the reviewer asks to approve from outside this panel.
+  approveRequest: number | null;
 }) {
   const [editor, setEditor] = useState<DraftEditor | null>(null);
   const [panel, setPanel] = useState<'closed' | 'review' | 'preview'>('closed');
@@ -42,6 +45,15 @@ export function DraftReview({
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [preview, setPreview] = useState<{ version: number; revision: string } | null>(null);
+  // Open the review with Approve chosen. The reviewer still previews and submits it.
+  const [seenApprove, setSeenApprove] = useState<number | null>(null);
+  if (approveRequest !== null && approveRequest !== seenApprove) {
+    setSeenApprove(approveRequest);
+    setSummary(bundle.summary);
+    setEvent('APPROVE');
+    setError('');
+    setPanel('review');
+  }
   const [notice, setNotice] = useState('');
   function work(task: () => Promise<void>) {
     if (busy) return;

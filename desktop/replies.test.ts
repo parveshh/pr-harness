@@ -23,7 +23,11 @@ await test('removing a later watch during polling skips that PR and its alerts',
   store.save(url);
   const repo = 'example/watched';
   store.assistant.add(repo);
-  store.assistant.update(repo, ['author'], [{ number: 9, title: 'Another PR', author: 'author' }]);
+  store.assistant.update(
+    repo,
+    ['author'],
+    [{ number: 9, title: 'Another PR', author: 'author', approved: false }],
+  );
   store.assistant.watch(repo, ['author']);
   const requests: string[] = [];
   const monitor = replyMonitor(
