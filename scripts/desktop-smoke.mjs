@@ -140,11 +140,30 @@ const launch = () =>
     env,
     args: ['--user-data-dir=' + profile, '.'],
   });
+// macOS clamps a window to the screen, and a small CI display would switch the reader to
+// its narrow layout. Pin the viewport as well so the layout under test matches the request.
+const sessions = new WeakMap();
+async function resize(app, page, width, height) {
+  await app.evaluate(
+    ({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(size.width, size.height),
+    { width, height },
+  );
+  // The override lasts only while its session stays attached.
+  let session = sessions.get(page);
+  if (!session) sessions.set(page, (session = await page.context().newCDPSession(page)));
+  await session.send('Emulation.setDeviceMetricsOverride', {
+    width,
+    height,
+    deviceScaleFactor: 0,
+    mobile: false,
+  });
+}
 let restoredFilesWidth;
 try {
   const app = await launch();
   try {
     const page = await app.firstWindow();
+    await resize(app, page, 1380, 720);
     await page.getByText('Your first review starts here').waitFor();
     await capture(page, 'workspace');
     if (!live) {
@@ -354,9 +373,9 @@ try {
       await chatDivider.press('ArrowLeft');
       assert.ok((await chat.evaluate((el) => el.clientWidth)) > chatBefore);
       restoredFilesWidth = await fileWidth();
-      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(850, 720));
+      await resize(app, page, 850, 720);
       await page.getByRole('button', { name: 'Chat', exact: true }).click();
-      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(850, 440));
+      await resize(app, page, 850, 440);
       await chat.getByLabel('Context', { exact: true }).selectOption('full-pr');
       await chat.getByLabel('Ask about the diff').fill('Keep my question');
       await chat.getByRole('button', { name: 'Send', exact: true }).scrollIntoViewIfNeeded();
@@ -364,9 +383,7 @@ try {
       assert.equal(await divider.isVisible(), false);
       await page.getByRole('button', { name: 'Diff', exact: true }).click();
       await region.waitFor();
-      await app.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()[0].setSize(1380, 720),
-      );
+      await resize(app, page, 1380, 720);
       await divider.waitFor();
       assert.equal(await chat.getByLabel('Ask about the diff').inputValue(), 'Keep my question');
       await chat.getByLabel('Ask about the diff').fill('');
@@ -530,6 +547,7 @@ try {
   const reopened = await launch();
   try {
     const page = await reopened.firstWindow();
+    await resize(reopened, page, 1380, 720);
     if (!live) {
       const files = page.getByRole('navigation', { name: 'Changed files' });
       await files.waitFor();
