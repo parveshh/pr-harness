@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+.local-reviewer/
+*.sqlite*
+*.tsbuildinfo
+.DS_Store

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+.local-reviewer/
+**/fixtures/diffs/
+*.sqlite*
+package-lock.json
