@@ -1,0 +1,60 @@
+{
+  "meta": {
+    "title": "Preserve review progress",
+    "user": {
+      "login": "reviewer"
+    },
+    "body": "Restore the selected file on restart.",
+    "base": {
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ref": "main"
+    },
+    "head": {
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "ref": "reader"
+    },
+    "changed_files": 5
+  },
+  "files": [
+    {
+      "filename": "README.md",
+      "status": "added",
+      "additions": 1,
+      "deletions": 0,
+      "sha": "abcREADME.md",
+      "patch": "@@ -0,0 +1 @@\n+Review workspace"
+    },
+    {
+      "filename": "src/reader.ts",
+      "status": "modified",
+      "additions": 61,
+      "deletions": 1,
+      "sha": "abcsrc/reader.ts",
+      "patch": "@@ -1 +1 @@\n-old line\n+first change\n@@ -40,0 +40,60 @@\n+new line 1\n+new line 2\n+new line 3\n+new line 4\n+new line 5\n+new line 6\n+new line 7\n+new line 8\n+new line 9\n+new line 10\n+new line 11\n+new line 12\n+new line 13\n+new line 14\n+new line 15\n+new line 16\n+new line 17\n+new line 18\n+new line 19\n+new line 20\n+new line 21\n+new line 22\n+new line 23\n+new line 24\n+new line 25\n+new line 26\n+new line 27\n+new line 28\n+new line 29\n+new line 30\n+new line 31\n+new line 32\n+new line 33\n+new line 34\n+new line 35\n+new line 36\n+new line 37\n+new line 38\n+new line 39\n+new line 40\n+new line 41\n+new line 42\n+new line 43\n+new line 44\n+new line 45\n+new line 46\n+new line 47\n+new line 48\n+new line 49\n+new line 50\n+new line 51\n+new line 52\n+new line 53\n+new line 54\n+new line 55\n+new line 56\n+new line 57\n+new line 58\n+new line 59\n+new line 60"
+    },
+    {
+      "filename": "obsolete.txt",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 1,
+      "sha": "abcobsolete.txt",
+      "patch": "@@ -1 +0,0 @@\n-retired"
+    },
+    {
+      "filename": "new name.txt",
+      "status": "renamed",
+      "additions": 0,
+      "deletions": 0,
+      "sha": "abcnew name.txt",
+      "previous_filename": "old name.txt"
+    },
+    {
+      "filename": "logo.png",
+      "status": "modified",
+      "additions": 0,
+      "deletions": 0,
+      "sha": "abclogo.png"
+    }
+  ],
+  "raw": "diff --git a/old name.txt b/new name.txt\nsimilarity index 100%\nrename from old name.txt\nrename to new name.txt\ndiff --git a/logo.png b/logo.png\nindex abc..def 100644\nBinary files a/logo.png and b/logo.png differ\n"
+}
