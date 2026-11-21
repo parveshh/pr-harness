@@ -1,0 +1,368 @@
+import { useEffect, useState, type ReactNode, type FormEvent } from 'react';
+import { login, readableError, repoName, type Repository } from '../../shared/assistant.js';
+
+import {
+  BookMarked,
+  GitPullRequest,
+  Inbox,
+  Layers2,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  HardDrive,
+  Bell,
+  Settings,
+} from 'lucide-react';
+import { WorkspaceDialog } from './components/WorkspaceDialog.js';
+
+export function RepositorySidebar({
+  onOpen,
+  onHome,
+  activeUrl,
+  collapsed,
+  onToggle,
+  appearancePicker,
+  openInbox,
+  openSettings,
+  unread,
+}: {
+  onOpen: (url: string) => void;
+  onHome: () => void;
+  activeUrl: string | null;
+  collapsed: boolean;
+  onToggle: () => void;
+  appearancePicker: ReactNode;
+  openInbox: () => void;
+  openSettings: () => void;
+  unread: number;
+}) {
+  const [repos, setRepos] = useState<Repository[]>([]),
+    [adding, setAdding] = useState(false),
+    [name, setName] = useState(''),
+    [manage, setManage] = useState<string | null>(null),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
+  const selected = repos.find((r) => r.name === manage);
+  function openAdd() {
+    setError('');
+    setName('');
+    setAdding(true);
+  }
+  useEffect(() => {
+    let alive = true,
+      running = false,
+      last = 0;
+    async function poll() {
+      if (running || Date.now() - last < 115000) return;
+      running = true;
+      last = Date.now();
+      try {
+        const cached = await window.reviewer.repositories();
+        if (!alive) return;
+        setRepos(cached);
+        for (const r of cached) {
+          if (!alive) break;
+          if (r.watching.length) {
+            const next = await window.reviewer.syncRepository(r.name, false);
+            if (alive) setRepos(next);
+          }
+        }
+      } catch (e) {
+        if (alive) setError(readableError(e));
+      } finally {
+        running = false;
+      }
+    }
+    void poll();
+    const timer = setInterval(() => void poll(), 120000);
+    const focus = () => void poll();
+    window.addEventListener('focus', focus);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener('focus', focus);
+    };
+  }, []);
+  function update(work: () => Promise<Repository[]>, done?: () => void) {
+    setBusy(true);
+    setError('');
+    work()
+      .then((rows) => {
+        setRepos(rows);
+        done?.();
+      })
+      .catch((e) => setError(readableError(e)))
+      .finally(() => setBusy(false));
+  }
+  function add(e: FormEvent) {
+    e.preventDefault();
+    const parsed = repoName.safeParse(name);
+    if (!parsed.success) {
+      setError('Enter owner/repository or its GitHub URL.');
+      return;
+    }
+    if (busy) return;
+    update(
+      () => window.reviewer.addRepository(parsed.data),
+      () => {
+        setName('');
+        setAdding(false);
+        setManage(parsed.data);
+      },
+    );
+  }
+  return (
+    <aside
+      className={'repo-sidebar' + (collapsed ? ' collapsed' : '')}
+      aria-label="Repository sidebar"
+    >
+      <nav className="workspace-rail" aria-label="Workspace tools">
+        <button
+          title="Review replies"
+          aria-label={'Review replies, ' + unread + ' unread'}
+          onClick={openInbox}
+        >
+          <Bell size={19} />
+          {unread > 0 && <span className="reply-count">{unread > 99 ? '99+' : unread}</span>}
+        </button>
+        <button
+          title="Settings"
+          aria-label="Settings"
+          className="rail-settings"
+          onClick={openSettings}
+        >
+          <Settings size={19} />
+        </button>
+      </nav>
+      <div className="sidebar-brand">
+        {!collapsed && (
+          <>
+            <span className="mark">
+              <Layers2 size={19} />
+            </span>
+            <strong>Local Reviewer</strong>
+          </>
+        )}
+        <button
+          className="rail-toggle"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={onToggle}
+        >
+          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="sidebar-contents">
+          <button
+            className="nav-home"
+            aria-current={!activeUrl ? 'page' : undefined}
+            onClick={onHome}
+          >
+            <Inbox size={17} /> All reviews
+          </button>
+          <div className="sidebar-title">
+            <h2>Repositories</h2>
+            <button aria-label="Add repository" title="Add repository" onClick={openAdd}>
+              <Plus size={16} />
+            </button>
+          </div>
+          {!repos.length && !adding && (
+            <button className="add-first" onClick={openAdd}>
+              <BookMarked size={15} /> Add your first repository
+            </button>
+          )}
+          {repos.map((r) => (
+            <section className="repo-group" key={r.name}>
+              <div className="repo-group-name">
+                <BookMarked size={14} />
+                <strong title={r.name}>{r.name}</strong>
+                <button
+                  title="Manage authors"
+                  aria-label={'Manage authors for ' + r.name}
+                  onClick={() => {
+                    setError('');
+                    setManage(r.name);
+                  }}
+                >
+                  <MoreHorizontal size={15} />
+                </button>
+              </div>
+              {!r.watching.length ? (
+                <button className="choose-authors" onClick={() => setManage(r.name)}>
+                  Choose authors
+                </button>
+              ) : (
+                <>
+                  <small>
+                    {r.watching.length} monitored ·{' '}
+                    {r.pulls.filter((p) => r.watching.includes(p.author)).length} open
+                  </small>
+                  {r.pulls
+                    .filter((p) => r.watching.includes(p.author))
+                    .map((p) => (
+                      <button
+                        key={p.number}
+                        className="monitored-pr"
+                        aria-current={
+                          activeUrl === 'https://github.com/' + r.name + '/pull/' + p.number
+                            ? 'page'
+                            : undefined
+                        }
+                        onClick={() => onOpen('https://github.com/' + r.name + '/pull/' + p.number)}
+                      >
+                        <span>
+                          <GitPullRequest size={12} /> #{p.number} · {p.author}
+                        </span>
+                        {p.title}
+                      </button>
+                    ))}
+                </>
+              )}
+              {r.error && <small role="status">Refresh failed · cached results</small>}
+            </section>
+          ))}
+          {error && !manage && !adding && <p role="alert">{error}</p>}
+        </div>
+      )}
+      {!collapsed && (
+        <div className="sidebar-foot">
+          <span className="local-status">
+            <HardDrive size={13} /> Local workspace
+          </span>
+          {appearancePicker}
+        </div>
+      )}
+      {adding && (
+        <WorkspaceDialog title="Add repository" busy={busy} onClose={() => setAdding(false)}>
+          <p>Connect a GitHub repository, then choose whose pull requests to follow.</p>
+          <form onSubmit={add} className="dialog-form">
+            <label htmlFor="repo-add">Repository</label>
+            <input
+              id="repo-add"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="owner/repository or GitHub URL"
+              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              required
+            />
+            {error && <p role="alert">{error}</p>}
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="quiet"
+                disabled={busy}
+                onClick={() => setAdding(false)}
+              >
+                Cancel
+              </button>
+              <button disabled={busy || !name.trim()}>
+                {busy ? 'Fetching authors…' : 'Add repository'}
+              </button>
+            </div>
+          </form>
+        </WorkspaceDialog>
+      )}
+      {selected && (
+        <WorkspaceDialog title={selected.name} onClose={() => setManage(null)}>
+          <AuthorPicker
+            key={selected.name}
+            repo={selected}
+            busy={busy}
+            onWatch={(authors) => {
+              const previous = selected.watching;
+              const show = (watching: string[]) =>
+                setRepos((rows) =>
+                  rows.map((row) => (row.name === selected.name ? { ...row, watching } : row)),
+                );
+              show(authors);
+              update(() =>
+                window.reviewer.watchAuthors(selected.name, authors).catch((error: unknown) => {
+                  show(previous);
+                  throw error;
+                }),
+              );
+            }}
+            onRefresh={() => update(() => window.reviewer.syncRepository(selected.name, true))}
+          />
+          {(error || selected.error) && <p role="alert">{error || selected.error}</p>}
+          <button
+            className="remove-repo"
+            disabled={busy}
+            onClick={() =>
+              update(
+                () => window.reviewer.removeRepository(selected.name),
+                () => setManage(null),
+              )
+            }
+          >
+            Remove repository
+          </button>
+        </WorkspaceDialog>
+      )}
+    </aside>
+  );
+}
+
+function AuthorPicker({
+  repo,
+  busy,
+  onWatch,
+  onRefresh,
+}: {
+  repo: Repository;
+  busy: boolean;
+  onWatch: (authors: string[]) => void;
+  onRefresh: () => void;
+}) {
+  const [filter, setFilter] = useState('');
+  const names = [...new Set([...repo.watching, ...repo.authors])]
+    .sort()
+    .filter((a) => a.includes(filter.trim().toLowerCase()));
+  const custom = login.safeParse(filter.replace(/^@/, ''));
+  return (
+    <>
+      <div className="authors-heading">
+        <h3>Monitored authors</h3>
+        <button disabled={busy} onClick={onRefresh}>
+          Refresh authors
+        </button>
+      </div>
+      <p>Open pull requests from selected authors appear in the sidebar.</p>
+      <label htmlFor="author-filter">Find or add a GitHub username</label>
+      <input
+        id="author-filter"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        placeholder="Search authors"
+      />
+      <div className="author-list">
+        {names.map((author) => (
+          <label key={author}>
+            <input
+              type="checkbox"
+              disabled={busy}
+              checked={repo.watching.includes(author)}
+              onChange={(e) =>
+                onWatch(
+                  e.target.checked
+                    ? [...repo.watching, author]
+                    : repo.watching.filter((a) => a !== author),
+                )
+              }
+            />
+            {author}
+          </label>
+        ))}
+      </div>
+      {custom.success && !names.includes(custom.data) && (
+        <button disabled={busy} onClick={() => onWatch([...repo.watching, custom.data])}>
+          Monitor @{custom.data}
+        </button>
+      )}
+      {repo.checked && <small>Last checked {new Date(repo.checked).toLocaleString()}</small>}
+    </>
+  );
+}
