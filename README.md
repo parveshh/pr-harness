@@ -84,7 +84,7 @@ After you open an update, select a question to compare the original evidence wit
 
 ## Workspace settings and reply alerts
 
-The gear at the bottom of the left rail opens **Settings**. Choose one of ten themes, an interface font, and a text size. Settings is the only place the theme changes. Code keeps its monospaced font and follows the selected text size. Appearance is saved in SQLite.
+The gear at the bottom of the left rail opens **Settings**. Choose one of ten themes, an accent colour for buttons and highlights, an interface font, and a text size. Settings is the only place the theme changes. Code keeps its monospaced font and follows the selected text size. Appearance is saved in SQLite.
 
 **Connect account** starts GitHub CLI browser sign-in for github.com. Complete the authorization on GitHub. Settings displays the active CLI account, and **Switch account** starts another sign-in.
 

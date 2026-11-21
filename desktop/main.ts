@@ -221,6 +221,14 @@ function startWorkspace() {
     verifySender(event);
     store.saveAppearance(value);
   });
+  ipcMain.handle('accent:get', (event) => {
+    verifySender(event);
+    return store.getAccent();
+  });
+  ipcMain.handle('accent:save', (event, value: unknown) => {
+    verifySender(event);
+    store.saveAccent(value);
+  });
   ipcMain.handle('reviews:list', (event) => {
     verifySender(event);
     return store.list();

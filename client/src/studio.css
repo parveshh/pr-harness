@@ -16,6 +16,9 @@
   --control-hover: #e9efed;
   --control-ink: #192a2c;
   --control-count: #bac8c7;
+  --control-top: #e2eae7;
+  --control-bottom: #bfcecc;
+  --control-outline: #c5d5d370;
   --positive: #aae2b7;
   --negative: #ffbdb8;
   --addition: #244435;
@@ -90,6 +93,40 @@
   --control-ink: #202526;
   scrollbar-width: thin;
   scrollbar-color: var(--line) var(--paper);
+}
+/* Accent colours are light tints, so the dark control text stays readable on them. */
+[data-accent='neutral'] {
+  --accent: #d4d9d8;
+}
+[data-accent='blue'] {
+  --accent: #8fb8f6;
+}
+[data-accent='teal'] {
+  --accent: #74d1c6;
+}
+[data-accent='green'] {
+  --accent: #94d6a2;
+}
+[data-accent='amber'] {
+  --accent: #efc368;
+}
+[data-accent='coral'] {
+  --accent: #f4a488;
+}
+[data-accent='rose'] {
+  --accent: #f29db8;
+}
+[data-accent='violet'] {
+  --accent: #b8a8f5;
+}
+:root[data-accent]:not([data-accent='neutral']) {
+  --control: var(--accent);
+  --control-hover: color-mix(in srgb, var(--accent) 72%, white);
+  --control-count: color-mix(in srgb, var(--accent) 80%, black);
+  --control-ink: #14191b;
+  --control-top: color-mix(in srgb, var(--accent) 86%, white);
+  --control-bottom: color-mix(in srgb, var(--accent) 90%, black);
+  --control-outline: color-mix(in srgb, var(--accent) 44%, transparent);
 }
 .studio {
   display: flex;
@@ -642,7 +679,7 @@
 .diff-line[data-selected='true'] {
   box-shadow:
     inset 3px 0 var(--control),
-    inset 0 0 0 1px #c5d5d370;
+    inset 0 0 0 1px var(--control-outline);
 }
 .gutter button {
   font: inherit;
@@ -1118,7 +1155,7 @@
 .dialog-actions button:not(.quiet),
 .composer-actions button:last-child:not(:first-child),
 .file-actions button[aria-pressed] {
-  background: linear-gradient(#e2eae7, #bfcecc);
+  background: linear-gradient(var(--control-top), var(--control-bottom));
   color: var(--control-ink);
   box-shadow:
     inset 0 1px 0 #ffffff90,
@@ -1910,7 +1947,39 @@ body,
   color: var(--muted);
   cursor: pointer;
 }
+.settings-group .accent-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 20px;
+}
+.settings-group .accent-choice {
+  display: grid;
+  position: relative;
+  justify-items: center;
+  margin: 0;
+  gap: 5px;
+  min-width: 46px;
+  font-size: 0.69rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.accent-dot {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid #ffffff40;
+  color: #14191b;
+}
+.accent-choice[data-selected='true'] .accent-dot {
+  outline: 2px solid var(--ink-bright);
+  outline-offset: 2px;
+}
 .palette-choice input,
+.accent-choice input,
 .type-size input {
   opacity: 0;
   position: absolute;
@@ -1945,10 +2014,13 @@ body,
   outline: 2px solid var(--control);
   outline-offset: 1px;
 }
-.palette-choice input:focus-visible + span,
+/* The focused choice is usually the selected one, so focus must outrank the selected ring. */
+.settings-group .palette-choice input:focus-visible + span,
+.settings-group .accent-choice input:focus-visible + span,
 .type-size input:focus-visible + span {
   outline: 2px solid var(--positive);
   outline-offset: 2px;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--positive) 35%, transparent);
 }
 .settings-line,
 .account-row,

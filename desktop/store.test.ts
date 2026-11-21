@@ -50,7 +50,9 @@ await test('upgrade built-in prompts, keep custom prompts, and turn the app defa
   };
   // Version 10 stored a harness and model beside the prompt in every scope.
   const legacy = new DatabaseSync(path);
-  legacy.exec('DROP TABLE agent_selection; PRAGMA user_version=10');
+  legacy.exec(
+    'ALTER TABLE workspace DROP COLUMN accent; DROP TABLE agent_selection; PRAGMA user_version=10',
+  );
   const insert = legacy.prepare('INSERT INTO agent_preferences VALUES(?,?)');
   insert.run('default', JSON.stringify(settings));
   insert.run(
@@ -81,7 +83,9 @@ await test('an upgrade without a saved app default leaves the harness choice to 
   const path = join(dir, 'workspace.sqlite');
   openStore(path).close();
   const legacy = new DatabaseSync(path);
-  legacy.exec('DROP TABLE agent_selection; PRAGMA user_version=11');
+  legacy.exec(
+    'ALTER TABLE workspace DROP COLUMN accent; DROP TABLE agent_selection; PRAGMA user_version=11',
+  );
   legacy
     .prepare('INSERT INTO agent_preferences VALUES(?,?)')
     .run(
@@ -108,7 +112,9 @@ await test('an app default with an unusable model or provider still upgrades to 
   const path = join(dir, 'workspace.sqlite');
   openStore(path).close();
   const legacy = new DatabaseSync(path);
-  legacy.exec('DROP TABLE agent_selection; PRAGMA user_version=11');
+  legacy.exec(
+    'ALTER TABLE workspace DROP COLUMN accent; DROP TABLE agent_selection; PRAGMA user_version=11',
+  );
   legacy
     .prepare('INSERT INTO agent_preferences VALUES(?,?)')
     .run('default', JSON.stringify({ agent: 'claude', model: 7, provider: 'x', prompt: 'Keep.' }));
@@ -128,9 +134,29 @@ await test('opening a newer schema preserves its version and contents', (t) => {
   const db = new DatabaseSync(path);
   t.after(() => db.close());
   db.exec(
-    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=13",
+    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=14",
   );
   assert.throws(() => openStore(path), /newer Local Reviewer/);
-  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 13);
+  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 14);
   assert.equal(db.prepare('SELECT value FROM future').get()?.value, 'preserve');
+});
+
+await test('the accent colour is added to an existing workspace and survives a restart', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'reviewer-accent-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'workspace.sqlite');
+  openStore(path).close();
+  const legacy = new DatabaseSync(path);
+  legacy.exec("UPDATE workspace SET appearance='midnight' WHERE id=1");
+  legacy.exec('ALTER TABLE workspace DROP COLUMN accent; PRAGMA user_version=12');
+  legacy.close();
+  const upgraded = openStore(path);
+  assert.equal(upgraded.getAccent(), 'neutral');
+  assert.equal(upgraded.getAppearance(), 'midnight');
+  upgraded.saveAccent('violet');
+  assert.throws(() => upgraded.saveAccent('chartreuse'));
+  upgraded.close();
+  const reopened = openStore(path);
+  t.after(() => reopened.close());
+  assert.equal(reopened.getAccent(), 'violet');
 });

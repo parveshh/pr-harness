@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Bell, Check, ExternalLink, Settings, UserRound, RefreshCw } from 'lucide-react';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
-import { appearance, appearanceNames, type Appearance } from '../../shared/appearance.js';
+import {
+  accent as accents,
+  accentNames,
+  appearance,
+  appearanceNames,
+  type Accent,
+  type Appearance,
+} from '../../shared/appearance.js';
 import { readableError } from '../../shared/assistant.js';
 import { typography, type Typography, type Inbox, type SignIn } from '../../shared/workspace.js';
 
@@ -24,6 +31,8 @@ export function applyTypography(settings: Typography) {
 export function SettingsPane({
   theme,
   chooseTheme,
+  accent,
+  chooseAccent,
   type,
   chooseType,
   onLoginStart,
@@ -33,6 +42,8 @@ export function SettingsPane({
 }: {
   theme: Appearance;
   chooseTheme: (v: Appearance) => void;
+  accent: Accent;
+  chooseAccent: (v: Accent) => void;
   type: Typography;
   chooseType: (v: Partial<Typography>) => void;
   onLoginStart: () => void;
@@ -131,6 +142,24 @@ export function SettingsPane({
                 {theme === value && <Check size={13} />}
               </span>
               <span>{appearanceNames[value]}</span>
+            </label>
+          ))}
+        </fieldset>
+        <fieldset className="accent-options">
+          <legend>Accent colour</legend>
+          {accents.options.map((value) => (
+            <label key={value} className="accent-choice" data-selected={accent === value}>
+              <input
+                type="radio"
+                name="workspace-accent"
+                value={value}
+                checked={accent === value}
+                onChange={() => chooseAccent(value)}
+              />
+              <span className="accent-dot" data-accent={value}>
+                {accent === value && <Check size={13} />}
+              </span>
+              <span>{accentNames[value]}</span>
             </label>
           ))}
         </fieldset>

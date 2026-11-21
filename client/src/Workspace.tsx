@@ -9,7 +9,7 @@ import {
 } from '../../shared/assistant.js';
 import { AgentPicker } from './components/AgentPicker.js';
 import { useScrollIndicators } from './useScrollIndicators.js';
-import type { Appearance } from '../../shared/appearance.js';
+import type { Accent, Appearance } from '../../shared/appearance.js';
 import { useCallback, useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import { pullRequestUrl, type SavedReview } from '../../shared/reviews.js';
 import { RepositorySidebar } from './RepositorySidebar.js';
@@ -20,9 +20,11 @@ import { Reader, type PrCommand } from './Reader.js';
 const emptyInbox: ReplyInbox = { account: null, items: [], added: 0, error: null };
 export function Workspace({
   initialTheme,
+  initialAccent,
   initialType,
 }: {
   initialTheme: Appearance;
+  initialAccent: Accent;
   initialType: Typography;
 }) {
   useScrollIndicators();
@@ -38,6 +40,17 @@ export function Workspace({
         setAppearanceError('');
       })
       .catch(() => setAppearanceError('Could not save appearance. Please try again.'));
+  }
+  const [accent, setAccent] = useState(initialAccent);
+  function chooseAccent(next: Accent) {
+    window.reviewer
+      .saveAccent(next)
+      .then(() => {
+        document.documentElement.dataset.accent = next;
+        setAccent(next);
+        setAppearanceError('');
+      })
+      .catch(() => setAppearanceError('Could not save the accent colour. Please try again.'));
   }
   const [agents, setAgents] = useState<AgentCatalog | null>(null);
   const [agentError, setAgentError] = useState('');
@@ -305,6 +318,8 @@ export function Workspace({
           <SettingsPane
             theme={theme}
             chooseTheme={chooseTheme}
+            accent={accent}
+            chooseAccent={chooseAccent}
             type={type}
             chooseType={chooseType}
             onLoginStart={invalidateInbox}

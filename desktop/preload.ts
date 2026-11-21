@@ -1,6 +1,6 @@
 import { discussionMessage, discussions, resolveResult } from '../shared/discussions.js';
 import { typography, signIn, inbox } from '../shared/workspace.js';
-import { appearance } from '../shared/appearance.js';
+import { accent, appearance } from '../shared/appearance.js';
 import { contextBridge, ipcRenderer } from 'electron';
 import { pullRequestUrl, reviewList, type ReviewerBridge } from '../shared/reviews.js';
 import { reviewBundle } from '../shared/publish.js';
@@ -40,6 +40,10 @@ const reviewer: ReviewerBridge = {
   getAppearance: async () => appearance.parse(await ipcRenderer.invoke('appearance:get')),
   saveAppearance: async (value) => {
     await ipcRenderer.invoke('appearance:save', value);
+  },
+  getAccent: async () => accent.parse(await ipcRenderer.invoke('accent:get')),
+  saveAccent: async (value) => {
+    await ipcRenderer.invoke('accent:save', value);
   },
   reviewDrafts: async (url) => reviewBundle.parse(await ipcRenderer.invoke('drafts:list', url)),
   editDrafts: async (url, version, edit) =>

@@ -25,3 +25,27 @@ export const appearanceNames: Record<Appearance, string> = {
   rosewood: 'Rosewood',
   ink: 'Ink',
 };
+
+// The accent colours buttons, selection outlines and other highlights. Neutral keeps the
+// theme's own light grey.
+export const accent = z.enum([
+  'neutral',
+  'blue',
+  'teal',
+  'green',
+  'amber',
+  'coral',
+  'rose',
+  'violet',
+]);
+export type Accent = z.infer<typeof accent>;
+export const accentNames: Record<Accent, string> = {
+  neutral: 'Neutral',
+  blue: 'Blue',
+  teal: 'Teal',
+  green: 'Green',
+  amber: 'Amber',
+  coral: 'Coral',
+  rose: 'Rose',
+  violet: 'Violet',
+};

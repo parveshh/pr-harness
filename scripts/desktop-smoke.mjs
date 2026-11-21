@@ -232,6 +232,39 @@ try {
           id,
         );
       }
+      for (const [name, id] of [
+        ['Blue', 'blue'],
+        ['Neutral', 'neutral'],
+        ['Violet', 'violet'],
+      ]) {
+        await settingsPane.getByText(name, { exact: true }).click();
+        await page.waitForFunction(
+          (accent) => globalThis.document.documentElement.dataset.accent === accent,
+          id,
+        );
+        // Neutral gives back the theme's own control colour.
+        if (id === 'neutral')
+          assert.equal(
+            await page.evaluate(() =>
+              globalThis
+                .getComputedStyle(globalThis.document.documentElement)
+                .getPropertyValue('--control')
+                .trim(),
+            ),
+            '#d4d9d8',
+          );
+      }
+      // The accent recolours the primary controls, not only the swatch.
+      assert.equal(
+        await page.evaluate(() =>
+          globalThis
+            .getComputedStyle(globalThis.document.documentElement)
+            .getPropertyValue('--control')
+            .trim(),
+        ),
+        '#b8a8f5',
+      );
+      await capture(page, 'accent');
       await settingsPane.getByText('Default', { exact: true }).click();
       await settingsPane.getByRole('button', { name: 'Close' }).click();
       assert.equal(await page.getByRole('button', { name: /^Appearance/ }).count(), 0);
@@ -712,10 +745,10 @@ try {
       // The theme and font chosen in Settings survive the restart.
       assert.deepEqual(
         await page.evaluate(() => {
-          const { palette, font } = globalThis.document.documentElement.dataset;
-          return { palette, font };
+          const { palette, accent, font } = globalThis.document.documentElement.dataset;
+          return { palette, accent, font };
         }),
-        { palette: 'ink', font: 'humanist' },
+        { palette: 'ink', accent: 'violet', font: 'humanist' },
       );
       await page
         .getByText(/claude · fixture-model.*Full PR/)
