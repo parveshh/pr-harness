@@ -8,6 +8,8 @@ import {
   type ReactNode,
 } from 'react';
 import { diffLines } from '../../shared/diff.js';
+import { highlightRows, languageFor } from '../../shared/highlight.js';
+import { CodeLine } from './components/CodeLine.js';
 import type { FileKey } from '../../shared/reader.js';
 import { readableError } from '../../shared/assistant.js';
 
@@ -88,6 +90,7 @@ export function FullFile({
     const body = text.slice(start.start, offsets[page + 1]?.start).replace(/\n$/, '');
     return diffLines('@@ -' + start.old + ' +' + start.next + ' @@\n' + body).lines;
   }, [offsets, page, text]);
+  const syntax = useMemo(() => highlightRows(lines, languageFor(path)), [lines, path]);
   if (error)
     return (
       <p className="patch-note" role="alert">
@@ -146,7 +149,7 @@ export function FullFile({
                 <span className="comment-gutter" />
                 <span className="gutter">{line.oldLine}</span>
                 <span className="gutter">{line.newLine}</span>
-                <span className="code-line">{line.text}</span>
+                <CodeLine text={line.text} tokens={syntax[i] ?? null} />
               </div>
               {discussions(line.oldLine, line.newLine)}
             </Fragment>

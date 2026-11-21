@@ -12,6 +12,8 @@ The reader shows cached diffs while refreshing from GitHub. Unchanged files keep
 
 Use **Full file** above the diff to read surrounding code with additions and deletions highlighted. **Diff only** returns to your saved hunk. The full-file view reads the pinned Git revisions on demand and pages long files.
 
+Both views colour code by language, chosen from the file name. The old and new sides of a hunk are each read as continuous source, so a comment or string that spans lines keeps its colour. A hunk that starts inside one can be coloured wrongly until it ends, because the text above the hunk is not part of the diff. Files in an unrecognised language stay plain, as does a hunk or full-file page over 150,000 characters or with a line over 2,000.
+
 Drag a divider, or focus it and use the arrow keys, to resize the sidebar, changed files, diff, chat, or re-review queue. The app remembers the pane widths. The file list and diff scroll independently. Scrollbars appear while a pane is moving and fade at rest. In a narrow window, switch between **Files**, **Diff**, and **Chat** above the work area.
 
 Choose the palette at the bottom-left of the sidebar, or from the palette button in the header when the sidebar is collapsed. Petrol is the default. Midnight, Smoked Bronze, Titanium, and Graphite are also available. The workspace remembers your choice.

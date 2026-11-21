@@ -16,6 +16,8 @@ import {
 import type { ReaderFile, ReaderView } from '../../shared/reader.js';
 import { splitHunks } from '../../shared/reader.js';
 import { diffLines } from '../../shared/diff.js';
+import { highlightRows, languageFor } from '../../shared/highlight.js';
+import { CodeLine } from './components/CodeLine.js';
 import './reader.css';
 import { DraftReview, type DraftEditor } from './DraftReview.js';
 import type { Bundle, Draft, CommentAnchor } from '../../shared/publish.js';
@@ -921,6 +923,7 @@ function Patch({
           onLine({ path: file.path, hunk: file.hunk, side, line }, extend)
         }
         text={hunk}
+        path={file.path}
         offset={file.scroll}
         onScroll={(scroll) => move(file, { scroll })}
       />
@@ -930,6 +933,7 @@ function Patch({
 
 function Hunk({
   text,
+  path,
   offset,
   notes,
   published,
@@ -941,6 +945,7 @@ function Hunk({
   onScroll,
 }: {
   text: string;
+  path: string;
   offset: number;
   notes: Notes;
   published: Published;
@@ -978,6 +983,7 @@ function Hunk({
     return byEnd;
   }, [drafts]);
   const { heading, lines } = useMemo(() => diffLines(text), [text]);
+  const syntax = useMemo(() => highlightRows(lines, languageFor(path)), [lines, path]);
   return (
     <div
       ref={pane}
@@ -1065,7 +1071,7 @@ function Hunk({
                     </button>
                   )}
                 </span>
-                <span className="code-line">{line.text}</span>
+                <CodeLine text={line.text} tokens={syntax[i] ?? null} />
               </div>
               {published(line.oldLine, line.newLine)}
               {notes(line.oldLine, line.newLine, comments)}
