@@ -342,18 +342,37 @@ export async function compareHeads(
   }
 }
 
-export async function probeRevision(url: string, signal: AbortSignal, etag?: string) {
-  const endpoint =
-    'repos/' + new URL(pullRequestUrl.parse(url)).pathname.slice(1).replace('/pull/', '/pulls/');
-  const args = ['api', '--hostname', 'github.com', '--include', endpoint];
-  if (etag) args.push('-H', 'If-None-Match: ' + etag);
-  const { stdout } = await run('gh', args, {
+type ProbeRequest = (args: string[], signal: AbortSignal) => Promise<{ stdout: string }>;
+const probeRequest: ProbeRequest = (args, signal) =>
+  run('gh', args, {
     signal,
     timeout: 30000,
     maxBuffer: 4 * 1024 * 1024,
     env: githubEnvironment(),
   });
-  if (/^HTTP\/\S+ 304\b/.test(stdout)) return null;
+const notModified = /^HTTP\/\S+ 304\b/;
+
+export async function probeRevision(
+  url: string,
+  signal: AbortSignal,
+  etag?: string,
+  request: ProbeRequest = probeRequest,
+) {
+  const endpoint =
+    'repos/' + new URL(pullRequestUrl.parse(url)).pathname.slice(1).replace('/pull/', '/pulls/');
+  const args = ['api', '--hostname', 'github.com', '--include', endpoint];
+  if (etag) args.push('-H', 'If-None-Match: ' + etag);
+  let stdout: string;
+  try {
+    ({ stdout } = await request(args, signal));
+  } catch (error) {
+    signal.throwIfAborted();
+    // gh exits non-zero for 304 Not Modified but still prints the response status line.
+    const printed = z.object({ stdout: z.string() }).safeParse(error).data?.stdout;
+    if (printed === undefined || !notModified.test(printed)) throw error;
+    return null;
+  }
+  if (notModified.test(stdout)) return null;
   const boundary = /\r?\n\r?\n/.exec(stdout);
   const headers = boundary ? stdout.slice(0, boundary.index) : '';
   const body = boundary ? stdout.slice(boundary.index + boundary[0].length) : stdout;

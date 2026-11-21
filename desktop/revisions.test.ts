@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStore } from './store.js';
-import { compareHeads, type Snapshot, type SnapshotFile } from './github.js';
+import { compareHeads, probeRevision, type Snapshot, type SnapshotFile } from './github.js';
 import { reviewPublisher } from './publish.js';
 
 const url = 'https://github.com/octo/project/pull/15';
@@ -248,5 +248,41 @@ await test('only fast-forward compare responses supply a direct patch; ambiguous
     (await compareHeads(url, 'one', 'two', signal, async () => Promise.reject(Error('offline'))))
       .ancestry,
     'unknown',
+  );
+});
+
+await test('an unchanged probe is recognised when gh exits non-zero for 304; other failures still surface', async () => {
+  const seen: string[][] = [];
+  const failure = (stdout: string) => (args: string[]) => {
+    seen.push(args);
+    return Promise.reject(Object.assign(Error('exit 1'), { stdout, stderr: 'gh: HTTP 304' }));
+  };
+  assert.equal(
+    await probeRevision(
+      url,
+      signal,
+      '"tag"',
+      failure('HTTP/2.0 304 Not Modified\r\nEtag: "tag"\r\n\r\n'),
+    ),
+    null,
+  );
+  assert.deepEqual(seen[0]?.slice(-2), ['-H', 'If-None-Match: "tag"']);
+  await assert.rejects(
+    probeRevision(url, signal, '"tag"', failure('HTTP/2.0 502 Bad Gateway\r\n\r\n')),
+    /exit 1/,
+  );
+  const body = JSON.stringify({
+    title: 'Guard retries',
+    body: null,
+    user: { login: 'octo' },
+    base: { sha: 'base', ref: 'main' },
+    head: { sha: 'two', ref: 'topic' },
+    changed_files: 1,
+  });
+  assert.deepEqual(
+    await probeRevision(url, signal, undefined, () =>
+      Promise.resolve({ stdout: 'HTTP/2.0 200 OK\r\nEtag: "next"\r\n\r\n' + body }),
+    ),
+    { baseBranch: 'main', revision: 'base...two', etag: '"next"' },
   );
 });
