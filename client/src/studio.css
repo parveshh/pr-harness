@@ -16,6 +16,9 @@
   --control-hover: #e9efed;
   --control-ink: #192a2c;
   --control-count: #bac8c7;
+  --control-top: #e2eae7;
+  --control-bottom: #bfcecc;
+  --control-outline: #c5d5d370;
   --positive: #aae2b7;
   --negative: #ffbdb8;
   --addition: #244435;
@@ -50,6 +53,31 @@
   --editor: #1c1d20;
   --toolbar: #323337;
 }
+[data-palette='forest'] {
+  --rail: #23332a;
+  --editor: #18251d;
+  --toolbar: #2c3f34;
+}
+[data-palette='aubergine'] {
+  --rail: #30263a;
+  --editor: #231b2c;
+  --toolbar: #3a2f46;
+}
+[data-palette='arctic'] {
+  --rail: #2e3440;
+  --editor: #242933;
+  --toolbar: #3b4252;
+}
+[data-palette='rosewood'] {
+  --rail: #3a2629;
+  --editor: #2b1c1f;
+  --toolbar: #453033;
+}
+[data-palette='ink'] {
+  --rail: #16171a;
+  --editor: #0d0e10;
+  --toolbar: #212227;
+}
 :root[data-palette] {
   --paper: color-mix(in srgb, var(--editor) 74%, var(--rail));
   --panel: color-mix(in srgb, var(--rail) 82%, var(--editor));
@@ -65,6 +93,40 @@
   --control-ink: #202526;
   scrollbar-width: thin;
   scrollbar-color: var(--line) var(--paper);
+}
+/* Accent colours are light tints, so the dark control text stays readable on them. */
+[data-accent='neutral'] {
+  --accent: #d4d9d8;
+}
+[data-accent='blue'] {
+  --accent: #8fb8f6;
+}
+[data-accent='teal'] {
+  --accent: #74d1c6;
+}
+[data-accent='green'] {
+  --accent: #94d6a2;
+}
+[data-accent='amber'] {
+  --accent: #efc368;
+}
+[data-accent='coral'] {
+  --accent: #f4a488;
+}
+[data-accent='rose'] {
+  --accent: #f29db8;
+}
+[data-accent='violet'] {
+  --accent: #b8a8f5;
+}
+:root[data-accent]:not([data-accent='neutral']) {
+  --control: var(--accent);
+  --control-hover: color-mix(in srgb, var(--accent) 72%, white);
+  --control-count: color-mix(in srgb, var(--accent) 80%, black);
+  --control-ink: #14191b;
+  --control-top: color-mix(in srgb, var(--accent) 86%, white);
+  --control-bottom: color-mix(in srgb, var(--accent) 90%, black);
+  --control-outline: color-mix(in srgb, var(--accent) 44%, transparent);
 }
 .studio {
   display: flex;
@@ -346,9 +408,6 @@
 .dialog-title {
   border: 0;
   padding: 0;
-  margin: 18px 0 8px;
-  font-size: 1.5625rem;
-  letter-spacing: -0.045em;
 }
 .repo-dialog p {
   margin: 8px 0 20px;
@@ -388,8 +447,7 @@
 .icon-control,
 .authors-heading button,
 .remove-repo,
-.review-chat details button,
-.review-chat .composer-actions button:not(:last-child) {
+.review-chat details button {
   background: transparent;
   color: var(--muted);
 }
@@ -397,8 +455,7 @@
 .icon-control:hover,
 .authors-heading button:hover,
 .remove-repo:hover,
-.review-chat details button:hover,
-.review-chat .composer-actions button:not(:last-child):hover {
+.review-chat details button:hover {
   background: var(--hover);
 }
 .icon-control {
@@ -563,12 +620,32 @@
   font-size: 0.875rem;
   white-space: pre-wrap;
 }
+/* Answers are long-form reading: generous leading and a capped measure. */
 .chat-answer {
-  font-size: 0.875rem;
-  line-height: 1.55;
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  max-width: 72ch;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  margin: 8px 0 14px;
+  margin: 10px 0 12px;
+  color: var(--ink);
+}
+/* Each question and its answer read as one block, clearly apart from the next. */
+.exchange {
+  padding-bottom: 22px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+.exchange:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+.exchange > small {
+  display: block;
+  margin: 6px 0 4px 12px;
+}
+.exchange > button {
+  margin-top: 4px;
 }
 .cite {
   font:
@@ -597,7 +674,7 @@
 .diff-line[data-selected='true'] {
   box-shadow:
     inset 3px 0 var(--control),
-    inset 0 0 0 1px #c5d5d370;
+    inset 0 0 0 1px var(--control-outline);
 }
 .gutter button {
   font: inherit;
@@ -1027,9 +1104,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 .chat-progress-line .spin {
   color: var(--control);
@@ -1072,7 +1150,7 @@
 .dialog-actions button:not(.quiet),
 .composer-actions button:last-child:not(:first-child),
 .file-actions button[aria-pressed] {
-  background: linear-gradient(#e2eae7, #bfcecc);
+  background: linear-gradient(var(--control-top), var(--control-bottom));
   color: var(--control-ink);
   box-shadow:
     inset 0 1px 0 #ffffff90,
@@ -1109,7 +1187,7 @@
   border-radius: 6px;
   color: var(--ink-bright);
 }
-.chat-heading > small {
+.chat-heading-tools > small {
   font-size: 0.625rem;
 }
 .review-chat form,
@@ -1134,7 +1212,10 @@
   background: var(--selection);
   margin-left: 12px;
   border-radius: 10px 10px 2px 10px;
-  line-height: 1.5;
+  padding: 10px 12px;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 .review-chat .composer-actions button {
   display: inline-flex;
@@ -1206,9 +1287,7 @@
   gap: 7px;
   padding: 3px 8px;
 }
-.agent-trigger,
-.appearance-trigger,
-.repo-sidebar .appearance-trigger {
+.agent-trigger {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1221,18 +1300,9 @@
   cursor: pointer;
   app-region: no-drag;
 }
-.agent-trigger:hover,
-.appearance-trigger:hover,
-.repo-sidebar .appearance-trigger:hover {
+.agent-trigger:hover {
   background: var(--raised);
   color: var(--ink-bright);
-}
-.appearance-trigger svg:last-child:not(:first-child),
-.appearance-option svg {
-  margin-left: auto;
-}
-.home-bar .appearance-trigger {
-  margin-left: auto;
 }
 /* The harness and model picker sits at the trailing edge of the title bar. */
 .reader header .agent-trigger,
@@ -1252,10 +1322,6 @@
 }
 .agent-trigger svg {
   flex: none;
-}
-.reader header .agent-trigger + .appearance-trigger,
-.home-bar .agent-trigger + .appearance-trigger {
-  margin-left: 0;
 }
 .agent-menu {
   width: 270px;
@@ -1309,54 +1375,14 @@
   color: var(--muted);
   font-size: 0.75rem;
 }
-.appearance-menu {
-  min-width: 190px;
-  padding: 5px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--panel);
-  color: var(--ink);
-  box-shadow: 0 8px 24px #0005;
-  z-index: 105;
-  app-region: no-drag;
-}
 .appearance-label {
   padding: 5px 8px 6px;
   color: var(--muted);
   font-size: 0.6875rem;
   font-weight: 600;
 }
-.appearance-option {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 8px;
-  border-radius: 5px;
-  font-size: 0.8125rem;
-  cursor: pointer;
-  outline: none;
-}
-.appearance-menu [role='menu'] {
-  outline: none;
-}
-.appearance-option[data-focused] {
-  background: var(--selection);
-  color: var(--ink-bright);
-}
-.palette-swatch {
-  display: inline-block;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  flex: none;
-  background: linear-gradient(135deg, var(--toolbar) 48%, var(--editor) 50%);
-  border: 1px solid #ffffff50;
-  box-shadow: inset 0 1px 0 #ffffff10;
-}
 .integrated-titlebar:has(.agent-menu) header,
-.integrated-titlebar:has(.agent-menu) .repo-sidebar::before,
-.integrated-titlebar:has(.appearance-menu) header,
-.integrated-titlebar:has(.appearance-menu) .repo-sidebar::before {
+.integrated-titlebar:has(.agent-menu) .repo-sidebar::before {
   app-region: no-drag;
 }
 
@@ -1477,36 +1503,25 @@ body,
   text-overflow: ellipsis;
 }
 .review-chat #chat-question {
-  height: 58px;
+  height: 104px;
   resize: none;
 }
 .chat-settings-toggle {
   background: transparent;
   color: var(--muted);
-  font-size: 0.75rem;
-  padding: 4px 0;
 }
 .chat-settings-toggle:hover {
   color: var(--ink);
-  background: transparent;
 }
 .chat-settings label {
   display: grid;
-  gap: 5px;
-  margin: 10px 0;
 }
 .chat-settings :is(select, textarea) {
   width: 100%;
   background: var(--editor);
   border: 1px solid var(--line);
   color: var(--ink);
-  border-radius: 6px;
-  padding: 8px;
   font: inherit;
-}
-.chat-settings button {
-  padding: 7px 10px;
-  margin: 3px 0;
 }
 .pane-switch {
   display: none;
@@ -1804,6 +1819,9 @@ body,
   align-items: center;
   gap: 6px;
 }
+.pin-evidence input[type='checkbox'] {
+  flex: none;
+}
 .pin-evidence h3 {
   margin-bottom: 4px;
 }
@@ -1916,7 +1934,39 @@ body,
   color: var(--muted);
   cursor: pointer;
 }
+.settings-group .accent-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 20px;
+}
+.settings-group .accent-choice {
+  display: grid;
+  position: relative;
+  justify-items: center;
+  margin: 0;
+  gap: 5px;
+  min-width: 46px;
+  font-size: 0.69rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.accent-dot {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid #ffffff40;
+  color: #14191b;
+}
+.accent-choice[data-selected='true'] .accent-dot {
+  outline: 2px solid var(--ink-bright);
+  outline-offset: 2px;
+}
 .palette-choice input,
+.accent-choice input,
 .type-size input {
   opacity: 0;
   position: absolute;
@@ -1951,10 +2001,13 @@ body,
   outline: 2px solid var(--control);
   outline-offset: 1px;
 }
-.palette-choice input:focus-visible + span,
+/* The focused choice is usually the selected one, so focus must outrank the selected ring. */
+.settings-group .palette-choice input:focus-visible + span,
+.settings-group .accent-choice input:focus-visible + span,
 .type-size input:focus-visible + span {
   outline: 2px solid var(--positive);
   outline-offset: 2px;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--positive) 35%, transparent);
 }
 .settings-line,
 .account-row,
@@ -2193,7 +2246,9 @@ body,
 .chat-markdown {
   white-space: normal;
   overflow-wrap: anywhere;
-  line-height: 1.5;
+  line-height: 1.7;
+  text-wrap: pretty;
+  hyphens: manual;
 }
 .chat-markdown > :first-child {
   margin-top: 0;
@@ -2202,13 +2257,26 @@ body,
   margin-bottom: 0;
 }
 .chat-markdown :is(p, ol, ul, blockquote, pre, .markdown-table) {
-  margin-block: 0.55em;
+  margin-block: 0.9em;
 }
 .chat-markdown :is(ul, ol) {
-  padding-inline-start: 1.5em;
+  padding-inline-start: 1.4em;
+}
+.chat-markdown li + li {
+  margin-top: 0.4em;
+}
+.chat-markdown li > :is(ul, ol) {
+  margin-block: 0.4em;
 }
 .chat-markdown li > p {
-  margin-block: 0.2em;
+  margin-block: 0.3em;
+}
+.chat-markdown li::marker {
+  color: var(--muted);
+}
+.chat-markdown strong {
+  color: var(--ink-bright);
+  font-weight: 650;
 }
 .chat-markdown li {
   display: list-item;
@@ -2217,24 +2285,32 @@ body,
   font: inherit;
   font-weight: 650;
   font-size: 1.05em;
-  margin: 0.85em 0 0.3em;
+  line-height: 1.35;
+  color: var(--ink-bright);
+  margin: 1.5em 0 0.5em;
   padding: 0;
   border: 0;
   letter-spacing: normal;
+  text-wrap: balance;
+}
+.reader .chat-markdown :is(h1, h2) {
+  font-size: 1.2em;
 }
 .chat-markdown code {
   background: var(--raised);
-  padding: 0.08em 0.24em;
-  border-radius: 3px;
-  font-size: 0.92em;
+  padding: 0.12em 0.32em;
+  border-radius: 4px;
+  font-size: 0.9em;
 }
 .chat-markdown pre {
   max-width: 100%;
   overflow: auto;
   white-space: pre;
-  padding: 0.65em;
+  padding: 0.8em 0.95em;
   background: var(--raised);
-  border-radius: 4px;
+  border-radius: 6px;
+  line-height: 1.55;
+  text-wrap: nowrap;
 }
 .chat-markdown pre code {
   padding: 0;
@@ -2242,11 +2318,21 @@ body,
 .chat-markdown blockquote {
   border-inline-start: 2px solid var(--control);
   margin-inline: 0;
-  padding-inline-start: 0.65em;
+  padding-inline-start: 0.9em;
+  font-size: inherit;
+}
+.chat-answer .chat-markdown blockquote {
+  color: var(--muted);
 }
 .chat-markdown a {
   color: var(--control);
   text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.chat-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin-block: 1.4em;
 }
 .chat-markdown .markdown-table {
   max-width: 100%;
@@ -2257,8 +2343,10 @@ body,
 }
 .chat-markdown :is(td, th) {
   border: 1px solid var(--line);
-  padding: 0.25em 0.5em;
+  padding: 0.45em 0.7em;
   text-align: start;
+  line-height: 1.5;
+  vertical-align: top;
 }
 .chat-markdown input[type='checkbox'] {
   width: auto;
@@ -2275,23 +2363,6 @@ body,
   .inline-composer textarea:focus {
     outline-color: Highlight;
   }
-}
-
-.review-chat .chat-context-mode {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 0;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-.chat-context-mode select {
-  width: auto;
-}
-.review-chat .context-help {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 0.72rem;
 }
 
 /* Retain room to read replies at short window heights and larger text sizes. */
@@ -2349,6 +2420,7 @@ body,
 }
 .file-view-toggle button {
   padding: 3px 10px;
+  border-radius: 5px;
   font-size: 0.8rem;
   border: 0;
   background: transparent;
@@ -2393,4 +2465,188 @@ body,
 .discussion-error {
   padding: 0.25rem 0.6rem;
   font-size: 0.8em;
+}
+
+/* The composer is one box: what is being asked about, the question, then how to send it. */
+.review-chat .chat-heading-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.review-chat .chat-heading fieldset {
+  border: 0;
+  padding: 0;
+}
+.review-chat .chat-heading h2 {
+  white-space: nowrap;
+}
+.review-chat .chat-settings-toggle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+}
+.review-chat .chat-settings-toggle:hover {
+  background: var(--hover);
+}
+.review-chat .chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.review-chat .chat-suggestions button {
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.review-chat .chat-suggestions button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
+}
+.review-chat .chat-suggestions button:disabled {
+  opacity: 0.5;
+}
+.review-chat .composer-box {
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.review-chat .composer-box:has(textarea:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--control) 65%, var(--line));
+  outline-offset: -1px;
+}
+.review-chat .composer-box .context-file {
+  margin: 0 0 4px;
+}
+.review-chat .composer-box textarea {
+  display: block;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+.review-chat .composer-box textarea:focus {
+  outline: none;
+}
+.review-chat .composer-box .composer-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+.review-chat .composer-box select {
+  width: auto;
+  flex: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background-color: var(--raised);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+}
+/* The related file takes the spare width, and drops to its own line in a narrow pane. */
+.review-chat .composer-box .related-file {
+  flex: 1 1 120px;
+  min-width: 120px;
+  max-width: 220px;
+}
+@media (forced-colors: active) {
+  .review-chat .composer-box:has(textarea:focus-visible) {
+    outline-color: Highlight;
+  }
+}
+.review-chat .composer-box .composer-actions > button {
+  flex: none;
+  margin-left: auto;
+}
+
+/* Every dropdown shares one drawn chevron with room around it. */
+:root {
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='none' stroke='%23c3cccb' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+}
+:root:root select:not([multiple]) {
+  appearance: none;
+  padding-right: 32px;
+  background-image: var(--chevron);
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 9px;
+  text-overflow: ellipsis;
+}
+@media (forced-colors: active) {
+  :root:root select:not([multiple]) {
+    appearance: auto;
+    padding-right: 10px;
+    background-image: none;
+  }
+}
+
+/* Dialogs: the title sits on the same line as its icon, and fields are roomier. */
+.dialog-head {
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.dialog-emblem {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+}
+.dialog-head .dialog-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+.dialog-head .icon-control {
+  align-self: center;
+}
+.repo-dialog :is(select, textarea),
+.dialog-body input:not([type='checkbox'], [type='radio']) {
+  min-height: 40px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.repo-dialog textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+.repo-dialog :is(select, textarea, input):focus-visible {
+  outline-offset: 0;
+  border-color: var(--control);
+}
+.chat-settings label {
+  gap: 7px;
+  margin: 16px 0;
+  font-size: 0.8125rem;
+}
+/* Fields sit inside their label; they should not take its weight. */
+.chat-settings :is(select, textarea) {
+  font-weight: 400;
+}
+.chat-settings textarea {
+  min-height: 300px;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.chat-settings button {
+  padding: 9px 14px;
+  margin: 4px 6px 4px 0;
+}
+.repo-dialog .quiet {
+  border: 1px solid var(--line);
+  color: var(--ink);
 }

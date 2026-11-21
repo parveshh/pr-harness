@@ -2,7 +2,7 @@ import type { WorkspaceBridge } from './workspace.js';
 import type { PipelineBridge } from './pipelines.js';
 import type { PinnedQuestion, QuestionKey, PinQuestion, QuestionEvidence } from './questions.js';
 import type { ChangeEvidence } from './rereview.js';
-import type { Appearance } from './appearance.js';
+import type { Accent, Appearance } from './appearance.js';
 import { z } from 'zod';
 import type { PublishBridge } from './publish.js';
 import type { AssistantBridge } from './assistant.js';
@@ -31,6 +31,8 @@ export interface ReviewerBridge
   readonly integratedTitleBar: boolean;
   getAppearance(): Promise<Appearance>;
   saveAppearance(value: Appearance): Promise<void>;
+  getAccent(): Promise<Accent>;
+  saveAccent(value: Accent): Promise<void>;
   activeReview(): Promise<string | null>;
   selectReview(url: string | null): Promise<void>;
   cachedReview(url: string): Promise<ReaderView | null>;

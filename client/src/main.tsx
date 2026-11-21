@@ -13,12 +13,14 @@ const app = createRoot(root);
 void Promise.all([
   window.reviewer.getAppearance().catch(() => 'petrol' as const),
   window.reviewer.typography().catch(() => defaultTypography),
-]).then(([theme, type]) => {
+  window.reviewer.getAccent().catch(() => 'neutral' as const),
+]).then(([theme, type, accent]) => {
   document.documentElement.dataset.palette = theme;
+  document.documentElement.dataset.accent = accent;
   applyTypography(type);
   app.render(
     <StrictMode>
-      <Workspace initialTheme={theme} initialType={type} />
+      <Workspace initialTheme={theme} initialType={type} initialAccent={accent} />
     </StrictMode>,
   );
 });

@@ -63,7 +63,7 @@ label {
 input,
 button {
   font: inherit;
-  border-radius: 5px;
+  border-radius: 8px;
   padding: 12px 14px;
 }
 input {
@@ -90,8 +90,8 @@ button:disabled {
   cursor: default;
 }
 :focus-visible {
-  outline: 3px solid var(--control);
-  outline-offset: 3px;
+  outline: 2px solid var(--control);
+  outline-offset: 2px;
 }
 .notice {
   min-height: 1.3em;

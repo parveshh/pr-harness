@@ -73,7 +73,9 @@ await test('upgrade both revision-state layouts from v9 and reopen a saved PR wi
       );
     }
     // The global harness choice arrived in version 12.
-    old.exec('DROP TABLE agent_selection; PRAGMA user_version=9');
+    old.exec(
+      'ALTER TABLE workspace DROP COLUMN accent; DROP TABLE agent_selection; PRAGMA user_version=9',
+    );
     old.close();
     const upgraded = openStore(database);
     try {

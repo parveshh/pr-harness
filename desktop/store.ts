@@ -3,7 +3,7 @@ import { typography } from '../shared/workspace.js';
 import { replyStore, settingsMigration, replyTargetsMigration } from './replies.js';
 import { questionMigration } from './questions.js';
 import { migrateRevisionNavigation, revisionMigration } from './revisions.js';
-import { appearance } from '../shared/appearance.js';
+import { accent, appearance } from '../shared/appearance.js';
 import { draftStore, draftMigration } from './draft-store.js';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -20,7 +20,7 @@ export function openStore(filename: string) {
   try {
     db.exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version < 0 || version > 12)
+    if (typeof version !== 'number' || version < 0 || version > 13)
       throw new Error('This workspace requires a newer Local Reviewer.');
     if (version === 0) {
       db.exec(`CREATE TABLE saved_reviews (url TEXT PRIMARY KEY, saved_at TEXT NOT NULL) STRICT;
@@ -40,6 +40,10 @@ export function openStore(filename: string) {
     if (version < 10) migrateRevisionNavigation(db);
     if (version < 11) migrateDefaultPrompt(db);
     if (version < 12) migrateGlobalSelection(db);
+    if (version < 13)
+      db.exec(
+        "ALTER TABLE workspace ADD COLUMN accent TEXT NOT NULL DEFAULT 'neutral'; PRAGMA user_version=13;",
+      );
     db.exec('COMMIT');
   } catch (error) {
     db.close();
@@ -66,6 +70,11 @@ export function openStore(filename: string) {
       appearance.parse(db.prepare('SELECT appearance FROM workspace WHERE id=1').get()?.appearance),
     saveAppearance(value: unknown) {
       db.prepare('UPDATE workspace SET appearance=? WHERE id=1').run(appearance.parse(value));
+    },
+    getAccent: () =>
+      accent.parse(db.prepare('SELECT accent FROM workspace WHERE id=1').get()?.accent),
+    saveAccent(value: unknown) {
+      db.prepare('UPDATE workspace SET accent=? WHERE id=1').run(accent.parse(value));
     },
     recordPublication(url: string, version: number, bundle: Bundle, revision: string | undefined) {
       db.exec('BEGIN IMMEDIATE');

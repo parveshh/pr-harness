@@ -30,7 +30,10 @@ export function WorkspaceDialog({
       <Modal className={wide ? 'repo-dialog review-dialog' : 'repo-dialog'}>
         <Dialog className="dialog-body" aria-label={title}>
           <div className="dialog-head">
-            <span className="dialog-emblem">{icon ?? <FolderGit2 size={23} />}</span>
+            <span className="dialog-emblem">{icon ?? <FolderGit2 size={20} />}</span>
+            <Heading slot="title" className="dialog-title">
+              {title}
+            </Heading>
             <button
               className="icon-control"
               type="button"
@@ -41,9 +44,6 @@ export function WorkspaceDialog({
               <X size={17} />
             </button>
           </div>
-          <Heading slot="title" className="dialog-title">
-            {title}
-          </Heading>
           {children}
         </Dialog>
       </Modal>

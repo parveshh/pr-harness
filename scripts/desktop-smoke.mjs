@@ -214,16 +214,60 @@ try {
           globalThis.document.documentElement.dataset.textSize === 'large',
       );
       await capture(page, 'settings');
-      await settingsPane.getByText('Petrol', { exact: true }).click();
+      // Every theme is chosen in Settings, the only place it can be changed.
+      for (const [name, id] of [
+        ['Smoked Bronze', 'bronze'],
+        ['Titanium', 'titanium'],
+        ['Graphite', 'graphite'],
+        ['Forest', 'forest'],
+        ['Aubergine', 'aubergine'],
+        ['Arctic', 'arctic'],
+        ['Rosewood', 'rosewood'],
+        ['Petrol', 'petrol'],
+        ['Ink', 'ink'],
+      ]) {
+        await settingsPane.getByText(name, { exact: true }).click();
+        await page.waitForFunction(
+          (palette) => globalThis.document.documentElement.dataset.palette === palette,
+          id,
+        );
+      }
+      for (const [name, id] of [
+        ['Blue', 'blue'],
+        ['Neutral', 'neutral'],
+        ['Violet', 'violet'],
+      ]) {
+        await settingsPane.getByText(name, { exact: true }).click();
+        await page.waitForFunction(
+          (accent) => globalThis.document.documentElement.dataset.accent === accent,
+          id,
+        );
+        // Neutral gives back the theme's own control colour.
+        if (id === 'neutral')
+          assert.equal(
+            await page.evaluate(() =>
+              globalThis
+                .getComputedStyle(globalThis.document.documentElement)
+                .getPropertyValue('--control')
+                .trim(),
+            ),
+            '#d4d9d8',
+          );
+      }
+      // The accent recolours the primary controls, not only the swatch.
+      assert.equal(
+        await page.evaluate(() =>
+          globalThis
+            .getComputedStyle(globalThis.document.documentElement)
+            .getPropertyValue('--control')
+            .trim(),
+        ),
+        '#b8a8f5',
+      );
+      await capture(page, 'accent');
       await settingsPane.getByText('Default', { exact: true }).click();
       await settingsPane.getByRole('button', { name: 'Close' }).click();
-      let current = 'Petrol';
-      for (const next of ['Midnight', 'Smoked Bronze', 'Titanium', 'Graphite', 'Petrol']) {
-        await page.getByRole('button', { name: 'Appearance: ' + current, exact: true }).click();
-        await page.getByRole('menuitemradio', { name: next, exact: true }).click();
-        await page.getByRole('button', { name: 'Appearance: ' + next, exact: true }).waitFor();
-        current = next;
-      }
+      assert.equal(await page.getByRole('button', { name: /^Appearance/ }).count(), 0);
     }
     if (process.platform === 'darwin') {
       const pos = await app.evaluate(({ BrowserWindow }) =>
@@ -236,11 +280,6 @@ try {
       await collapse.click();
       const expand = page.getByRole('button', { name: 'Expand sidebar' });
       assert.deepEqual(await expand.boundingBox(), pinned);
-      if (!live) {
-        await page.locator('header').getByRole('button', { name: 'Appearance: Petrol' }).click();
-        await page.getByRole('menuitemradio', { name: 'Midnight' }).click();
-        await page.getByRole('button', { name: 'Appearance: Midnight' }).waitFor();
-      }
       await expand.click();
     }
     if (!live) {
@@ -460,12 +499,20 @@ try {
       await chat.getByLabel('Ask about the diff').fill('');
 
       await page.getByRole('button', { name: 'Select new line 1', exact: true }).click();
-      await chat.getByText('Review instructions', { exact: true }).click();
+      await chat.getByRole('button', { name: 'Review instructions', exact: true }).click();
       const settings = page.getByRole('dialog', { name: 'Review instructions', exact: true });
       await settings
         .getByLabel('Review prompt')
         .fill('Check the before and after behaviour with citations.');
       await settings.getByLabel('Save instructions for').selectOption('review');
+      // React Aria gives a new overlay an inline opacity of 0 until it has finished entering,
+      // so a screenshot taken straight after opening would be empty.
+      await page.waitForFunction(
+        () =>
+          globalThis.getComputedStyle(globalThis.document.querySelector('.overlay')).opacity ===
+          '1',
+      );
+      await capture(page, 'instructions');
       await settings.getByRole('button', { name: 'Close' }).click();
       assert.equal(await chat.getByLabel('Model', { exact: true }).count(), 0);
       await chooseHarness(page, { model: 'fixture-model' });
@@ -703,13 +750,13 @@ try {
     const region = page.getByRole('region', { name: 'File diff' });
     await region.waitFor();
     if (!live) {
-      if (process.platform === 'darwin') {
-        await page.getByRole('button', { name: 'Appearance: Midnight' }).click();
-        await page.getByRole('menuitemradio', { name: 'Petrol' }).click();
-      }
-      assert.equal(
-        await page.evaluate(() => globalThis.document.documentElement.dataset.font),
-        'humanist',
+      // The theme and font chosen in Settings survive the restart.
+      assert.deepEqual(
+        await page.evaluate(() => {
+          const { palette, accent, font } = globalThis.document.documentElement.dataset;
+          return { palette, accent, font };
+        }),
+        { palette: 'ink', accent: 'violet', font: 'humanist' },
       );
       await page
         .getByText(/claude · fixture-model.*Full PR/)

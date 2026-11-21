@@ -19,7 +19,7 @@ import {
   type Anchor,
   type Citation,
 } from '../../shared/assistant.js';
-import { Sparkles, ArrowUp, LoaderCircle } from 'lucide-react';
+import { Sparkles, ArrowUp, LoaderCircle, SlidersHorizontal } from 'lucide-react';
 import { splitHunks } from '../../shared/reader.js';
 import type { ReaderView, ReaderFile } from '../../shared/reader.js';
 
@@ -192,93 +192,100 @@ export function ReviewChat({
           </span>{' '}
           Review chat
         </h2>
-        <small>{view.meta.head.slice(0, 8)}</small>
+        <div className="chat-heading-tools">
+          <small>{view.meta.head.slice(0, 8)}</small>
+          {prompt !== null && config && (
+            <fieldset disabled={running}>
+              <button
+                type="button"
+                className="chat-settings-toggle"
+                aria-label="Review instructions"
+                title="Review instructions"
+                onClick={() => setSettingsOpen(true)}
+              >
+                <SlidersHorizontal size={15} aria-hidden />
+              </button>
+              {settingsOpen && (
+                <WorkspaceDialog
+                  title="Review instructions"
+                  icon={<Sparkles size={18} />}
+                  wide
+                  onClose={() => setSettingsOpen(false)}
+                >
+                  <div className="chat-settings">
+                    <label>
+                      Save instructions for
+                      <select
+                        value={scope}
+                        onChange={(e) => {
+                          setScope(scopeSchema.parse(e.target.value));
+                          setNotice('');
+                        }}
+                      >
+                        <option value="default" disabled={config.scope !== 'default'}>
+                          App default
+                        </option>
+                        <option value="repository" disabled={config.scope === 'review'}>
+                          This repository
+                        </option>
+                        <option value="review">This pull request</option>
+                      </select>
+                    </label>
+                    {config.scope !== 'default' && (
+                      <button
+                        type="button"
+                        className="quiet"
+                        onClick={() => {
+                          window.reviewer
+                            .clearPrompt(url, config.scope)
+                            .then((next) => {
+                              apply(next);
+                              setNotice('Using inherited instructions.');
+                            })
+                            .catch((e) => setError(readableError(e)));
+                        }}
+                      >
+                        Use inherited instructions
+                      </button>
+                    )}
+                    <label>
+                      Review prompt
+                      <textarea
+                        rows={14}
+                        value={prompt}
+                        onChange={(e) => {
+                          setPrompt(e.target.value);
+                          setNotice('');
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="quiet"
+                      onClick={() => {
+                        setPrompt(defaultPrompt);
+                        setNotice('');
+                      }}
+                    >
+                      Restore default prompt
+                    </button>{' '}
+                    <button type="button" onClick={configure}>
+                      Save instructions
+                    </button>
+                    {notice && <small role="status">{notice}</small>}
+                    {error && <p role="alert">{error}</p>}
+                  </div>
+                </WorkspaceDialog>
+              )}
+            </fieldset>
+          )}
+        </div>
       </div>
       {!agent && agents && (
         <p className="chat-harness-hint">
           {agentNames[agents.selection.agent]} was not found. Choose an installed harness in the
           title bar.
         </p>
-      )}
-      {prompt !== null && config && (
-        <fieldset disabled={running}>
-          <button
-            type="button"
-            className="chat-settings-toggle"
-            onClick={() => setSettingsOpen(true)}
-          >
-            Review instructions
-          </button>
-          {settingsOpen && (
-            <WorkspaceDialog
-              title="Review instructions"
-              icon={<Sparkles size={18} />}
-              onClose={() => setSettingsOpen(false)}
-            >
-              <div className="chat-settings">
-                <label>
-                  Save instructions for
-                  <select
-                    value={scope}
-                    onChange={(e) => {
-                      setScope(scopeSchema.parse(e.target.value));
-                      setNotice('');
-                    }}
-                  >
-                    <option value="default" disabled={config.scope !== 'default'}>
-                      App default
-                    </option>
-                    <option value="repository" disabled={config.scope === 'review'}>
-                      This repository
-                    </option>
-                    <option value="review">This pull request</option>
-                  </select>
-                </label>
-                {config.scope !== 'default' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      window.reviewer
-                        .clearPrompt(url, config.scope)
-                        .then((next) => {
-                          apply(next);
-                          setNotice('Using inherited instructions.');
-                        })
-                        .catch((e) => setError(readableError(e)));
-                    }}
-                  >
-                    Use inherited instructions
-                  </button>
-                )}
-                <label>
-                  Review prompt
-                  <textarea
-                    rows={6}
-                    value={prompt}
-                    onChange={(e) => {
-                      setPrompt(e.target.value);
-                      setNotice('');
-                    }}
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPrompt(defaultPrompt);
-                    setNotice('');
-                  }}
-                >
-                  Restore default prompt
-                </button>{' '}
-                <button type="button" onClick={configure}>
-                  Save instructions
-                </button>
-                {notice && <small role="status">{notice}</small>}
-                {error && <p role="alert">{error}</p>}
-              </div>
-            </WorkspaceDialog>
-          )}
-        </fieldset>
       )}
       <div
         className="chat-log"
@@ -319,56 +326,7 @@ export function ReviewChat({
           send(question, contextMode, true);
         }}
       >
-        <label htmlFor="chat-question">Ask about the diff</label>
-        <small className="context-file">
-          {file.path} ·{' '}
-          {selection
-            ? 'line ' + selection.line + ' (' + selection.side + ')'
-            : file.status === 'added'
-              ? 'new file'
-              : 'hunk ' + (file.hunk + 1)}
-        </small>
-        <textarea
-          id="chat-question"
-          rows={3}
-          value={question}
-          onChange={(e) => chatRuns.setDraft(url, e.target.value)}
-          disabled={running}
-          placeholder="Ask a question about this change…"
-        />
-        <label className="chat-context-mode">
-          Context
-          <select
-            aria-label="Context"
-            value={contextMode}
-            disabled={running}
-            onChange={(e) => setContextMode(e.target.value === 'full-pr' ? 'full-pr' : 'focused')}
-          >
-            <option value="focused">Focused</option>
-            <option value="full-pr">Full PR</option>
-          </select>
-        </label>
-        {contextMode === 'full-pr' && (
-          <small className="context-help">
-            Searches saved diffs and reads requested source from the pinned repository. First source
-            lookup downloads that revision.
-          </small>
-        )}
-        <details>
-          <summary>Related file</summary>
-          <label>
-            Prioritise another diff
-            <select value={extra} onChange={(e) => setExtra(e.target.value)}>
-              <option value="">Automatic</option>
-              {view.files
-                .filter((f) => f.path !== file.path)
-                .map((f) => (
-                  <option key={f.path}>{f.path}</option>
-                ))}
-            </select>
-          </label>
-        </details>
-        <div className="composer-actions">
+        <div className="chat-suggestions">
           <button
             type="button"
             className="summarise-pr"
@@ -391,15 +349,64 @@ export function ReviewChat({
           >
             Explain file
           </button>
-          {running ? (
-            <button type="button" onClick={() => chatRuns.cancel(url)}>
-              Cancel
-            </button>
-          ) : (
-            <button disabled={!canAsk || !question.trim()}>
-              <ArrowUp size={14} /> Send
-            </button>
-          )}
+        </div>
+        <div className="composer-box">
+          <small className="context-file">
+            {file.path} ·{' '}
+            {selection
+              ? 'line ' + selection.line + ' (' + selection.side + ')'
+              : file.status === 'added'
+                ? 'new file'
+                : 'hunk ' + (file.hunk + 1)}
+          </small>
+          <textarea
+            id="chat-question"
+            aria-label="Ask about the diff"
+            rows={4}
+            value={question}
+            onChange={(e) => chatRuns.setDraft(url, e.target.value)}
+            disabled={running}
+            placeholder="Ask a question about this change…"
+          />
+          <div className="composer-actions">
+            <select
+              aria-label="Context"
+              title={
+                contextMode === 'full-pr'
+                  ? 'Searches saved diffs and reads requested source from the pinned repository. The first source lookup downloads that revision.'
+                  : 'Answers from the selected file and hunk.'
+              }
+              value={contextMode}
+              disabled={running}
+              onChange={(e) => setContextMode(e.target.value === 'full-pr' ? 'full-pr' : 'focused')}
+            >
+              <option value="focused">Focused</option>
+              <option value="full-pr">Full PR</option>
+            </select>
+            <select
+              aria-label="Related file"
+              className="related-file"
+              title={extra || "Prioritise another file's diff alongside this one"}
+              value={extra}
+              onChange={(e) => setExtra(e.target.value)}
+            >
+              <option value="">Related file: auto</option>
+              {view.files
+                .filter((f) => f.path !== file.path)
+                .map((f) => (
+                  <option key={f.path}>{f.path}</option>
+                ))}
+            </select>
+            {running ? (
+              <button type="button" onClick={() => chatRuns.cancel(url)}>
+                Cancel
+              </button>
+            ) : (
+              <button disabled={!canAsk || !question.trim()}>
+                <ArrowUp size={14} /> Send
+              </button>
+            )}
+          </div>
         </div>
       </form>
       {(error || chat.error) && <p role="alert">{error || chat.error}</p>}
@@ -494,7 +501,11 @@ const Answer = memo(function Answer({
         />
       </div>
       {current && draft && onDraft && (
-        <button className="secondary" onClick={() => onDraft(draft.anchor, draft.body)}>
+        <button
+          className="secondary"
+          title="Start an editable review comment from this answer, on the first line it cites"
+          onClick={() => onDraft(draft.anchor, draft.body)}
+        >
           Draft from answer
         </button>
       )}

@@ -22,7 +22,7 @@ Choose the palette at the bottom-left of the sidebar, or from the palette button
 
 Choose the harness and model from the picker at the right of the title bar. It lists Codex CLI and Claude Code, and the choice applies to every PR and survives a restart. Leave the model blank to use the agent default. Codex can also use a local Ollama or LM Studio provider. If discovery misses an installation, use **Choose executable** in the same picker.
 
-In **Review chat**, open **Review instructions** to edit the built-in prompt and save it for the app, repository, or PR. A PR prompt takes precedence over its repository and app defaults. **Use inherited instructions** removes the current override.
+In **Review chat**, the sliders button in the heading opens **Review instructions**, where you edit the built-in prompt and save it for the app, repository, or PR. A PR prompt takes precedence over its repository and app defaults. **Use inherited instructions** removes the current override.
 
 Choose **Summarise PR** for an overview of the whole pull request: its purpose, the main behaviour changes by area, the riskiest changes to read first, and gaps in the tests. It always uses Full PR context, described below, and the answer lists changed files the agent did not inspect.
 
@@ -30,7 +30,7 @@ Each PR has its own chat: its conversation, the question you are typing, and any
 
 Select a diff line and choose **Explain file**, or type a question. **Related file** lets you include another changed file in the evidence. Chat renders GitHub-flavored Markdown, including lists, code blocks, and tables. Click a citation to jump to the original or updated line. Citations from earlier revisions open the saved excerpt. For a newly added file, **Explain file** describes its purpose and implementation. Each agent request includes the PR title, a bounded description and changed-file list, selected and related code evidence, and up to five recent exchanges from the same revision. New-file source is sent in line order and marked complete or partial. The CLI receives this context through stdin. The cached PR snapshot and conversation stay in local SQLite. An agent using a hosted model sends the selected evidence and recent conversation to its provider. Codex also supports a locally running Ollama or LM Studio provider.
 
-Use the **Context** menu before sending a question. **Focused** uses the evidence described above. **Full PR** also lets the agent page through all cached patches, search for a symbol, and read definitions, callers, and tests anywhere in the repository. For example, ask “Which callers rely on the old return value, and do the tests cover the new one?” The agent can compare the reviewed head with its merge base. Diff citations jump to the reader. Source citations open the exact file and line at that commit on GitHub.
+Use the context menu under the question box before sending a question. **Focused** uses the evidence described above. **Full PR** also lets the agent page through all cached patches, search for a symbol, and read definitions, callers, and tests anywhere in the repository. For example, ask “Which callers rely on the old return value, and do the tests cover the new one?” The agent can compare the reviewed head with its merge base. Diff citations jump to the reader. Source citations open the exact file and line at that commit on GitHub.
 
 Full PR source reads require Git. The first source lookup for each revision downloads a shallow snapshot into the app’s per-user `pr-source` directory. Later reads reuse the local copy, including offline. Cached diffs are available even when the source download fails. The agent can request up to four batches of four lookups per question. The selected model receives the excerpts returned by those lookups, which can include unchanged repository code. Source reads support regular text files up to 2 MiB.
 
@@ -84,7 +84,7 @@ After you open an update, select a question to compare the original evidence wit
 
 ## Workspace settings and reply alerts
 
-The gear at the bottom of the left rail opens **Settings**. Choose a theme, interface font, and text size. Code keeps its monospaced font and follows the selected text size. Appearance is saved in SQLite.
+The gear at the bottom of the left rail opens **Settings**. Choose one of ten themes, an accent colour for buttons and highlights, an interface font, and a text size. Settings is the only place the theme changes. Code keeps its monospaced font and follows the selected text size. Appearance is saved in SQLite.
 
 **Connect account** starts GitHub CLI browser sign-in for github.com. Complete the authorization on GitHub. Settings displays the active CLI account, and **Switch account** starts another sign-in.
 
