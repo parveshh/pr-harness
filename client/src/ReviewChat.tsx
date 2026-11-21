@@ -3,11 +3,15 @@ import { ChatMarkdown } from './components/ChatMarkdown.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  agentNames,
   defaultPrompt,
   readableError,
+  reviewPrompt,
+  scope as scopeSchema,
+  summaryQuestion,
+  type AgentCatalog,
   type Config,
   type ContextMode,
-  type Preferences,
   type Scope,
   type Turn,
   type Anchor,
@@ -18,6 +22,7 @@ import { splitHunks } from '../../shared/reader.js';
 import type { ReaderView, ReaderFile } from '../../shared/reader.js';
 
 export function ReviewChat({
+  agents,
   url,
   view,
   file,
@@ -25,6 +30,7 @@ export function ReviewChat({
   jump,
   onDraft,
 }: {
+  agents: AgentCatalog | null;
   url: string;
   view: ReaderView;
   file: ReaderFile;
@@ -32,8 +38,9 @@ export function ReviewChat({
   jump: (cite: Citation) => void;
   onDraft: ((cite: Citation, body: string) => void) | undefined;
 }) {
+  // The harness and model come from the app-wide choice. This pane owns the scoped prompt.
   const [config, setConfig] = useState<Config | null>(null),
-    [settings, setSettings] = useState<Preferences | null>(null),
+    [prompt, setPrompt] = useState<string | null>(null),
     [scope, setScope] = useState<Scope>('default');
   const [messages, setMessages] = useState<Turn[]>([]),
     [question, setQuestion] = useState(''),
@@ -50,7 +57,7 @@ export function ReviewChat({
     cancelled = useRef<string | null>(null);
   function apply(c: Config) {
     setConfig(c);
-    setSettings(c.settings);
+    setPrompt(c.settings.prompt);
     setScope(c.scope);
   }
   useEffect(() => {
@@ -94,19 +101,14 @@ export function ReviewChat({
       live = false;
     };
   }, [url, view.revision]);
-  const agent = config?.agents.find((a) => a.id === settings?.agent);
-  function change(p: Partial<Preferences>) {
-    if (settings) {
-      setSettings({ ...settings, ...p });
-      setNotice('');
-    }
-  }
+  const agent = agents?.agents.find((a) => a.id === agents.selection.agent);
   async function save() {
-    if (!settings) throw Error('Select an agent first.');
-    const c = await window.reviewer.saveConfig(url, scope, settings);
+    const text = reviewPrompt.safeParse(prompt);
+    if (!text.success) throw Error('Enter a review prompt of up to 16,000 characters.');
+    const c = await window.reviewer.savePrompt(url, scope, text.data);
     if (alive.current) {
       apply(c);
-      setNotice('Settings saved.');
+      setNotice('Instructions saved.');
     }
     return c;
   }
@@ -114,8 +116,9 @@ export function ReviewChat({
     setError('');
     save().catch((e) => setError(readableError(e)));
   }
-  async function send(text: string) {
-    if (active.current || !settings || !agent || !text.trim()) return;
+  // `typed` marks a question from the composer, which is cleared once it is answered.
+  async function send(text: string, mode: ContextMode = contextMode, typed = false) {
+    if (active.current || prompt === null || !agent || !text.trim()) return;
     const run = crypto.randomUUID();
     active.current = run;
     setRunning(true);
@@ -123,12 +126,12 @@ export function ReviewChat({
     setPartial('');
     setPending(text);
     try {
-      if (!config || scope !== config.scope || settings !== config.settings) await save();
+      if (!config || scope !== config.scope || prompt !== config.settings.prompt) await save();
       if (!alive.current || active.current !== run) return;
       if (cancelled.current === run) throw Error('Request cancelled.');
       const result = await window.reviewer.ask({
         run,
-        contextMode,
+        contextMode: mode,
         url,
         revision: view.revision,
         path: file.path,
@@ -139,7 +142,7 @@ export function ReviewChat({
       });
       if (alive.current) {
         setMessages((h) => [...h.filter((m) => m.run !== result.run), result]);
-        setQuestion('');
+        if (typed) setQuestion('');
       }
     } catch (e) {
       if (alive.current) setError(readableError(e));
@@ -165,62 +168,37 @@ export function ReviewChat({
         </h2>
         <small>{view.meta.head.slice(0, 8)}</small>
       </div>
-      {settings && config && (
+      {!agent && agents && (
+        <p className="chat-harness-hint">
+          {agentNames[agents.selection.agent]} was not found. Choose an installed harness in the
+          title bar.
+        </p>
+      )}
+      {prompt !== null && config && (
         <fieldset disabled={running}>
-          <div className="agent-picker">
-            <label>
-              Agent
-              <select
-                aria-label="Agent"
-                value={settings.agent}
-                onChange={(e) =>
-                  change({
-                    agent: e.target.value === 'claude' ? 'claude' : 'codex',
-                    model: '',
-                    provider: 'default',
-                  })
-                }
-              >
-                {(['codex', 'claude'] as const).map((id) => (
-                  <option key={id} value={id}>
-                    {id === 'codex' ? 'Codex CLI' : 'Claude Code'}
-                    {config.agents.some((a) => a.id === id) ? '' : ' (not found)'}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Model
-              <input
-                list="agent-models"
-                value={settings.model}
-                placeholder="Agent default"
-                onChange={(e) => change({ model: e.target.value })}
-              />
-              <datalist id="agent-models">
-                {(settings.provider === 'default' ? agent?.models : [])?.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-            </label>
-          </div>
           <button
             type="button"
             className="chat-settings-toggle"
             onClick={() => setSettingsOpen(true)}
           >
-            Review instructions &amp; settings
+            Review instructions
           </button>
           {settingsOpen && (
             <WorkspaceDialog
-              title="Review instructions & settings"
+              title="Review instructions"
               icon={<Sparkles size={18} />}
               onClose={() => setSettingsOpen(false)}
             >
               <div className="chat-settings">
                 <label>
-                  Save settings for
-                  <select value={scope} onChange={(e) => setScope(e.target.value as Scope)}>
+                  Save instructions for
+                  <select
+                    value={scope}
+                    onChange={(e) => {
+                      setScope(scopeSchema.parse(e.target.value));
+                      setNotice('');
+                    }}
+                  >
                     <option value="default" disabled={config.scope !== 'default'}>
                       App default
                     </option>
@@ -235,65 +213,39 @@ export function ReviewChat({
                     type="button"
                     onClick={() => {
                       window.reviewer
-                        .clearConfig(url, config.scope)
+                        .clearPrompt(url, config.scope)
                         .then((next) => {
                           apply(next);
-                          setNotice('Using inherited settings.');
+                          setNotice('Using inherited instructions.');
                         })
                         .catch((e) => setError(readableError(e)));
                     }}
                   >
-                    Use inherited settings
+                    Use inherited instructions
                   </button>
-                )}
-                {settings.agent === 'codex' && (
-                  <label>
-                    Inference provider
-                    <select
-                      value={settings.provider}
-                      onChange={(e) =>
-                        change({ provider: e.target.value as Preferences['provider'], model: '' })
-                      }
-                    >
-                      <option value="default">Codex default</option>
-                      <option value="ollama">Local · Ollama</option>
-                      <option value="lmstudio">Local · LM Studio</option>
-                    </select>
-                  </label>
                 )}
                 <label>
                   Review prompt
                   <textarea
                     rows={6}
-                    value={settings.prompt}
-                    onChange={(e) => change({ prompt: e.target.value })}
+                    value={prompt}
+                    onChange={(e) => {
+                      setPrompt(e.target.value);
+                      setNotice('');
+                    }}
                   />
                 </label>
-                <button type="button" onClick={() => change({ prompt: defaultPrompt })}>
-                  Restore default prompt
-                </button>{' '}
-                <button type="button" onClick={configure}>
-                  Save settings
-                </button>
-                <p>
-                  {agent?.version ?? 'Executable not found'} ·{' '}
-                  {settings.provider === 'default' ? 'Uses agent provider' : 'Local inference'}
-                </p>
                 <button
                   type="button"
                   onClick={() => {
-                    window.reviewer
-                      .chooseExecutable(settings.agent)
-                      .then(async (chosen) => {
-                        if (chosen) {
-                          const c = await window.reviewer.agentConfig(url);
-                          setConfig(c);
-                        }
-                      })
-                      .catch((e) => setError(readableError(e)));
+                    setPrompt(defaultPrompt);
+                    setNotice('');
                   }}
                 >
-                  Choose executable…
+                  Restore default prompt
+                </button>{' '}
+                <button type="button" onClick={configure}>
+                  Save instructions
                 </button>
                 {notice && <small role="status">{notice}</small>}
                 {error && <p role="alert">{error}</p>}
@@ -339,7 +291,7 @@ export function ReviewChat({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          void send(question);
+          void send(question, contextMode, true);
         }}
       >
         <label htmlFor="chat-question">Ask about the diff</label>
@@ -392,6 +344,15 @@ export function ReviewChat({
           </label>
         </details>
         <div className="composer-actions">
+          <button
+            type="button"
+            className="summarise-pr"
+            disabled={!agent || running || prompt === null}
+            title="Uses Full PR context"
+            onClick={() => void send(summaryQuestion, 'full-pr')}
+          >
+            Summarise PR
+          </button>
           <button
             type="button"
             disabled={!canAsk}

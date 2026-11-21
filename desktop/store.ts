@@ -6,7 +6,12 @@ import { migrateRevisionNavigation, revisionMigration } from './revisions.js';
 import { appearance } from '../shared/appearance.js';
 import { draftStore, draftMigration } from './draft-store.js';
 import { DatabaseSync } from 'node:sqlite';
-import { assistantMigration, assistantStore, migrateDefaultPrompt } from './assistant-store.js';
+import {
+  assistantMigration,
+  assistantStore,
+  migrateDefaultPrompt,
+  migrateGlobalSelection,
+} from './assistant-store.js';
 import { readerMigration, readerStore } from './reader-store.js';
 import { pullRequestUrl, reviewList } from '../shared/reviews.js';
 
@@ -15,7 +20,7 @@ export function openStore(filename: string) {
   try {
     db.exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version < 0 || version > 11)
+    if (typeof version !== 'number' || version < 0 || version > 12)
       throw new Error('This workspace requires a newer Local Reviewer.');
     if (version === 0) {
       db.exec(`CREATE TABLE saved_reviews (url TEXT PRIMARY KEY, saved_at TEXT NOT NULL) STRICT;
@@ -34,6 +39,7 @@ export function openStore(filename: string) {
     if (version < 9) db.exec(replyTargetsMigration);
     if (version < 10) migrateRevisionNavigation(db);
     if (version < 11) migrateDefaultPrompt(db);
+    if (version < 12) migrateGlobalSelection(db);
     db.exec('COMMIT');
   } catch (error) {
     db.close();

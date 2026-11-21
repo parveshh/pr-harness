@@ -389,7 +389,7 @@
 .authors-heading button,
 .remove-repo,
 .review-chat details button,
-.review-chat .composer-actions button:first-child {
+.review-chat .composer-actions button:not(:last-child) {
   background: transparent;
   color: var(--muted);
 }
@@ -398,7 +398,7 @@
 .authors-heading button:hover,
 .remove-repo:hover,
 .review-chat details button:hover,
-.review-chat .composer-actions button:first-child:hover {
+.review-chat .composer-actions button:not(:last-child):hover {
   background: var(--hover);
 }
 .icon-control {
@@ -538,18 +538,6 @@
 .review-chat details label {
   display: block;
   margin: 8px 0;
-}
-.agent-picker {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.agent-picker label {
-  min-width: 0;
-}
-.agent-picker input,
-.agent-picker select {
-  margin-top: 4px;
 }
 .review-chat details button,
 .composer-actions button {
@@ -990,6 +978,7 @@
   gap: 7px;
   padding: 3px 8px;
 }
+.agent-trigger,
 .appearance-trigger,
 .repo-sidebar .appearance-trigger {
   display: inline-flex;
@@ -1004,6 +993,7 @@
   cursor: pointer;
   app-region: no-drag;
 }
+.agent-trigger:hover,
 .appearance-trigger:hover,
 .repo-sidebar .appearance-trigger:hover {
   background: var(--raised);
@@ -1015,6 +1005,81 @@
 }
 .home-bar .appearance-trigger {
   margin-left: auto;
+}
+/* The harness and model picker sits at the trailing edge of the title bar. */
+.reader header .agent-trigger,
+.home-bar .agent-trigger {
+  margin-left: auto;
+  flex: none;
+  max-width: 300px;
+}
+.agent-trigger[data-disabled] {
+  color: var(--muted);
+  cursor: default;
+}
+.agent-trigger span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-trigger svg {
+  flex: none;
+}
+.reader header .agent-trigger + .appearance-trigger,
+.home-bar .agent-trigger + .appearance-trigger {
+  margin-left: 0;
+}
+.agent-menu {
+  width: 270px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 8px 24px #0005;
+  z-index: 105;
+  app-region: no-drag;
+}
+.agent-form {
+  outline: none;
+  font-size: 0.8125rem;
+}
+.agent-form .appearance-label {
+  padding: 2px 0 4px;
+}
+.agent-form label {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.agent-form :is(select, input) {
+  width: 100%;
+  background: var(--editor);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 450;
+}
+.agent-form p {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.agent-form button {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+}
+.chat-harness-hint {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 .appearance-menu {
   min-width: 190px;
@@ -1060,6 +1125,8 @@
   border: 1px solid #ffffff50;
   box-shadow: inset 0 1px 0 #ffffff10;
 }
+.integrated-titlebar:has(.agent-menu) header,
+.integrated-titlebar:has(.agent-menu) .repo-sidebar::before,
 .integrated-titlebar:has(.appearance-menu) header,
 .integrated-titlebar:has(.appearance-menu) .repo-sidebar::before {
   app-region: no-drag;
@@ -1374,9 +1441,6 @@ body,
   }
   .reader .description {
     max-height: 45px;
-  }
-  .review-chat .agent-picker {
-    gap: 4px;
   }
   .review-chat :is(.chat-heading, fieldset, form) {
     padding: 6px 10px;

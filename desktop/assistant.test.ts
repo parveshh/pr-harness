@@ -1,31 +1,40 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { defaultPrompt, type Citation, type Preferences } from '../shared/assistant.js';
+import { defaultPrompt, type Citation, type Selection } from '../shared/assistant.js';
 import type { ReaderView } from '../shared/reader.js';
 import { buildAgentContext, citedAnswer } from './evidence.js';
 import { monitor } from './monitor.js';
 import { openStore } from './store.js';
 
 const url = 'https://github.com/example/project/pull/12';
-await test('prompt and model overrides fall back through PR, repository and app scopes', (t) => {
+await test('one harness and model apply to every PR while prompts fall back through PR, repository and app scopes', (t) => {
   const store = openStore(':memory:');
   t.after(() => store.close());
   const data = store.assistant;
-  const defaults: Preferences = {
-    agent: 'codex',
-    model: 'a',
-    provider: 'default',
-    prompt: defaultPrompt,
-  };
-  assert.equal(data.preferences(url, 'claude').settings.agent, 'claude');
-  data.savePreferences(url, 'default', defaults);
-  data.savePreferences(url, 'repository', { ...defaults, model: 'b' });
-  data.savePreferences(url, 'review', { ...defaults, model: 'c' });
-  assert.equal(data.preferences(url, 'codex').settings.model, 'c');
-  assert.equal(data.preferences(url.replace('12', '13'), 'codex').settings.model, 'b');
-  assert.equal(data.preferences(url.replace('project', 'other'), 'codex').settings.model, 'a');
-  data.clearPreferences(url, 'review');
-  assert.equal(data.preferences(url, 'codex').settings.model, 'b');
+  const other = url.replace('project', 'other');
+  assert.deepEqual(data.preferences(url, 'claude'), {
+    scope: 'default',
+    settings: { agent: 'claude', model: '', provider: 'default', prompt: defaultPrompt },
+  });
+  const chosen: Selection = { agent: 'codex', model: 'a', provider: 'ollama' };
+  data.saveSelection(chosen);
+  assert.deepEqual(data.selection('claude'), chosen);
+  data.savePrompt(url, 'default', 'app');
+  data.savePrompt(url, 'repository', 'repository');
+  data.savePrompt(url, 'review', 'review');
+  assert.deepEqual(data.preferences(url, 'claude'), {
+    scope: 'review',
+    settings: { ...chosen, prompt: 'review' },
+  });
+  assert.equal(data.preferences(url.replace('12', '13'), 'claude').settings.prompt, 'repository');
+  assert.deepEqual(data.preferences(other, 'claude'), {
+    scope: 'default',
+    settings: { ...chosen, prompt: 'app' },
+  });
+  data.clearPrompt(url, 'review');
+  assert.equal(data.preferences(url, 'claude').scope, 'repository');
+  data.saveSelection({ agent: 'claude', model: 'b', provider: 'default' });
+  for (const pr of [url, other]) assert.equal(data.preferences(pr, 'codex').settings.model, 'b');
 });
 
 await test('citations resolve only to supplied evidence and preserve deletion-side lines', () => {

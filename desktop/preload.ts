@@ -8,7 +8,7 @@ import { pinnedQuestion, questionEvidence } from '../shared/questions.js';
 import { changeEvidence } from '../shared/rereview.js';
 import { readerView } from '../shared/reader.js';
 import { z } from 'zod';
-import { repository, config, turn, activity } from '../shared/assistant.js';
+import { repository, config, agentCatalog, turn, activity } from '../shared/assistant.js';
 
 const reviewer: ReviewerBridge = {
   discussions: async (url) => discussions.parse(await ipcRenderer.invoke('discussions:list', url)),
@@ -59,10 +59,13 @@ const reviewer: ReviewerBridge = {
   removeRepository: async (name) =>
     repository.array().parse(await ipcRenderer.invoke('repos:remove', name)),
   agentConfig: async (url) => config.parse(await ipcRenderer.invoke('agent:config', url)),
-  saveConfig: async (url, scope, settings) =>
-    config.parse(await ipcRenderer.invoke('agent:save', url, scope, settings)),
-  clearConfig: async (url, target) =>
-    config.parse(await ipcRenderer.invoke('agent:clear', url, target)),
+  agentSelection: async () => agentCatalog.parse(await ipcRenderer.invoke('agent:selection')),
+  saveSelection: async (value) =>
+    agentCatalog.parse(await ipcRenderer.invoke('agent:select', value)),
+  savePrompt: async (url, scope, prompt) =>
+    config.parse(await ipcRenderer.invoke('agent:save-prompt', url, scope, prompt)),
+  clearPrompt: async (url, target) =>
+    config.parse(await ipcRenderer.invoke('agent:clear-prompt', url, target)),
   chooseExecutable: async (agent) =>
     z.boolean().parse(await ipcRenderer.invoke('agent:choose', agent)),
   history: async (url) => turn.array().parse(await ipcRenderer.invoke('chat:history', url)),

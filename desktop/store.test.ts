@@ -35,12 +35,12 @@ await test('invalid input leaves the workspace empty', (t) => {
   assert.deepEqual(store.list(), []);
 });
 
-await test('upgrade previously saved built-in prompts while preserving custom prompts and model choices', (t) => {
+await test('upgrade built-in prompts, keep custom prompts, and turn the app default harness and model into the global choice', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'reviewer-prompt-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'workspace.sqlite');
   const url = 'https://github.com/org/repo/pull/1';
-  const first = openStore(path);
+  openStore(path).close();
   const settings: Preferences = {
     agent: 'claude',
     model: 'chosen',
@@ -48,21 +48,76 @@ await test('upgrade previously saved built-in prompts while preserving custom pr
     prompt:
       'Explain the behaviour before and after the change. Cite the file and lines for each material claim. For a possible defect, describe the triggering conditions and the effect on the caller. If the answer depends on missing evidence, name what you would inspect. Treat the author’s stated intent as a claim to check. Keep routine changes brief.',
   };
-  first.assistant.savePreferences(url, 'default', settings);
-  first.assistant.savePreferences(url, 'review', { ...settings, prompt: 'Focus on concurrency.' });
-  first.close();
+  // Version 10 stored a harness and model beside the prompt in every scope.
   const legacy = new DatabaseSync(path);
-  legacy.exec('PRAGMA user_version=10');
+  legacy.exec('DROP TABLE agent_selection; PRAGMA user_version=10');
+  const insert = legacy.prepare('INSERT INTO agent_preferences VALUES(?,?)');
+  insert.run('default', JSON.stringify(settings));
+  insert.run(
+    url,
+    JSON.stringify({
+      ...settings,
+      agent: 'codex',
+      model: 'per-pr',
+      prompt: 'Focus on concurrency.',
+    }),
+  );
   legacy.close();
   const upgraded = openStore(path);
   t.after(() => upgraded.close());
-  assert.deepEqual(upgraded.assistant.preferences(url, 'codex').settings, {
-    ...settings,
-    prompt: 'Focus on concurrency.',
+  assert.deepEqual(upgraded.assistant.preferences(url, 'codex'), {
+    scope: 'review',
+    settings: { ...settings, prompt: 'Focus on concurrency.' },
   });
   assert.deepEqual(upgraded.assistant.preferences(url + '2', 'codex').settings, {
     ...settings,
     prompt: defaultPrompt,
+  });
+});
+
+await test('an upgrade without a saved app default leaves the harness choice to the first installed agent', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'reviewer-selection-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'workspace.sqlite');
+  openStore(path).close();
+  const legacy = new DatabaseSync(path);
+  legacy.exec('DROP TABLE agent_selection; PRAGMA user_version=11');
+  legacy
+    .prepare('INSERT INTO agent_preferences VALUES(?,?)')
+    .run(
+      'org/repo',
+      JSON.stringify({ agent: 'codex', model: 'm', provider: 'default', prompt: 'Repo.' }),
+    );
+  legacy.close();
+  const upgraded = openStore(path);
+  t.after(() => upgraded.close());
+  assert.deepEqual(upgraded.assistant.selection('claude'), {
+    agent: 'claude',
+    model: '',
+    provider: 'default',
+  });
+  assert.equal(
+    upgraded.assistant.preferences('https://github.com/org/repo/pull/1', 'claude').settings.prompt,
+    'Repo.',
+  );
+});
+
+await test('an app default with an unusable model or provider still upgrades to a valid global choice', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'reviewer-partial-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'workspace.sqlite');
+  openStore(path).close();
+  const legacy = new DatabaseSync(path);
+  legacy.exec('DROP TABLE agent_selection; PRAGMA user_version=11');
+  legacy
+    .prepare('INSERT INTO agent_preferences VALUES(?,?)')
+    .run('default', JSON.stringify({ agent: 'claude', model: 7, provider: 'x', prompt: 'Keep.' }));
+  legacy.close();
+  const upgraded = openStore(path);
+  t.after(() => upgraded.close());
+  assert.deepEqual(upgraded.assistant.preferences('https://github.com/org/repo/pull/1', 'codex'), {
+    scope: 'default',
+    settings: { agent: 'claude', model: '', provider: 'default', prompt: 'Keep.' },
   });
 });
 
@@ -73,9 +128,9 @@ await test('opening a newer schema preserves its version and contents', (t) => {
   const db = new DatabaseSync(path);
   t.after(() => db.close());
   db.exec(
-    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=12",
+    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=13",
   );
   assert.throws(() => openStore(path), /newer Local Reviewer/);
-  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 12);
+  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 13);
   assert.equal(db.prepare('SELECT value FROM future').get()?.value, 'preserve');
 });

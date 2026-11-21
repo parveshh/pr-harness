@@ -1,12 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { z } from 'zod';
 import {
   defaultPrompt,
-  prefs,
   repoOf,
+  reviewPrompt,
+  selection,
   repository,
   turn,
-  type Preferences,
   type Scope,
+  type Selection,
   type Repository,
   type Turn,
   type AgentId,
@@ -27,6 +29,17 @@ export function migrateDefaultPrompt(db: DatabaseSync) {
   ).run(defaultPrompt, previous);
   db.exec('PRAGMA user_version=11');
 }
+// Earlier versions stored a harness and model with every prompt scope. The app default
+// becomes the single app-wide choice. Scoped rows keep supplying their prompt.
+export function migrateGlobalSelection(db: DatabaseSync) {
+  db.exec(`CREATE TABLE agent_selection(id INTEGER PRIMARY KEY CHECK(id=1),agent TEXT NOT NULL,model TEXT NOT NULL,provider TEXT NOT NULL) STRICT;
+INSERT INTO agent_selection SELECT 1,json_extract(settings,'$.agent'),
+  CASE WHEN json_type(settings,'$.model')='text' THEN json_extract(settings,'$.model') ELSE '' END,
+  CASE WHEN json_extract(settings,'$.provider') IN ('ollama','lmstudio') THEN json_extract(settings,'$.provider') ELSE 'default' END
+  FROM agent_preferences WHERE scope='default' AND json_valid(settings) AND json_extract(settings,'$.agent') IN ('codex','claude');
+PRAGMA user_version=12;`);
+}
+const scopedPrompt = z.object({ prompt: reviewPrompt });
 export function assistantStore(db: DatabaseSync) {
   function repositories() {
     return db
@@ -40,6 +53,13 @@ export function assistantStore(db: DatabaseSync) {
           pulls: JSON.parse(String(row.pulls)) as unknown,
         }),
       );
+  }
+  // `first` is the harness to use until the reviewer picks one.
+  function chosen(first: AgentId): Selection {
+    const row = db.prepare('SELECT agent,model,provider FROM agent_selection WHERE id=1').get();
+    return (
+      selection.safeParse(row).data ?? { agent: first, model: '', provider: 'default' as const }
+    );
   }
   const key = (url: string, scope: Scope) =>
     scope === 'review' ? url : scope === 'repository' ? repoOf(url) : 'default';
@@ -68,25 +88,35 @@ export function assistantStore(db: DatabaseSync) {
     failure(name: string, error: string) {
       db.prepare('UPDATE repositories SET error=? WHERE name=?').run(error, name);
     },
+    selection: chosen,
+    saveSelection(value: Selection) {
+      db.prepare('INSERT OR REPLACE INTO agent_selection VALUES(1,?,?,?)').run(
+        value.agent,
+        value.model,
+        value.provider,
+      );
+    },
     preferences(url: string, first: AgentId) {
+      const agent = chosen(first);
       for (const scope of ['review', 'repository', 'default'] as const) {
         const row = db
           .prepare('SELECT settings FROM agent_preferences WHERE scope=?')
           .get(key(url, scope));
-        if (row) return { scope, settings: prefs.parse(JSON.parse(String(row.settings))) };
+        if (row)
+          return {
+            scope,
+            settings: { ...agent, ...scopedPrompt.parse(JSON.parse(String(row.settings))) },
+          };
       }
-      return {
-        scope: 'default' as const,
-        settings: { agent: first, model: '', provider: 'default' as const, prompt: defaultPrompt },
-      };
+      return { scope: 'default' as const, settings: { ...agent, prompt: defaultPrompt } };
     },
-    savePreferences(url: string, scope: Scope, settings: Preferences) {
+    savePrompt(url: string, scope: Scope, prompt: string) {
       db.prepare('INSERT OR REPLACE INTO agent_preferences VALUES(?,?)').run(
         key(url, scope),
-        JSON.stringify(settings),
+        JSON.stringify({ prompt }),
       );
     },
-    clearPreferences(url: string, scope: Scope) {
+    clearPrompt(url: string, scope: Scope) {
       db.prepare('DELETE FROM agent_preferences WHERE scope=?').run(key(url, scope));
     },
     executable(agent: AgentId) {

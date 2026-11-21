@@ -18,7 +18,11 @@ Choose the palette at the bottom-left of the sidebar, or from the palette button
 
 ## Review with a local agent
 
-In **Review chat**, choose an installed Codex CLI or Claude Code and a model. Leave the model blank to use the agent default. In **Review instructions & settings**, edit the built-in prompt and save it for the app, repository, or PR. A PR setting takes precedence over its repository and app defaults. **Use inherited settings** removes the current override. If discovery misses an installation, use **Choose executable**.
+Choose the harness and model from the picker at the right of the title bar. It lists Codex CLI and Claude Code, and the choice applies to every PR and survives a restart. Leave the model blank to use the agent default. Codex can also use a local Ollama or LM Studio provider. If discovery misses an installation, use **Choose executable** in the same picker.
+
+In **Review chat**, open **Review instructions** to edit the built-in prompt and save it for the app, repository, or PR. A PR prompt takes precedence over its repository and app defaults. **Use inherited instructions** removes the current override.
+
+Choose **Summarise PR** for an overview of the whole pull request: its purpose, the main behaviour changes by area, the riskiest changes to read first, and gaps in the tests. It always uses Full PR context, described below, and the answer lists changed files the agent did not inspect.
 
 Select a diff line and choose **Explain file**, or type a question. **Related file** lets you include another changed file in the evidence. Chat renders GitHub-flavored Markdown, including lists, code blocks, and tables. Click a citation to jump to the original or updated line. Citations from earlier revisions open the saved excerpt. For a newly added file, **Explain file** describes its purpose and implementation. Each agent request includes the PR title, a bounded description and changed-file list, selected and related code evidence, and up to five recent exchanges from the same revision. New-file source is sent in line order and marked complete or partial. The CLI receives this context through stdin. The cached PR snapshot and conversation stay in local SQLite. An agent using a hosted model sends the selected evidence and recent conversation to its provider. Codex also supports a locally running Ollama or LM Studio provider.
 

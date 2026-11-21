@@ -158,6 +158,18 @@ async function resize(app, page, width, height) {
     mobile: false,
   });
 }
+// The harness and model are chosen once, in the title bar, for the whole app.
+async function chooseHarness(page, { agent, model }) {
+  await page.getByRole('button', { name: /^Harness and model: / }).click();
+  const form = page.getByRole('dialog', { name: 'Harness and model', exact: true });
+  if (agent) await form.getByLabel('Harness', { exact: true }).selectOption(agent);
+  await form.getByLabel('Model', { exact: true }).fill(model);
+  await page.keyboard.press('Escape');
+  await form.waitFor({ state: 'hidden' });
+  await page
+    .getByRole('button', { name: new RegExp('^Harness and model: .* · ' + model + '$') })
+    .waitFor();
+}
 let restoredFilesWidth;
 try {
   const app = await launch();
@@ -389,14 +401,15 @@ try {
       await chat.getByLabel('Ask about the diff').fill('');
 
       await page.getByRole('button', { name: 'Select new line 1', exact: true }).click();
-      await chat.getByText('Review instructions & settings').click();
-      const settings = page.getByRole('dialog', { name: 'Review instructions & settings' });
+      await chat.getByText('Review instructions', { exact: true }).click();
+      const settings = page.getByRole('dialog', { name: 'Review instructions', exact: true });
       await settings
         .getByLabel('Review prompt')
         .fill('Check the before and after behaviour with citations.');
-      await settings.getByLabel('Save settings for').selectOption('review');
+      await settings.getByLabel('Save instructions for').selectOption('review');
       await settings.getByRole('button', { name: 'Close' }).click();
-      await chat.getByLabel('Model', { exact: true }).fill('fixture-model');
+      assert.equal(await chat.getByLabel('Model', { exact: true }).count(), 0);
+      await chooseHarness(page, { model: 'fixture-model' });
       await chat.getByRole('button', { name: 'Explain file' }).click();
       await chat
         .getByText(
@@ -418,12 +431,11 @@ try {
       await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
       await page.locator('.diff-line[data-selected="true"]').waitFor();
       await capture(page, 'review-chat');
-      await chat.getByLabel('Agent', { exact: true }).selectOption('claude');
-      await chat.getByLabel('Model', { exact: true }).fill('invalid-model');
+      await chooseHarness(page, { agent: 'claude', model: 'invalid-model' });
       await chat.getByLabel('Ask about the diff').fill('Compare with the caller');
       await chat.getByRole('button', { name: 'Send', exact: true }).click();
       await chat.getByRole('alert').filter({ hasText: /model/i }).waitFor();
-      await chat.getByLabel('Model', { exact: true }).fill('fixture-model');
+      await chooseHarness(page, { model: 'fixture-model' });
       await chat.getByRole('button', { name: 'Send', exact: true }).click();
       await chat.getByText(/claude · fixture-model/).waitFor();
       assert.equal(
@@ -431,6 +443,15 @@ try {
         2,
       );
       await chat.getByLabel('Context', { exact: true }).selectOption('focused');
+      await chat.getByLabel('Ask about the diff').fill('Half-typed question');
+      await chat.getByRole('button', { name: 'Summarise PR', exact: true }).click();
+      const summary = chat
+        .locator('.exchange')
+        .filter({ hasText: 'Summarise this whole pull request.' });
+      await summary.getByText('Read from the local PR copy.', { exact: true }).waitFor();
+      await summary.getByText(/claude · fixture-model · \w+ · Full PR/).waitFor();
+      assert.equal(await chat.getByLabel('Context', { exact: true }).inputValue(), 'focused');
+      assert.equal(await chat.getByLabel('Ask about the diff').inputValue(), 'Half-typed question');
       await chat.getByLabel('Ask about the diff').fill('Wait for cancellation');
       await chat.getByRole('button', { name: 'Send', exact: true }).click();
       await chat.getByText('Waiting for cancellation', { exact: true }).waitFor();
@@ -553,6 +574,13 @@ try {
       await files.waitFor();
       assert.ok(Math.abs((await files.evaluate((el) => el.clientWidth)) - restoredFilesWidth) < 3);
       await page.getByRole('heading', { name: 'Review notes' }).first().waitFor();
+      // The harness and model chosen before the restart still apply.
+      await page
+        .getByRole('button', {
+          name: 'Harness and model: Claude Code · fixture-model',
+          exact: true,
+        })
+        .waitFor();
     }
     await page.getByRole('button', { name: 'Reviewed ✓' }).waitFor();
     const region = page.getByRole('region', { name: 'File diff' });
@@ -566,11 +594,14 @@ try {
         await page.evaluate(() => globalThis.document.documentElement.dataset.font),
         'humanist',
       );
-      await page.getByText(/claude · fixture-model.*Full PR/).waitFor();
+      await page
+        .getByText(/claude · fixture-model.*Full PR/)
+        .first()
+        .waitFor();
       await page.getByRole('button', { name: /Tracked PR/ }).waitFor();
       assert.equal(
         await page.getByRole('region', { name: 'Review chat' }).locator('.exchange').count(),
-        2,
+        3,
       );
       await page.getByText('Hunk 2 of 2').waitFor();
       await page

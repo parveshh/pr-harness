@@ -72,7 +72,8 @@ await test('upgrade both revision-state layouts from v9 and reopen a saved PR wi
         'ALTER TABLE revision_state DROP COLUMN since; ALTER TABLE revision_state DROP COLUMN change_path; DROP TABLE absent_files',
       );
     }
-    old.exec('PRAGMA user_version=9');
+    // The global harness choice arrived in version 12.
+    old.exec('DROP TABLE agent_selection; PRAGMA user_version=9');
     old.close();
     const upgraded = openStore(database);
     try {

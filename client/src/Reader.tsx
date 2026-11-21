@@ -34,7 +34,7 @@ import {
 import { FullFile, type FileFocus } from './FullFile.js';
 import { usePrDiscussions, discussionsByLine } from './PrDiscussions.js';
 import { ReviewChat } from './ReviewChat.js';
-import type { Anchor } from '../../shared/assistant.js';
+import type { AgentCatalog, Anchor } from '../../shared/assistant.js';
 
 type Position = Pick<ReaderFile, 'hunk' | 'scroll' | 'reviewed'>;
 function message(error: unknown) {
@@ -47,11 +47,13 @@ export function Reader({
   url,
   onBack,
   headerAction,
+  agents,
   accountEpoch,
 }: {
   url: string;
   onBack: () => void;
   headerAction: ReactNode;
+  agents: AgentCatalog | null;
   accountEpoch: string | null;
 }) {
   const [fullFile, setFullFile] = useState(false);
@@ -742,6 +744,7 @@ export function Reader({
                   <ResizableHandle label="Resize diff and chat" />
                   <ResizablePanel id="review-chat" defaultSize="28%" minSize="235px">
                     <ReviewChat
+                      agents={agents}
                       url={url}
                       view={view}
                       file={selected}

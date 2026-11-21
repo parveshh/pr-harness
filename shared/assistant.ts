@@ -21,7 +21,9 @@ export const login = z
   .max(100)
   .toLowerCase();
 export const agentId = z.enum(['codex', 'claude']);
-export const prefs = z.object({
+// One harness and model serve the whole app. Review prompts stay scoped to the app,
+// a repository, or a PR.
+export const selection = z.object({
   agent: agentId,
   model: z
     .string()
@@ -31,9 +33,10 @@ export const prefs = z.object({
       (v) => !v.startsWith('-') && !Array.from(v).some((c) => c.charCodeAt(0) < 33 || /\s/.test(c)),
       'Use a model identifier without spaces.',
     ),
-  prompt: z.string().trim().min(1).max(16000),
   provider: z.enum(['default', 'ollama', 'lmstudio']),
 });
+export const reviewPrompt = z.string().trim().min(1).max(16000);
+export const prefs = selection.extend({ prompt: reviewPrompt });
 export const agentInfo = z.object({
   id: agentId,
   path: z.string(),
@@ -42,6 +45,10 @@ export const agentInfo = z.object({
 });
 export const scope = z.enum(['default', 'repository', 'review']);
 export const config = z.object({ agents: z.array(agentInfo), settings: prefs, scope });
+export const agentCatalog = z.object({ agents: z.array(agentInfo), selection });
+export const agentNames = { codex: 'Codex CLI', claude: 'Claude Code' } as const;
+export const summaryQuestion =
+  'Summarise this whole pull request. State its purpose, then the main behaviour changes grouped by area, the riskiest changes to read first, and any gaps in the tests. List changed files you did not inspect.';
 export const anchor = z.object({
   path: z.string(),
   hunk: z.number().int().nonnegative(),
@@ -101,6 +108,8 @@ export const repository = z.object({
 });
 export type Repository = z.infer<typeof repository>;
 export type Preferences = z.infer<typeof prefs>;
+export type Selection = z.infer<typeof selection>;
+export type AgentCatalog = z.infer<typeof agentCatalog>;
 export type AgentId = z.infer<typeof agentId>;
 export type AgentInfo = z.infer<typeof agentInfo>;
 export type Config = z.infer<typeof config>;
@@ -115,9 +124,11 @@ export interface AssistantBridge {
   syncRepository(name: string, discover: boolean): Promise<Repository[]>;
   watchAuthors(name: string, authors: string[]): Promise<Repository[]>;
   removeRepository(name: string): Promise<Repository[]>;
+  agentSelection(): Promise<AgentCatalog>;
+  saveSelection(value: Selection): Promise<AgentCatalog>;
   agentConfig(url: string): Promise<Config>;
-  saveConfig(url: string, scope: Scope, settings: Preferences): Promise<Config>;
-  clearConfig(url: string, target: Scope): Promise<Config>;
+  savePrompt(url: string, scope: Scope, prompt: string): Promise<Config>;
+  clearPrompt(url: string, target: Scope): Promise<Config>;
   chooseExecutable(agent: AgentId): Promise<boolean>;
   history(url: string): Promise<Turn[]>;
   ask(request: ChatRequest): Promise<Turn>;

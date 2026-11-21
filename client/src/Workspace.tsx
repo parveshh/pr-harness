@@ -1,7 +1,13 @@
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './components/Resizable.js';
 import { SettingsPane, RepliesPane, applyTypography } from './WorkspacePanels.js';
 import type { Inbox as ReplyInbox, Typography } from '../../shared/workspace.js';
-import { readableError } from '../../shared/assistant.js';
+import {
+  readableError,
+  type AgentCatalog,
+  type AgentId,
+  type Selection,
+} from '../../shared/assistant.js';
+import { AgentPicker } from './components/AgentPicker.js';
 import { useScrollIndicators } from './useScrollIndicators.js';
 import type { Appearance } from '../../shared/appearance.js';
 import { AppearancePicker } from './components/AppearancePicker.js';
@@ -35,6 +41,63 @@ export function Workspace({
       .catch(() => setAppearanceError('Could not save appearance. Please try again.'));
   }
   const picker = <AppearancePicker theme={theme} onChange={chooseTheme} compact={collapsed} />;
+  const [agents, setAgents] = useState<AgentCatalog | null>(null);
+  const [agentError, setAgentError] = useState('');
+  const [agentLoad, setAgentLoad] = useState(0);
+  const agentSave = useRef(0);
+  useEffect(() => {
+    let active = true;
+    const turn = agentSave.current;
+    window.reviewer
+      .agentSelection()
+      .then((catalog) => {
+        if (!active || turn !== agentSave.current) return;
+        setAgents(catalog);
+        setAgentError('');
+      })
+      .catch((e) => {
+        if (active && turn === agentSave.current) setAgentError(readableError(e));
+      });
+    return () => {
+      active = false;
+    };
+  }, [agentLoad]);
+  function chooseAgent(next: Selection) {
+    // Show the choice at once. Only the latest save may replace it.
+    const turn = ++agentSave.current;
+    setAgents((current) => current && { ...current, selection: next });
+    window.reviewer
+      .saveSelection(next)
+      .then((catalog) => {
+        if (turn !== agentSave.current) return;
+        setAgents(catalog);
+        setAgentError('');
+      })
+      .catch(async (e: unknown) => {
+        if (turn !== agentSave.current) return;
+        setAgentError('Could not save the harness and model. ' + readableError(e));
+        // Questions run with the stored choice, so show that one again.
+        const stored = await window.reviewer.agentSelection().catch(() => null);
+        if (stored && turn === agentSave.current) setAgents(stored);
+      });
+  }
+  function chooseExecutable(agent: AgentId) {
+    window.reviewer
+      .chooseExecutable(agent)
+      .then((chosen) => {
+        if (chosen) setAgentLoad((n) => n + 1);
+      })
+      .catch((e) => setAgentError(readableError(e)));
+  }
+  const agentPicker = (
+    <AgentPicker
+      catalog={agents}
+      error={agentError}
+      onChange={chooseAgent}
+      onChooseExecutable={chooseExecutable}
+      onRetry={() => setAgentLoad((n) => n + 1)}
+    />
+  );
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [reviews, setReviews] = useState<SavedReview[] | null>(null);
   const [url, setUrl] = useState('');
@@ -267,10 +330,17 @@ export function Workspace({
         )}
 
         {appearanceError && <p role="alert">{appearanceError}</p>}
+        {agentError && <p role="alert">{agentError}</p>}
         {activeUrl ? (
           <Reader
             accountEpoch={inbox.account}
-            headerAction={collapsed ? picker : null}
+            headerAction={
+              <>
+                {agentPicker}
+                {collapsed && picker}
+              </>
+            }
+            agents={agents}
             key={activeUrl}
             url={activeUrl}
             onBack={() => select(null)}
@@ -278,7 +348,8 @@ export function Workspace({
         ) : (
           <div className="shell">
             <header className="home-bar">
-              <Inbox size={16} /> All reviews {collapsed && picker}
+              <Inbox size={16} /> All reviews {agentPicker}
+              {collapsed && picker}
             </header>
             <main>
               <div className="workspace-hero">

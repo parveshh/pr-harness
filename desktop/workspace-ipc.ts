@@ -12,7 +12,15 @@ import { reviewPublisher } from './publish.js';
 import { bundleKey, editRequest, publishKey } from '../shared/publish.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { repoName, login, agentId, scope, prefs, chatRequest } from '../shared/assistant.js';
+import {
+  repoName,
+  login,
+  agentId,
+  scope,
+  selection,
+  reviewPrompt,
+  chatRequest,
+} from '../shared/assistant.js';
 import { pullRequestUrl } from '../shared/reviews.js';
 import { discover, runAgent } from './agents.js';
 import { buildAgentContext, citationInstruction, citedAnswer } from './evidence.js';
@@ -165,14 +173,23 @@ export function registerWorkspace(
     return data.repositories();
   });
   handle('agent:config', (_, url) => config(pullRequestUrl.parse(url)));
-  handle('agent:save', async (_, value, target, settings) => {
+  async function chosen() {
+    const installed = await agents();
+    return { agents: installed, selection: data.selection(installed[0]?.id ?? 'codex') };
+  }
+  handle('agent:selection', () => chosen());
+  handle('agent:select', (_, value) => {
+    data.saveSelection(selection.parse(value));
+    return chosen();
+  });
+  handle('agent:save-prompt', async (_, value, target, text) => {
     const url = pullRequestUrl.parse(value);
-    data.savePreferences(url, scope.parse(target), prefs.parse(settings));
+    data.savePrompt(url, scope.parse(target), reviewPrompt.parse(text));
     return config(url);
   });
-  handle('agent:clear', async (_, value, target) => {
+  handle('agent:clear-prompt', async (_, value, target) => {
     const url = pullRequestUrl.parse(value);
-    data.clearPreferences(url, scope.parse(target));
+    data.clearPrompt(url, scope.parse(target));
     return config(url);
   });
   handle('agent:choose', async (_, value) => {
