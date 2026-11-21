@@ -1,7 +1,9 @@
 import { replaceCitations } from '../../shared/markdown-citations.js';
 import { ChatMarkdown } from './components/ChatMarkdown.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
-import { memo, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { chatRuns, usePrChat } from './chatRuns.js';
+import type { ActiveRun, RunKind } from '../../shared/chat-runs.js';
 import {
   agentNames,
   defaultPrompt,
@@ -17,7 +19,7 @@ import {
   type Anchor,
   type Citation,
 } from '../../shared/assistant.js';
-import { Sparkles, ArrowUp } from 'lucide-react';
+import { Sparkles, ArrowUp, LoaderCircle } from 'lucide-react';
 import { splitHunks } from '../../shared/reader.js';
 import type { ReaderView, ReaderFile } from '../../shared/reader.js';
 
@@ -47,20 +49,23 @@ export function ReviewChat({
   const [config, setConfig] = useState<Config | null>(null),
     [prompt, setPrompt] = useState<string | null>(null),
     [scope, setScope] = useState<Scope>('default');
-  const [messages, setMessages] = useState<Turn[]>([]),
-    [question, setQuestion] = useState(''),
+  // Runs, answers and the composer draft belong to the PR and live in the chat store, so
+  // they survive opening another PR. This pane keeps only what it shows while mounted.
+  const chat = usePrChat(url);
+  const running = !!chat.active,
+    question = chat.draft;
+  const [history, setHistory] = useState<Turn[]>([]),
     [error, setError] = useState(''),
     [extra, setExtra] = useState(''),
     [contextMode, setContextMode] = useState<ContextMode>('focused'),
-    [running, setRunning] = useState(false),
-    [partial, setPartial] = useState(''),
-    [pending, setPending] = useState(''),
     [notice, setNotice] = useState(''),
     [configFailed, setConfigFailed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const active = useRef<string | null>(null),
-    alive = useRef(false),
-    cancelled = useRef<string | null>(null);
+  const alive = useRef(false);
+  const messages = useMemo(
+    () => [...history, ...chat.completed.filter((m) => !history.some((h) => h.run === m.run))],
+    [history, chat.completed],
+  );
   function apply(c: Config) {
     setConfig(c);
     setPrompt(c.settings.prompt);
@@ -81,14 +86,9 @@ export function ReviewChat({
         setError(readableError(e));
         setConfigFailed(true);
       });
-    const off = window.reviewer.onActivity((e) => {
-      if (current && active.current === e.run) setPartial(e.text);
-    });
     return () => {
       current = false;
       alive.current = false;
-      off();
-      if (active.current) void window.reviewer.cancelAsk(active.current).catch(() => {});
     };
   }, [url]);
   useEffect(() => {
@@ -96,11 +96,7 @@ export function ReviewChat({
     window.reviewer
       .history(url)
       .then((history) => {
-        if (live)
-          setMessages((current) => [
-            ...history,
-            ...current.filter((m) => !history.some((h) => h.run === m.run)),
-          ]);
+        if (live) setHistory(history);
       })
       .catch((e) => {
         if (live) setError(readableError(e));
@@ -125,20 +121,18 @@ export function ReviewChat({
     save().catch((e) => setError(readableError(e)));
   }
   // `typed` marks a question from the composer, which is cleared once it is answered.
-  async function send(text: string, mode: ContextMode = contextMode, typed = false) {
-    if (active.current || prompt === null || !agent || !text.trim()) return;
-    const run = crypto.randomUUID();
-    active.current = run;
-    setRunning(true);
+  function send(
+    text: string,
+    mode: ContextMode = contextMode,
+    typed = false,
+    kind: RunKind = 'question',
+  ) {
+    if (running || prompt === null || !agent || !text.trim()) return;
     setError('');
-    setPartial('');
-    setPending(text);
-    try {
-      if (!config || scope !== config.scope || prompt !== config.settings.prompt) await save();
-      if (!alive.current || active.current !== run) return;
-      if (cancelled.current === run) throw Error('Request cancelled.');
-      const result = await window.reviewer.ask({
-        run,
+    const edited = !config || scope !== config.scope || prompt !== config.settings.prompt;
+    chatRuns.start(
+      {
+        run: crypto.randomUUID(),
         contextMode: mode,
         url,
         revision: view.revision,
@@ -147,29 +141,31 @@ export function ReviewChat({
         selection,
         extra: extra || null,
         question: text.trim(),
-      });
-      if (alive.current) {
-        setMessages((h) => [...h.filter((m) => m.run !== result.run), result]);
-        if (typed) setQuestion('');
-      }
-    } catch (e) {
-      if (alive.current) setError(readableError(e));
-    } finally {
-      if (alive.current) {
-        setRunning(false);
-        setPartial('');
-        setPending('');
-      }
-      active.current = null;
-    }
+      },
+      kind,
+      // Edited instructions are saved first so the answer uses them.
+      { clearDraft: typed, ...(edited ? { before: save } : {}) },
+    );
   }
+  // Follow the conversation while the reviewer is at its end. A new run always brings its
+  // progress into view.
+  const log = useRef<HTMLDivElement>(null),
+    following = useRef(true);
+  const activeRun = chat.active?.run,
+    progress = chat.active?.partial;
+  useLayoutEffect(() => {
+    if (activeRun) following.current = true;
+  }, [activeRun]);
+  useLayoutEffect(() => {
+    if (following.current && log.current) log.current.scrollTop = log.current.scrollHeight;
+  }, [activeRun, progress, messages.length]);
   const canSummarise = !!agent && !running && prompt !== null;
   // A summary asked for from the sidebar waits only while the harness list or the prompt is
   // still loading. After that it either starts or says why not, so it never fires later.
   const takeSummaryRequest = useEffectEvent(() => {
     if (!agents || (prompt === null && !configFailed)) return;
     onSummaryStarted();
-    if (canSummarise) void send(summaryQuestion, 'full-pr');
+    if (canSummarise) send(summaryQuestion, 'full-pr', false, 'summary');
     else
       setError(
         running
@@ -284,7 +280,15 @@ export function ReviewChat({
           )}
         </fieldset>
       )}
-      <div className="chat-log" aria-label="Conversation">
+      <div
+        className="chat-log"
+        aria-label="Conversation"
+        ref={log}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        }}
+      >
         {messages.map((m) => (
           <div className="exchange" key={m.run}>
             <div className="chat-question">
@@ -307,21 +311,12 @@ export function ReviewChat({
             />
           </div>
         ))}
-        {running && (
-          <div role="status">
-            <div className="chat-question">
-              <ChatMarkdown text={pending} />
-            </div>
-            <div className="chat-answer">
-              <ChatMarkdown text={partial || 'Reading the diff…'} />
-            </div>
-          </div>
-        )}
+        {chat.active && <RunProgress run={chat.active} />}
       </div>
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          void send(question, contextMode, true);
+          send(question, contextMode, true);
         }}
       >
         <label htmlFor="chat-question">Ask about the diff</label>
@@ -337,7 +332,7 @@ export function ReviewChat({
           id="chat-question"
           rows={3}
           value={question}
-          onChange={(e) => setQuestion(e.target.value)}
+          onChange={(e) => chatRuns.setDraft(url, e.target.value)}
           disabled={running}
           placeholder="Ask a question about this change…"
         />
@@ -379,7 +374,7 @@ export function ReviewChat({
             className="summarise-pr"
             disabled={!canSummarise}
             title="Uses Full PR context"
-            onClick={() => void send(summaryQuestion, 'full-pr')}
+            onClick={() => send(summaryQuestion, 'full-pr', false, 'summary')}
           >
             Summarise PR
           </button>
@@ -387,7 +382,7 @@ export function ReviewChat({
             type="button"
             disabled={!canAsk}
             onClick={() =>
-              void send(
+              send(
                 file.status === 'added'
                   ? 'Explain this new file. What does it introduce, how does it work, and how does it fit into this PR?'
                   : 'Explain what changed in this file and why it matters, starting with the selected hunk.',
@@ -397,16 +392,7 @@ export function ReviewChat({
             Explain file
           </button>
           {running ? (
-            <button
-              type="button"
-              onClick={() => {
-                cancelled.current = active.current;
-                if (active.current)
-                  void window.reviewer
-                    .cancelAsk(active.current)
-                    .catch((e) => setError(readableError(e)));
-              }}
-            >
+            <button type="button" onClick={() => chatRuns.cancel(url)}>
               Cancel
             </button>
           ) : (
@@ -416,8 +402,36 @@ export function ReviewChat({
           )}
         </div>
       </form>
-      {error && <p role="alert">{error}</p>}
+      {(error || chat.error) && <p role="alert">{error || chat.error}</p>}
     </section>
+  );
+}
+// The run in progress: what was asked, how long it has taken, and the agent's latest text.
+function RunProgress({ run }: { run: ActiveRun }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.round((now - run.startedAt) / 1000));
+  return (
+    <div className="chat-progress">
+      <div className="chat-question">
+        <ChatMarkdown text={run.question} />
+      </div>
+      <p className="chat-progress-line">
+        <LoaderCircle className="spin" size={14} aria-hidden />
+        {/* Only the label is announced. The clock and streamed text change too often. */}
+        <span role="status">
+          {run.kind === 'summary' ? 'Summarising the pull request' : 'Working on an answer'}
+          {run.contextMode === 'full-pr' && ' · Full PR'}
+        </span>
+        <span aria-hidden> · {seconds}s</span>
+      </p>
+      <div className="chat-answer">
+        <ChatMarkdown text={run.partial || 'Reading the diff…'} />
+      </div>
+    </div>
   );
 }
 const Answer = memo(function Answer({

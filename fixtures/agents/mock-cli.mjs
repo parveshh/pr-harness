@@ -35,6 +35,12 @@ if (args.includes('--version')) {
       while (!existsSync(process.env.LOCAL_REVIEWER_FIXTURE_RELEASE))
         await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    // Held until the test has left the PR, so the answer arrives while it is not on screen.
+    if (question === 'Answer while away' && process.env.LOCAL_REVIEWER_FIXTURE_RELEASE) {
+      emit({ type: 'stream_event', event: { delta: { text: 'Still working' } } });
+      while (!existsSync(process.env.LOCAL_REVIEWER_FIXTURE_RELEASE + '-away'))
+        await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     const selectedLines =
       selected.addedFile?.lines.map((row) => ({ ...row, path: selected.path, side: 'new' })) ??
       evidence;

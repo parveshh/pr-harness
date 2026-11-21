@@ -67,8 +67,8 @@ function startWorkspace() {
   });
   ipcMain.handle('reader:select', (event, url: unknown) => {
     verifySender(event);
+    // Answers keep running for the PR they belong to while another PR is open.
     reader.select(url);
-    assistant.cancel();
     fetchController?.abort();
   });
   ipcMain.handle('reader:cached', (event, url: unknown) => {

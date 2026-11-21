@@ -480,6 +480,11 @@ try {
         .getByRole('button', { name: 'Summarise pull request #12', exact: true })
         .click();
       await summary.nth(1).getByText('Read from the local PR copy.', { exact: true }).waitFor();
+      // A new answer is scrolled into view.
+      await page.waitForFunction(() => {
+        const log = globalThis.document.querySelector('.chat-log');
+        return log && log.scrollHeight - log.scrollTop - log.clientHeight < 4;
+      });
       assert.equal(await trackedRow.getAttribute('data-approved'), null);
       await trackedRow
         .getByRole('button', { name: 'Approve pull request #12', exact: true })
@@ -491,11 +496,45 @@ try {
       await chat.getByLabel('Ask about the diff').fill('Wait for cancellation');
       await chat.getByRole('button', { name: 'Send', exact: true }).click();
       await chat.getByText('Waiting for cancellation', { exact: true }).waitFor();
+      await chat.getByText(/Working on an answer · \d+s/).waitFor();
+      // The answer belongs to its PR: it keeps running, and the sidebar says so, while the
+      // reviewer is elsewhere, and its progress is there again on return.
+      const working = trackedRow.getByRole('status', {
+        name: 'Answering a question in pull request #12',
+        exact: true,
+      });
+      await working.waitFor();
+      await page.getByRole('button', { name: 'Workspace', exact: true }).click();
+      await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
+      await working.waitFor();
+      await trackedRow.getByRole('button', { name: /Tracked PR/ }).click();
+      await chat.getByText('Waiting for cancellation', { exact: true }).waitFor();
+      assert.equal(
+        await chat.getByLabel('Ask about the diff').inputValue(),
+        'Wait for cancellation',
+      );
       await chat.getByRole('button', { name: 'Cancel', exact: true }).click();
       await chat
         .getByRole('alert')
         .filter({ hasText: /cancelled/i })
         .waitFor();
+      await working.waitFor({ state: 'detached' });
+      // An answer that arrives while another screen is open is saved to its own PR and is
+      // in that PR's chat on return.
+      await chat.getByLabel('Ask about the diff').fill('Answer while away');
+      await chat.getByRole('button', { name: 'Send', exact: true }).click();
+      await chat.getByText('Still working', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Workspace', exact: true }).click();
+      await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
+      await working.waitFor();
+      await writeFile(releaseAnswer + '-away', '');
+      await working.waitFor({ state: 'detached' });
+      await trackedRow.getByRole('button', { name: /Tracked PR/ }).click();
+      const away = chat.locator('.exchange').filter({ hasText: 'Answer while away' });
+      await away.getByRole('heading', { name: 'Review notes' }).waitFor();
+      assert.equal(await away.count(), 1);
+      assert.equal(await chat.getByLabel('Ask about the diff').inputValue(), '');
+      assert.equal(await chat.getByRole('alert').count(), 0);
       await page.getByRole('button', { name: /logo\.png/ }).click();
       await page.getByText('Binary file. A line diff is unavailable.').waitFor();
       await page.getByRole('button', { name: /new name\.txt/ }).click();
@@ -637,7 +676,7 @@ try {
       await page.getByRole('button', { name: /Tracked PR/ }).waitFor();
       assert.equal(
         await page.getByRole('region', { name: 'Review chat' }).locator('.exchange').count(),
-        4,
+        5,
       );
       await page.getByText('Hunk 2 of 2').waitFor();
       await page

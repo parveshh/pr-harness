@@ -26,6 +26,8 @@ In **Review chat**, open **Review instructions** to edit the built-in prompt and
 
 Choose **Summarise PR** for an overview of the whole pull request: its purpose, the main behaviour changes by area, the riskiest changes to read first, and gaps in the tests. It always uses Full PR context, described below, and the answer lists changed files the agent did not inspect.
 
+Each PR has its own chat: its conversation, the question you are typing, and any answer in progress. An answer keeps running when you open another PR or return to **Workspace**, and its PR row in the sidebar shows a turning ring until it finishes. Reopen the PR to follow or cancel it. One answer runs per PR, and up to three PRs can have an answer running at once. While an answer runs, chat shows what was asked, how long it has taken, and the agent's latest text, and scrolls to keep it in view unless you have scrolled up.
+
 Select a diff line and choose **Explain file**, or type a question. **Related file** lets you include another changed file in the evidence. Chat renders GitHub-flavored Markdown, including lists, code blocks, and tables. Click a citation to jump to the original or updated line. Citations from earlier revisions open the saved excerpt. For a newly added file, **Explain file** describes its purpose and implementation. Each agent request includes the PR title, a bounded description and changed-file list, selected and related code evidence, and up to five recent exchanges from the same revision. New-file source is sent in line order and marked complete or partial. The CLI receives this context through stdin. The cached PR snapshot and conversation stay in local SQLite. An agent using a hosted model sends the selected evidence and recent conversation to its provider. Codex also supports a locally running Ollama or LM Studio provider.
 
 Use the **Context** menu before sending a question. **Focused** uses the evidence described above. **Full PR** also lets the agent page through all cached patches, search for a symbol, and read definitions, callers, and tests anywhere in the repository. For example, ask “Which callers rely on the old return value, and do the tests cover the new one?” The agent can compare the reviewed head with its merge base. Diff citations jump to the reader. Source citations open the exact file and line at that commit on GitHub.
@@ -52,7 +54,7 @@ Each PR row in the sidebar has two icons. The sparkle opens the PR and starts **
 
 - `client/` contains the React renderer. It accesses the desktop through `window.reviewer`.
 - `desktop/` contains the Electron main process, sandboxed preload, and SQLite store. The database is `workspace.sqlite` in Electron's per-user application data directory.
-- `shared/` contains the typed bridge and review validation. The main process validates data before writing it.
+- `shared/` contains the typed bridge and review validation. The main process validates data before writing it. It also holds pure modules used by the renderer and tested with Node, such as the per-PR chat store (`chat-runs.ts`) and the syntax highlighter (`highlight.ts`).
 
 ## Checks
 

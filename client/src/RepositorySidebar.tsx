@@ -15,7 +15,9 @@ import {
   Settings,
   Sparkles,
   CircleCheck,
+  LoaderCircle,
 } from 'lucide-react';
+import { useWorkingPrs } from './chatRuns.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 
 export function RepositorySidebar({
@@ -52,6 +54,7 @@ export function RepositorySidebar({
     [manage, setManage] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const workingPrs = useWorkingPrs();
   const selected = repos.find((r) => r.name === manage);
   function openAdd() {
     setError('');
@@ -211,12 +214,20 @@ export function RepositorySidebar({
                     .filter((p) => r.watching.includes(p.author))
                     .map((p) => {
                       const pr = 'https://github.com/' + r.name + '/pull/' + p.number;
+                      // An answer for this PR may be running while another PR is open.
+                      const run = workingPrs.get(pr);
+                      const working = run
+                        ? run === 'summary'
+                          ? 'Summarising'
+                          : 'Answering a question in'
+                        : null;
                       return (
                         <div
                           key={p.number}
                           className="monitored-pr"
                           data-current={activeUrl === pr || undefined}
                           data-approved={p.approved || undefined}
+                          data-working={!!run || undefined}
                         >
                           <button
                             className="monitored-open"
@@ -229,13 +240,24 @@ export function RepositorySidebar({
                             {p.title}
                           </button>
                           <span className="monitored-actions">
-                            <button
-                              aria-label={'Summarise pull request #' + p.number}
-                              title="Summarise this PR"
-                              onClick={() => onSummarise(pr)}
-                            >
-                              <Sparkles size={14} />
-                            </button>
+                            {working ? (
+                              <span
+                                className="monitored-working"
+                                role="status"
+                                aria-label={working + ' pull request #' + p.number}
+                                title={working + ' this PR. Open it to follow or cancel.'}
+                              >
+                                <LoaderCircle className="spin" size={14} aria-hidden />
+                              </span>
+                            ) : (
+                              <button
+                                aria-label={'Summarise pull request #' + p.number}
+                                title="Summarise this PR"
+                                onClick={() => onSummarise(pr)}
+                              >
+                                <Sparkles size={14} />
+                              </button>
+                            )}
                             <button
                               aria-label={
                                 (p.approved ? 'Approved. Review' : 'Approve') +

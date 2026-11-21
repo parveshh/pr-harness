@@ -866,6 +866,40 @@
 .monitored-pr[data-approved] .monitored-actions button:last-child {
   color: #8fdcb1;
 }
+/* Work in progress: a turning ring, held still for reviewers who prefer less motion. */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+  flex: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+.monitored-working {
+  display: inline-flex;
+  padding: 4px;
+  color: var(--control);
+}
+.repo-sidebar .monitored-pr[data-working] {
+  border-left: 2px solid var(--control);
+}
+.chat-progress-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.chat-progress-line .spin {
+  color: var(--control);
+}
 .file-comments {
   display: inline-flex;
   align-items: center;

@@ -27,6 +27,7 @@ import { buildAgentContext, citationInstruction, citedAnswer } from './evidence.
 import { replyMonitor } from './replies.js';
 import { githubLogin } from './account.js';
 import { monitor } from './monitor.js';
+import { chatRuns } from './chat-runs.js';
 import type { openStore } from './store.js';
 
 export function registerWorkspace(
@@ -48,7 +49,7 @@ export function registerWorkspace(
     const installed = await agents();
     return { agents: installed, ...data.preferences(url, installed[0]?.id ?? 'codex') };
   }
-  let active: { id: string; controller: AbortController } | null = null;
+  const runs = chatRuns();
   const handle = (name: string, fn: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown) => {
     ipcMain.handle(name, (event, ...args: unknown[]) => {
       verify(event);
@@ -226,22 +227,17 @@ export function registerWorkspace(
     const snapshot = store.reader.read(url);
     return data.history(url).map((msg) => annotated(url, msg, snapshot));
   });
-  handle('chat:cancel', (_, id) => {
-    if (active && active.id === id) active.controller.abort();
-  });
+  handle('chat:cancel', (_, id) => runs.cancel(z.uuid().parse(id)));
   handle('chat:ask', async (event, value) => {
     const req = chatRequest.parse(value);
-    if (active) throw new Error('Another answer is running. Cancel it or wait for it to finish.');
     const view = store.reader.read(req.url);
     if (!view || store.reader.active() !== req.url || view.revision !== req.revision)
       throw new Error('Reopen this revision before asking a question.');
-    const controller = new AbortController();
-    active = { id: req.run, controller };
+    const signal = runs.begin(req.url, req.run);
     try {
       const { agents, settings } = await config(req.url);
       const agent = agents.find((a) => a.id === settings.agent);
       if (!agent) throw new Error('Select an installed agent first.');
-      const signal = controller.signal;
       signal.throwIfAborted();
       const patch = (path: string) =>
         store.reader.patch({ url: req.url, path, revision: req.revision });
@@ -289,7 +285,7 @@ export function registerWorkspace(
             progress,
           )
         : await ask(JSON.stringify(context));
-      controller.signal.throwIfAborted();
+      signal.throwIfAborted();
       const answer = citedAnswer(output.answer, sources, sourceLines);
       const result = {
         ...answer,
@@ -305,15 +301,15 @@ export function registerWorkspace(
       data.append(req.url, result);
       return annotated(req.url, result, store.reader.read(req.url));
     } finally {
-      active = null;
+      runs.end(req.url, req.run);
     }
   });
   return {
-    cancel: () => active?.controller.abort(),
+    cancel: () => runs.cancelAll(),
     close: () => {
       account.cancel();
       shutdown.abort();
-      active?.controller.abort();
+      runs.cancelAll();
     },
   };
 }
