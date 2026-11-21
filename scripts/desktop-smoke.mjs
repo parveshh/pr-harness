@@ -499,7 +499,7 @@ try {
       await chat.getByLabel('Ask about the diff').fill('');
 
       await page.getByRole('button', { name: 'Select new line 1', exact: true }).click();
-      await chat.getByText('Review instructions', { exact: true }).click();
+      await chat.getByRole('button', { name: 'Review instructions', exact: true }).click();
       const settings = page.getByRole('dialog', { name: 'Review instructions', exact: true });
       await settings
         .getByLabel('Review prompt')

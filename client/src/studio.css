@@ -450,8 +450,7 @@
 .icon-control,
 .authors-heading button,
 .remove-repo,
-.review-chat details button,
-.review-chat .composer-actions button:not(:last-child) {
+.review-chat details button {
   background: transparent;
   color: var(--muted);
 }
@@ -459,8 +458,7 @@
 .icon-control:hover,
 .authors-heading button:hover,
 .remove-repo:hover,
-.review-chat details button:hover,
-.review-chat .composer-actions button:not(:last-child):hover {
+.review-chat details button:hover {
   background: var(--hover);
 }
 .icon-control {
@@ -1192,7 +1190,7 @@
   border-radius: 6px;
   color: var(--ink-bright);
 }
-.chat-heading > small {
+.chat-heading-tools > small {
   font-size: 0.625rem;
 }
 .review-chat form,
@@ -1508,18 +1506,15 @@ body,
   text-overflow: ellipsis;
 }
 .review-chat #chat-question {
-  height: 58px;
+  height: 104px;
   resize: none;
 }
 .chat-settings-toggle {
   background: transparent;
   color: var(--muted);
-  font-size: 0.75rem;
-  padding: 4px 0;
 }
 .chat-settings-toggle:hover {
   color: var(--ink);
-  background: transparent;
 }
 .chat-settings label {
   display: grid;
@@ -2378,25 +2373,6 @@ body,
   }
 }
 
-.review-chat .chat-context-mode {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 0;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-.chat-context-mode select {
-  width: auto;
-}
-.review-chat .context-help {
-  display: block;
-  margin-bottom: 6px;
-  font-family: inherit;
-  font-size: 0.75rem;
-  line-height: 1.55;
-}
-
 /* Retain room to read replies at short window heights and larger text sizes. */
 .review-chat form {
   flex: 0 1 auto;
@@ -2496,4 +2472,114 @@ body,
 .discussion-error {
   padding: 0.25rem 0.6rem;
   font-size: 0.8em;
+}
+
+/* The composer is one box: what is being asked about, the question, then how to send it. */
+.review-chat .chat-heading-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.review-chat .chat-heading fieldset {
+  border: 0;
+  padding: 0;
+}
+.review-chat .chat-heading h2 {
+  white-space: nowrap;
+}
+.review-chat .chat-settings-toggle {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+}
+.review-chat .chat-settings-toggle:hover {
+  background: var(--hover);
+}
+.review-chat .chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.review-chat .chat-suggestions button {
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.review-chat .chat-suggestions button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
+}
+.review-chat .chat-suggestions button:disabled {
+  opacity: 0.5;
+}
+.review-chat .composer-box {
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.review-chat .composer-box:has(textarea:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--control) 65%, var(--line));
+  outline-offset: -1px;
+}
+.review-chat .composer-box .context-file {
+  margin: 0 0 4px;
+}
+.review-chat .composer-box textarea {
+  display: block;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+.review-chat .composer-box textarea:focus {
+  outline: none;
+}
+.review-chat .composer-box .composer-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+/* A drawn chevron, so the arrow keeps clear of the border. */
+.review-chat .composer-box select {
+  width: auto;
+  flex: none;
+  appearance: none;
+  padding: 6px 28px 6px 10px;
+  border-radius: 6px;
+  background: var(--raised)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='none' stroke='%23c3cccb' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E")
+    no-repeat right 10px center / 9px;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+}
+/* The related file takes the spare width, and drops to its own line in a narrow pane. */
+.review-chat .composer-box .related-file {
+  flex: 1 1 120px;
+  min-width: 120px;
+  max-width: 220px;
+}
+@media (forced-colors: active) {
+  .review-chat .composer-box:has(textarea:focus-visible) {
+    outline-color: Highlight;
+  }
+  .review-chat .composer-box select {
+    appearance: auto;
+    padding-right: 10px;
+    background-image: none;
+  }
+}
+.review-chat .composer-box .composer-actions > button {
+  flex: none;
+  margin-left: auto;
 }
