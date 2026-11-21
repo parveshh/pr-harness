@@ -96,6 +96,22 @@ export function RepositorySidebar({
       window.removeEventListener('focus', focus);
     };
   }, [refresh]);
+  // Opening a PR clears its new mark in the main process. Read the saved list again so the
+  // highlight does not return when the reviewer leaves the PR.
+  useEffect(() => {
+    let alive = true;
+    window.reviewer
+      .repositories()
+      .then((rows) => {
+        if (alive) setRepos(rows);
+      })
+      .catch(() => {
+        /* The regular refresh reports list errors. */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeUrl]);
   function update(work: () => Promise<Repository[]>, done?: () => void) {
     setBusy(true);
     setError('');
@@ -215,6 +231,7 @@ export function RepositorySidebar({
                     .map((p) => {
                       const pr = 'https://github.com/' + r.name + '/pull/' + p.number;
                       // An answer for this PR may be running while another PR is open.
+                      const isNew = p.unseen && activeUrl !== pr;
                       const run = workingPrs.get(pr);
                       const working = run
                         ? run === 'summary'
@@ -227,6 +244,7 @@ export function RepositorySidebar({
                           className="monitored-pr"
                           data-current={activeUrl === pr || undefined}
                           data-approved={p.approved || undefined}
+                          data-new={isNew || undefined}
                           data-working={!!run || undefined}
                         >
                           <button
@@ -237,6 +255,7 @@ export function RepositorySidebar({
                             <span>
                               <GitPullRequest size={12} /> #{p.number} · {p.author}
                             </span>
+                            {isNew && <b className="monitored-new">New</b>}
                             {p.title}
                           </button>
                           <span className="monitored-actions">

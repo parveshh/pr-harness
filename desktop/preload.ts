@@ -60,6 +60,13 @@ const reviewer: ReviewerBridge = {
     repository.array().parse(await ipcRenderer.invoke('repos:sync', name, discover)),
   watchAuthors: async (name, authors) =>
     repository.array().parse(await ipcRenderer.invoke('repos:watch', name, authors)),
+  onOpenPr(callback) {
+    const listener = (_: unknown, value: unknown) => callback(pullRequestUrl.parse(value));
+    ipcRenderer.on('monitor:open', listener);
+    return () => {
+      ipcRenderer.removeListener('monitor:open', listener);
+    };
+  },
   removeRepository: async (name) =>
     repository.array().parse(await ipcRenderer.invoke('repos:remove', name)),
   agentConfig: async (url) => config.parse(await ipcRenderer.invoke('agent:config', url)),

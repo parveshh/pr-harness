@@ -99,6 +99,8 @@ export const watchPr = z.object({
   author: login,
   // Whether the signed-in reviewer's latest review on GitHub approves the PR.
   approved: z.boolean().default(false),
+  // Appeared since the last check and not opened yet.
+  unseen: z.boolean().default(false),
 });
 export const repository = z.object({
   name: repoName,
@@ -126,6 +128,8 @@ export interface AssistantBridge {
   syncRepository(name: string, discover: boolean): Promise<Repository[]>;
   watchAuthors(name: string, authors: string[]): Promise<Repository[]>;
   removeRepository(name: string): Promise<Repository[]>;
+  // Called when a notification asks for a pull request to be opened.
+  onOpenPr(callback: (url: string) => void): () => void;
   agentSelection(): Promise<AgentCatalog>;
   saveSelection(value: Selection): Promise<AgentCatalog>;
   agentConfig(url: string): Promise<Config>;

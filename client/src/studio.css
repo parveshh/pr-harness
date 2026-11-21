@@ -855,6 +855,24 @@
   background: var(--hover);
   color: var(--ink-bright);
 }
+/* A PR that appeared since the last check and has not been opened. */
+.repo-sidebar .monitored-pr[data-new] {
+  border-left: 2px solid #ecc98b;
+  background: color-mix(in srgb, #ecc98b 13%, transparent);
+}
+.monitored-new {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  white-space: nowrap;
+  vertical-align: 1px;
+  border-radius: 8px;
+  background: #ecc98b;
+  color: #1c1d20;
+  font:
+    600 0.625rem/1.5 system-ui,
+    sans-serif;
+}
 /* A PR the signed-in reviewer has approved. */
 .repo-sidebar .monitored-pr[data-approved] {
   background: color-mix(in srgb, var(--addition) 78%, transparent);

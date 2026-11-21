@@ -201,14 +201,19 @@ await test('repository monitoring filters issues and other authors, pages result
       ),
     );
   };
-  const sync = monitor(data, new AbortController().signal, api, graphql);
-  data.add(repo);
-  assert.deepEqual((await sync(repo, true))[0]?.authors, ['guest', 'octo']);
-  data.watch(repo, ['octo']);
-  assert.deepEqual(
-    (await sync(repo, false))[0]?.pulls.map((p) => p.number),
-    [4],
+  const announced: [string, number[]][] = [];
+  const sync = monitor(data, new AbortController().signal, api, graphql, (name, pulls) =>
+    announced.push([name, pulls.map((p) => p.number)]),
   );
+  data.add(repo);
+  assert.deepEqual((await sync(repo, true, false))[0]?.authors, ['guest', 'octo']);
+  data.watch(repo, ['octo']);
+  // PRs listed because an author was just chosen are not new on GitHub.
+  assert.deepEqual(
+    (await sync(repo, false, false))[0]?.pulls.map((p) => [p.number, p.unseen]),
+    [[4, false]],
+  );
+  assert.equal(data.unseen(), 0);
   assert.deepEqual(queries.at(-1), [
     'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){p4:pullRequest(number:4){latestOpinionatedReviews(first:100){nodes{author{login} state}}}}}',
     { owner: 'example', name: 'project' },
@@ -236,11 +241,76 @@ await test('repository monitoring filters issues and other authors, pages result
     assert.deepEqual(approved(), [[10, expected]]);
     assert.equal(data.repositories()[0]?.error, null);
   }
+  // PR 10 appeared after the list was first read: announced once and marked until opened.
+  assert.deepEqual(announced, [[repo, [10]]]);
+  assert.equal(data.repositories()[0]?.pulls[0]?.unseen, true);
+  assert.equal(data.unseen(), 1);
+  assert.equal(data.seen('https://github.com/example/project/pull/11'), false);
+  assert.equal(data.seen('https://github.com/example/project/pull/10'), true);
+  assert.equal(data.seen('https://github.com/example/project/pull/10'), false);
+  assert.equal(data.unseen(), 0);
+  await sync(repo, false);
+  assert.equal(data.repositories()[0]?.pulls[0]?.unseen, false);
+  assert.equal(announced.length, 1);
+  // A PR from an author who is no longer watched does not count towards the badge.
+  nextPr = 12;
+  await sync(repo, false);
+  assert.equal(data.unseen(), 1);
+  data.watch(repo, []);
+  assert.equal(data.unseen(), 0);
+  data.watch(repo, ['octo']);
   offline = true;
+  nextPr = 10;
   const cached = (await sync(repo, false))[0];
   assert.deepEqual(
     cached?.pulls.map((p) => p.number),
-    [10],
+    [12],
   );
   assert.equal(cached?.error, 'Offline');
+});
+
+await test('opening a new pull request while the list is being refreshed keeps it marked as seen', async (t) => {
+  const store = openStore(':memory:');
+  t.after(() => store.close());
+  const data = store.assistant;
+  const repo = 'example/project';
+  const pr = 'https://github.com/example/project/pull/5';
+  let numbers = [4];
+  let hold: Promise<void> | null = null;
+  const sync = monitor(
+    data,
+    new AbortController().signal,
+    async (endpoint) => {
+      if (!endpoint.includes('/issues?')) return '[]';
+      await hold;
+      return JSON.stringify(
+        numbers.map((number) => ({
+          number,
+          title: 'PR',
+          user: { login: 'octo' },
+          pull_request: {},
+        })),
+      );
+    },
+    () => Promise.reject(Error('GraphQL unavailable')),
+    () => {
+      // A notification that cannot be shown must not fail the check.
+      throw Error('Notifications unavailable');
+    },
+  );
+  data.add(repo);
+  data.watch(repo, ['octo']);
+  await sync(repo, false, false);
+  numbers = [5, 4];
+  await sync(repo, false);
+  assert.equal(data.repositories()[0]?.error, null);
+  assert.equal(data.unseen(), 1);
+  let release: () => void = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  const refreshing = sync(repo, false);
+  assert.equal(data.seen(pr), true);
+  release();
+  await refreshing;
+  assert.equal(data.unseen(), 0);
+  assert.equal(data.seen(pr + '/files'), false);
 });

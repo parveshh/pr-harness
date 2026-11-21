@@ -98,7 +98,7 @@ if (!live) {
       // The reviewer counts as having approved once the grouped review has been posted.
       "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('latestOpinionatedReviews'))){const query=process.argv.find(a=>a.startsWith('query='));const state=fs.existsSync(" +
         JSON.stringify(posted) +
-        ")?[{author:{login:'fixture-reviewer'},state:'APPROVED'}]:[];console.log(JSON.stringify({data:{viewer:{login:'fixture-reviewer'},repository:Object.fromEntries([...query.matchAll(/(p\\d+):pullRequest/g)].map(m=>[m[1],{latestOpinionatedReviews:{nodes:state}}]))}}));return;}",
+        ")?[{author:{login:'fixture-reviewer'},state:'APPROVED'}]:[];console.log(JSON.stringify({data:{viewer:{login:'fixture-reviewer'},repository:Object.fromEntries([...query.matchAll(/(p\\d+):pullRequest/g)].map(m=>[m[1],{latestOpinionatedReviews:{nodes:m[1]==='p12'?state:[]}}]))}}));return;}",
       // One workflow run that is building until the test marks it finished.
       'const pipelineDone = fs.existsSync(' +
         JSON.stringify(join(directory, 'pipeline-done')) +
@@ -130,7 +130,10 @@ if (!live) {
       "else if(process.argv.includes('POST')) { const payload=JSON.parse(fs.readFileSync(0,'utf8')); fs.appendFileSync(posted,JSON.stringify(payload)+'\\n'); process.exit(1); }",
       "else if(process.argv.some(a=>a.includes('/reviews?'))) { if(!fs.existsSync(posted)){console.log('[]');return;} const payload=JSON.parse(fs.readFileSync(posted,'utf8').trim()); console.log(JSON.stringify([{id:75,body:payload.body,commit_id:payload.commit_id,state:'COMMENTED',user:{login:'fixture-reviewer'}}])); }",
       "else if(process.argv.some(a=>a.includes('/contributors?'))) console.log(JSON.stringify([{login:'octo'},{login:'other'}]));",
-      "else if(process.argv.some(a=>a.includes('/issues?'))) console.log(JSON.stringify([{number:12,title:'Tracked PR',user:{login:'octo'},pull_request:{}}]));",
+      // A second pull request is opened once the test asks for it.
+      "else if(process.argv.some(a=>a.includes('/issues?'))) console.log(JSON.stringify([{number:12,title:'Tracked PR',user:{login:'octo'},pull_request:{}},...(fs.existsSync(" +
+        JSON.stringify(join(directory, 'new-pr')) +
+        ")?[{number:14,title:'Fresh PR',user:{login:'octo'},pull_request:{}}]:[])]));",
       "else if(process.argv.some(a=>a.includes('/pulls?'))) console.log(JSON.stringify([{number:12,title:'Tracked PR',user:{login:'octo'}},{number:13,title:'Other PR',user:{login:'other'}}]));",
       "else if(process.argv.some(a=>a.includes('/compare/'))) { const from=process.argv.find(a=>a.includes('/compare/')).split('/compare/')[1].split('...')[0]; console.log(JSON.stringify({status:update?.rewrite?'diverged':'ahead',merge_base_commit:{sha:from},files:update?[{...response.files[1],additions:1,deletions:1,patch:'@@ -40 +40 @@\\n-new line 1\\n+'+update.line}]:[]})); }",
       "else if(process.argv.includes('Accept: application/vnd.github.diff')) process.stdout.write(response.raw);",
@@ -731,6 +734,14 @@ try {
       await page.getByRole('button', { name: 'Preview submission' }).click();
       await page.getByText('@fixture-reviewer').waitFor();
       await capture(page, 'review-preview');
+      // Record notifications instead of showing them on the desktop running the test.
+      await reopened.evaluate(({ Notification }) => {
+        globalThis.shownAlerts = [];
+        Notification.prototype.show = function show() {
+          globalThis.shownAlerts.push(this.title + '|' + this.body);
+        };
+      });
+      await writeFile(join(directory, 'new-pr'), '');
       await page.getByRole('button', { name: 'Submit review to GitHub', exact: true }).click();
       await page.getByRole('button', { name: 'Check GitHub', exact: true }).click();
       await page.getByRole('button', { name: /Open published review/ }).waitFor();
@@ -740,6 +751,16 @@ try {
       await approvedRow
         .getByRole('button', { name: 'Approved. Review pull request #12', exact: true })
         .waitFor();
+      // A pull request that appeared since the last check is highlighted, announced once,
+      // and counted on the app icon until it is opened.
+      const freshRow = page.locator('.monitored-pr[data-new]');
+      await freshRow.getByRole('button', { name: /Fresh PR/ }).waitFor();
+      await freshRow.getByText('New', { exact: true }).waitFor();
+      assert.deepEqual(await reopened.evaluate(() => globalThis.shownAlerts), [
+        'New pull request in example/project|#14 Fresh PR\n@octo',
+      ]);
+      if (process.platform !== 'win32')
+        assert.equal(await reopened.evaluate(({ app }) => app.getBadgeCount()), 1);
       const payload = JSON.parse((await readFile(posted, 'utf8')).trim());
       assert.deepEqual(
         payload.comments.map((c) => [c.side, c.line, c.body]),
@@ -880,6 +901,15 @@ try {
     }
     await page.getByRole('button', { name: /Workspace/ }).click();
     await page.getByLabel('GitHub pull request URL').waitFor();
+    if (!live) {
+      // Opening the new pull request clears its highlight and the count on the app icon.
+      const freshRow = page.locator('.monitored-pr[data-new]');
+      await freshRow.getByRole('button', { name: /Fresh PR/ }).click();
+      await freshRow.waitFor({ state: 'detached' });
+      if (process.platform !== 'win32')
+        assert.equal(await reopened.evaluate(({ app }) => app.getBadgeCount()), 0);
+      assert.equal((await reopened.evaluate(() => globalThis.shownAlerts)).length, 1);
+    }
     console.info(
       live
         ? 'Live GitHub desktop read and resume passed.'
