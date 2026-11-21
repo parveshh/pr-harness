@@ -11,7 +11,7 @@ import { AgentPicker } from './components/AgentPicker.js';
 import { useScrollIndicators } from './useScrollIndicators.js';
 import type { Appearance } from '../../shared/appearance.js';
 import { AppearancePicker } from './components/AppearancePicker.js';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import { pullRequestUrl, type SavedReview } from '../../shared/reviews.js';
 import { RepositorySidebar } from './RepositorySidebar.js';
 import { GitPullRequest, Inbox, ArrowUpRight, Link2, Bell, X } from 'lucide-react';
@@ -267,6 +267,9 @@ export function Workspace({
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not open the PR.'));
   }
+  // A notification about a new pull request opens it when clicked.
+  const openFromAlert = useEffectEvent((pr: string) => openMonitored(pr));
+  useEffect(() => window.reviewer.onOpenPr((pr) => openFromAlert(pr)), []);
   return (
     <ResizablePanelGroup
       id="workspace-layout"

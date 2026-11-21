@@ -13,7 +13,7 @@ The first release should cover a complete review across **two pushes**. A polish
 | 3. Comment and publish | Draft inline or across a line range, preview and submit a grouped review, and reconcile an uncertain receipt. Read, reply to, resolve and reopen existing GitHub questions directly beside their lines. A pipeline view follows the reviewed commit's GitHub Actions runs, jobs and steps. Each file row shows its published comment count, and sidebar PR rows can start a summary or an approval and show the reviewer's approval. PR conversation holds general feedback and older threads. | Fixture submissions cover both sides of a diff, conversation replies, and lost receipts. Verify the release build on a dedicated test PR with explicit write authorization. |
 | 4. Review a second push | Detect updates, compare against a checkpoint, retain reviewed-file progress, flag old evidence, and reattach or flag drafts. Pinned questions retain their original hunk and can be marked addressed. | The desktop fixture exercises fast-forward, force-push, base changes, and an answer arriving after a push. Run the two-push reviewer trial below. |
 
-The workspace also supports repository and author monitoring, GitHub CLI account connection, in-app reply alerts, appearance settings, and resizable panes. [User guide](./README.md)
+The workspace also supports repository and author monitoring with new pull request notifications and an app icon count, GitHub CLI account connection, in-app reply alerts, appearance settings, and resizable panes. [User guide](./README.md)
 
 ### What is left
 

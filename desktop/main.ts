@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, type IpcMainInvokeEvent } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openStore } from './store.js';
@@ -7,6 +7,7 @@ import { pinQuestion, questionKey } from '../shared/questions.js';
 import { fileKey } from '../shared/reader.js';
 import { fetchSnapshot, compareHeads, probeRevision } from './github.js';
 import { registerWorkspace } from './workspace-ipc.js';
+import { prAlerts } from './pr-alerts.js';
 import { pullRequestUrl } from '../shared/reviews.js';
 
 const html = join(import.meta.dirname, '../renderer/index.html');
@@ -58,7 +59,43 @@ function openWindow() {
 function startWorkspace() {
   const store = openStore(join(app.getPath('userData'), 'workspace.sqlite'));
   const reader = store.reader;
-  const assistant = registerWorkspace(store, verifySender, app.getPath('userData'));
+  // Notifications are kept until dismissed, or they could be collected before a click.
+  const shown = new Set<Notification>();
+  const alerts = prAlerts(
+    {
+      notify(title, body, onClick) {
+        if (!Notification.isSupported()) return;
+        const notice = new Notification({ title, body });
+        // The system does not always report a dismissal, so keep only the latest few.
+        if (shown.size >= 20)
+          for (const oldest of shown) if (shown.size >= 20) shown.delete(oldest);
+        shown.add(notice);
+        const forget = () => shown.delete(notice);
+        notice.on('click', () => {
+          forget();
+          onClick();
+        });
+        notice.on('close', forget);
+        notice.on('failed', forget);
+        notice.show();
+      },
+      // A count on the Dock or launcher icon. Windows has no equivalent here.
+      badge: (count) => void app.setBadgeCount(count),
+    },
+    (url) => {
+      if (!window) {
+        // With no window to tell, make the PR the one a new window opens on.
+        store.save(url);
+        reader.select(url);
+        assistant.seen(url);
+        return openWindow();
+      }
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.webContents.send('monitor:open', url);
+    },
+  );
+  const assistant = registerWorkspace(store, verifySender, app.getPath('userData'), alerts);
   app.on('browser-window-created', (_, win) => win.on('closed', assistant.cancel));
   let fetchController: AbortController | undefined;
   ipcMain.handle('reader:active', (event) => {
@@ -69,6 +106,7 @@ function startWorkspace() {
     verifySender(event);
     // Answers keep running for the PR they belong to while another PR is open.
     reader.select(url);
+    if (typeof url === 'string') assistant.seen(url);
     fetchController?.abort();
   });
   ipcMain.handle('reader:cached', (event, url: unknown) => {

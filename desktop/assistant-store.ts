@@ -85,6 +85,26 @@ export function assistantStore(db: DatabaseSync) {
         name,
       );
     },
+    // Opening a PR clears its new mark. Returns whether anything changed.
+    seen(url: string) {
+      const name = repoOf(url),
+        number = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
+      const repo = repositories().find((r) => r.name === name);
+      if (!repo?.pulls.some((p) => p.number === number && p.unseen)) return false;
+      db.prepare('UPDATE repositories SET pulls=? WHERE name=?').run(
+        JSON.stringify(repo.pulls.map((p) => (p.number === number ? { ...p, unseen: false } : p))),
+        name,
+      );
+      return true;
+    },
+    // New PRs from authors still being watched, across every repository.
+    unseen() {
+      return repositories().reduce(
+        (count, r) =>
+          count + r.pulls.filter((p) => p.unseen && r.watching.includes(p.author)).length,
+        0,
+      );
+    },
     failure(name: string, error: string) {
       db.prepare('UPDATE repositories SET error=? WHERE name=?').run(error, name);
     },

@@ -29,16 +29,35 @@ import { githubLogin } from './account.js';
 import { monitor } from './monitor.js';
 import { chatRuns } from './chat-runs.js';
 import { pipelineReader } from './pipelines.js';
+import type { PrAlerts } from './pr-alerts.js';
 import type { openStore } from './store.js';
 
 export function registerWorkspace(
   store: ReturnType<typeof openStore>,
   verify: (e: IpcMainInvokeEvent) => void,
   userData: string,
+  alerts: PrAlerts,
 ) {
   const data = store.assistant;
   const shutdown = new AbortController();
-  const sync = monitor(data, shutdown.signal);
+  const check = monitor(data, shutdown.signal, undefined, undefined, (repo, pulls) =>
+    alerts.announce(repo, pulls),
+  );
+  // The app icon counts new pull requests, so refresh it whenever the list may have changed.
+  const badge = () => {
+    // The PR on screen has been seen, even if a check has only just listed it as new.
+    const open = store.reader.active();
+    if (open) data.seen(open);
+    alerts.badge(data.unseen());
+  };
+  const sync = async (...input: Parameters<typeof check>) => {
+    try {
+      return await check(...input);
+    } finally {
+      badge();
+    }
+  };
+  badge();
   let catalog: ReturnType<typeof discover> | undefined;
   function agents() {
     return (catalog ??= discover(data).catch((error: unknown) => {
@@ -179,7 +198,7 @@ export function registerWorkspace(
     const name = repoName.parse(value);
     const exists = data.repositories().some((repo) => repo.name === name);
     data.add(name);
-    const rows = await sync(name, true);
+    const rows = await sync(name, true, false);
     const added = rows.find((repo) => repo.name === name);
     if (!exists && added?.error && !added.checked) {
       data.remove(name);
@@ -191,10 +210,11 @@ export function registerWorkspace(
   handle('repos:watch', (_, value, authors) => {
     const name = repoName.parse(value);
     data.watch(name, z.array(login).max(2000).parse(authors));
-    return sync(name, false);
+    return sync(name, false, false);
   });
   handle('repos:remove', (_, value) => {
     data.remove(repoName.parse(value));
+    badge();
     return data.repositories();
   });
   handle('agent:config', (_, url) => config(pullRequestUrl.parse(url)));
@@ -329,6 +349,11 @@ export function registerWorkspace(
     }
   });
   return {
+    // Opening a PR clears its new mark.
+    seen(url: string) {
+      data.seen(url);
+      badge();
+    },
     cancel: () => runs.cancelAll(),
     close: () => {
       account.cancel();

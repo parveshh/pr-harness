@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { githubApi, githubGraphql } from './github.js';
 import { login, repoName, readableError } from '../shared/assistant.js';
 import type { AssistantStore } from './assistant-store.js';
+import type { Repository } from '../shared/assistant.js';
 
 const author = z.object({ login });
 const pr = z.object({
@@ -93,15 +94,21 @@ export function monitor(
   signal: AbortSignal,
   api = githubApi,
   graphql = githubGraphql,
+  // Told about pull requests that appeared since the previous check.
+  onNew: (repo: string, pulls: Repository['pulls']) => void = () => {},
 ) {
   const pending = new Map<string, Promise<void>>();
-  async function sync(name: string, discover: boolean) {
+  // `announce` is false for the check that follows adding a repository or changing its
+  // watched authors, where every listed PR is new to the list but not new on GitHub.
+  async function sync(name: string, discover: boolean, announce: boolean) {
     const repo = store.repositories().find((r) => r.name === name);
     if (!repo) return;
     try {
       const prefix = 'repos/' + name;
       const authors = new Set(repo.authors);
-      const pulls: { number: number; title: string; author: string; approved: boolean }[] = [];
+      const pulls: Repository['pulls'] = [];
+      const known = new Map(repo.pulls.map((p) => [p.number, p]));
+      const fresh = announce && !!repo.checked;
       // GitHub's issues listing also returns PRs and supports an exact creator filter.
       for (const creator of repo.watching) {
         const items = await pages(
@@ -117,6 +124,7 @@ export function monitor(
               title: item.title,
               author: creator,
               approved: false,
+              unseen: known.get(item.number)?.unseen ?? fresh,
             });
       }
       pulls.sort((a, b) => b.number - a.number);
@@ -142,15 +150,31 @@ export function monitor(
         for (const p of recent) if (p.user) authors.add(p.user.login);
       }
       signal.throwIfAborted();
+      // The reviewer may have opened a PR while GitHub was being read. Take each known
+      // PR's mark from what is stored now, so that is not undone.
+      const stored = new Map(
+        store
+          .repositories()
+          .find((r) => r.name === name)
+          ?.pulls.map((p) => [p.number, p.unseen]),
+      );
+      for (const pull of pulls)
+        if (known.has(pull.number)) pull.unseen = stored.get(pull.number) ?? pull.unseen;
       store.update(name, [...authors].sort(), pulls);
+      const arrived = pulls.filter((p) => p.unseen && !known.has(p.number));
+      try {
+        if (arrived.length) onNew(name, arrived);
+      } catch {
+        // The list is saved. A notification that could not be shown is not a failed check.
+      }
     } catch (error) {
       if (!signal.aborted) store.failure(name, readableError(error));
     }
   }
-  return async (input: unknown, discover: boolean) => {
+  return async (input: unknown, discover: boolean, announce = true) => {
     const name = repoName.parse(input);
     const previous = pending.get(name) ?? Promise.resolve();
-    const work = previous.then(() => sync(name, discover));
+    const work = previous.then(() => sync(name, discover, announce));
     pending.set(name, work);
     try {
       await work;
