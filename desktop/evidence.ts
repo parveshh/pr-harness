@@ -53,13 +53,21 @@ export function buildAgentContext(
     let budget = Math.min(remaining, allowance);
     for (const i of order) {
       if (budget < 160) break;
-      const lines = diffLines(hunks[i] ?? '').lines;
+      let lines = diffLines(hunks[i] ?? '').lines;
       const focus = req.selection;
       if (file === selected && focus && focus.path === file.path && i === focus.hunk) {
-        const index = lines.findIndex(
-          (l) => (focus.side === 'old' ? l.oldLine : l.newLine) === focus.line,
-        );
-        if (index >= 0) lines.unshift(...lines.splice(Math.max(0, index - 4), 9));
+        const sideLine = (row: (typeof lines)[number]) =>
+          focus.side === 'old' ? row.oldLine : row.newLine;
+        const end = lines.findIndex((row) => sideLine(row) === focus.line);
+        if (end >= 0) {
+          const start =
+            focus.startLine !== undefined && focus.startLine < focus.line
+              ? lines.findIndex((row) => sideLine(row) === focus.startLine)
+              : -1;
+          const from = start >= 0 ? start : Math.max(0, end - 4);
+          const to = end + 5;
+          lines = [...lines.slice(from, to), ...lines.slice(0, from), ...lines.slice(to)];
+        }
       }
       for (const l of lines) {
         const oldSide =
@@ -67,7 +75,9 @@ export function buildAgentContext(
           (focus?.side === 'old' &&
             focus.path === file.path &&
             focus.hunk === i &&
-            focus.line === l.oldLine);
+            l.oldLine !== null &&
+            l.oldLine >= (focus.startLine ?? focus.line) &&
+            l.oldLine <= focus.line);
         const number = oldSide ? l.oldLine : l.newLine;
         if (number === null) continue;
         const excerpt = l.text.slice(0, 1200),

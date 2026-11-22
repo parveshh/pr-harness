@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { anchor } from './assistant.js';
+import { lineRange } from './assistant.js';
 import { pullRequestUrl } from './reviews.js';
 
 export const decision = z.enum(['COMMENT', 'APPROVE', 'REQUEST_CHANGES']);
 const text = z.string().max(60000);
-export const commentAnchor = anchor.extend({ startLine: z.number().int().positive().optional() });
+export const commentAnchor = lineRange;
 export type CommentAnchor = z.infer<typeof commentAnchor>;
 export const draft = commentAnchor.extend({
   id: z.uuid(),

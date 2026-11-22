@@ -11,6 +11,7 @@ import { prAlerts } from './pr-alerts.js';
 import { pullRequestUrl } from '../shared/reviews.js';
 
 const html = join(import.meta.dirname, '../renderer/index.html');
+const appIcon = join(app.getAppPath(), 'resources', 'local-reviewer.png');
 const devUrl = import.meta.env.DEV ? process.env.ELECTRON_RENDERER_URL : undefined;
 const rendererUrl = devUrl ? new URL('/', devUrl).href : pathToFileURL(html).href;
 let window: BrowserWindow | null = null;
@@ -29,6 +30,7 @@ function verifySender(event: IpcMainInvokeEvent) {
 function openWindow() {
   const view = new BrowserWindow({
     title: 'Local Reviewer',
+    icon: appIcon,
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 19 } }
       : {}),
@@ -57,6 +59,7 @@ function openWindow() {
 }
 
 function startWorkspace() {
+  app.dock?.setIcon(appIcon);
   const store = openStore(join(app.getPath('userData'), 'workspace.sqlite'));
   const reader = store.reader;
   // Notifications are kept until dismissed, or they could be collected before a click.

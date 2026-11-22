@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { pullRequestUrl } from '../shared/reviews.js';
-import type { PipelineJob, Pipelines, PipelineRun } from '../shared/pipelines.js';
+import { repoOf } from '../shared/assistant.js';
+import type { AttemptKey } from '../shared/failure.js';
+import type { Pipelines, PipelineRun } from '../shared/pipelines.js';
 import { githubApi } from './github.js';
 
 // GitHub also reports waiting, requested and pending. All of them mean not started yet.
@@ -11,6 +12,10 @@ const status = z
   );
 const progress = { status, conclusion: z.string().nullable() };
 const remoteJob = z.object({
+  run_id: z.number().int().positive(),
+  run_attempt: z.number().int().positive().nullish(),
+  head_sha: z.string(),
+  check_run_url: z.string().nullish(),
   id: z.number().int().positive(),
   name: z.string(),
   ...progress,
@@ -53,27 +58,54 @@ const shown = 15;
 // Reads the GitHub Actions runs for one commit of a PR. Finished runs never change, so
 // their jobs are kept and only runs still in progress are read again on each refresh.
 export function pipelineReader(api = githubApi) {
-  const finished = new Map<string, PipelineJob[]>();
-  async function jobs(root: string, runUrl: string, id: number, signal: AbortSignal) {
-    const rows: PipelineJob[] = [];
+  type VerifiedJob = PipelineRun['jobs'][number] & { checkId: number | null };
+  const finished = new Map<string, VerifiedJob[]>();
+  async function attemptJobs(
+    key: Pick<AttemptKey, 'url' | 'head' | 'run' | 'attempt'>,
+    signal: AbortSignal,
+    complete = false,
+  ) {
+    const repo = repoOf(key.url);
+    const cacheKey = [repo, key.head, key.run, key.attempt].join(':');
+    const cached = finished.get(cacheKey);
+    if (cached) return cached;
+    const root = 'repos/' + repo;
+    const rows: VerifiedJob[] = [];
     for (let page = 1; page <= 5; page++) {
       const batch = jobList.parse(
         JSON.parse(
           await api(
-            root + '/actions/runs/' + id + '/jobs?filter=latest&per_page=100&page=' + page,
+            root +
+              '/actions/runs/' +
+              key.run +
+              '/attempts/' +
+              key.attempt +
+              '/jobs?per_page=100&page=' +
+              page,
             signal,
           ),
         ),
       ).jobs;
-      for (const job of batch)
+      for (const job of batch) {
+        if (
+          job.head_sha !== key.head ||
+          job.run_id !== key.run ||
+          (job.run_attempt != null && job.run_attempt !== key.attempt)
+        )
+          throw Error('The job does not belong to this commit and run attempt.');
+        const checkUrl = job.check_run_url?.match(
+          /^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)\/check-runs\/([1-9]\d*)$/i,
+        );
+        const checkId = checkUrl?.[1]?.toLowerCase() === repo ? Number(checkUrl[2]) : null;
         rows.push({
+          checkId: Number.isSafeInteger(checkId) ? checkId : null,
           id: job.id,
           name: job.name,
           state: job.status,
           conclusion: job.conclusion,
           startedAt: job.started_at ?? null,
           completedAt: job.completed_at ?? null,
-          url: job.html_url?.startsWith('https://github.com/') ? job.html_url : runUrl,
+          url: 'https://github.com/' + repo + '/actions/runs/' + key.run + '/job/' + job.id,
           steps: (job.steps ?? [])
             .map((step) => ({
               number: step.number,
@@ -85,14 +117,18 @@ export function pipelineReader(api = githubApi) {
             }))
             .sort((a, b) => a.number - b.number),
         });
+      }
       if (batch.length < 100) break;
+    }
+    if (complete) {
+      if (finished.size >= 200) finished.clear();
+      finished.set(cacheKey, rows);
     }
     return rows;
   }
-  return async function read(url: string, head: string, signal: AbortSignal): Promise<Pipelines> {
+  async function read(url: string, head: string, signal: AbortSignal): Promise<Pipelines> {
     if (!/^[0-9a-f]{40}$/.test(head)) throw new Error('This PR has no pinned commit to check.');
-    const [, owner, repo] = new URL(pullRequestUrl.parse(url)).pathname.split('/');
-    const root = 'repos/' + owner + '/' + repo;
+    const root = 'repos/' + repoOf(url);
     let list: z.infer<typeof runList>;
     try {
       list = runList.parse(
@@ -111,23 +147,17 @@ export function pipelineReader(api = githubApi) {
     const runs: PipelineRun[] = [];
     for (const run of list.workflow_runs.slice(0, shown)) {
       const attempt = run.run_attempt ?? 1;
-      const key = run.id + ':' + attempt;
-      let found = finished.get(key),
+      let found: VerifiedJob[] = [],
         jobsLoaded = true;
-      if (!found) {
-        try {
-          found = await jobs(root, run.html_url, run.id, signal);
-          if (run.status === 'completed') {
-            // Bound the memory kept for a long session.
-            if (finished.size >= 200) finished.clear();
-            finished.set(key, found);
-          }
-        } catch {
-          // The run is still worth showing when its jobs cannot be read.
-          signal.throwIfAborted();
-          found = [];
-          jobsLoaded = false;
-        }
+      try {
+        found = await attemptJobs(
+          { url, head, run: run.id, attempt },
+          signal,
+          run.status === 'completed',
+        );
+      } catch {
+        signal.throwIfAborted();
+        jobsLoaded = false;
       }
       runs.push({
         id: run.id,
@@ -147,5 +177,6 @@ export function pipelineReader(api = githubApi) {
       });
     }
     return { head, runs, truncated: list.total_count > runs.length };
-  };
+  }
+  return { read, attemptJobs };
 }

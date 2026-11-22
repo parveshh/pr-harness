@@ -13,7 +13,7 @@ import type { Accent, Appearance } from '../../shared/appearance.js';
 import { useCallback, useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import { pullRequestUrl, type SavedReview } from '../../shared/reviews.js';
 import { RepositorySidebar } from './RepositorySidebar.js';
-import { GitPullRequest, Inbox, ArrowUpRight, Link2, Bell, X } from 'lucide-react';
+import { GitPullRequest, Layers2, ChevronRight, Link2 } from 'lucide-react';
 import { EmptyState } from './components/EmptyState.js';
 import { Reader, type PrCommand } from './Reader.js';
 
@@ -29,7 +29,23 @@ export function Workspace({
 }) {
   useScrollIndicators();
   const [theme, setTheme] = useState(initialTheme);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('repository-sidebar-collapsed') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  function showRepositories(open: boolean) {
+    setRepliesOpen(false);
+    const next = !open;
+    setCollapsed(next);
+    try {
+      localStorage.setItem('repository-sidebar-collapsed', String(next));
+    } catch {
+      // Keep the current window usable when layout preferences cannot be stored.
+    }
+  }
   const [appearanceError, setAppearanceError] = useState('');
   function chooseTheme(next: Appearance) {
     window.reviewer
@@ -132,13 +148,15 @@ export function Workspace({
     };
   }, []);
 
-  const [panel, setPanel] = useState<'settings' | 'replies' | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [repliesOpen, setRepliesOpen] = useState(false);
+  const [fileToolSlot, setFileToolSlot] = useState<HTMLSpanElement | null>(null);
+  const railOnly = collapsed && !repliesOpen;
+  const repliesButton = useRef<HTMLButtonElement>(null);
   const [type, setType] = useState(initialType);
   const [inbox, setInbox] = useState(emptyInbox);
-  const [checking, setChecking] = useState(false),
-    [toast, setToast] = useState('');
+  const [checking, setChecking] = useState(false);
   const poll = useRef({ running: false, again: false, generation: 0 });
-  const inboxAccount = useRef<string | null>(null);
   const refresh = useCallback(() => {
     const job = poll.current;
     if (job.running) {
@@ -156,16 +174,9 @@ export function Workspace({
             const next = await window.reviewer.syncReplies();
             if (generation !== job.generation) continue;
             setInbox(next);
-            if (inboxAccount.current !== next.account || !next.account) setToast('');
-            inboxAccount.current = next.account;
-            if (next.added)
-              setToast(
-                next.added === 1 ? '1 new review reply' : next.added + ' new review replies',
-              );
           } catch (e) {
             if (generation === job.generation) {
               setInbox({ ...emptyInbox, error: readableError(e) });
-              setToast('');
             }
           }
         } while (job.again);
@@ -178,9 +189,7 @@ export function Workspace({
   }, []);
   const invalidateInbox = useCallback(() => {
     poll.current.generation++;
-    inboxAccount.current = null;
     setInbox(emptyInbox);
-    setToast('');
   }, []);
   useEffect(() => {
     if (reviews === null) return;
@@ -227,7 +236,7 @@ export function Workspace({
   }
   function openInbox() {
     refreshInbox();
-    setPanel('replies');
+    setRepliesOpen(true);
   }
   // A sidebar action to carry out once its PR is open. Opening anything else drops it.
   const [command, setCommand] = useState<PrCommand | null>(null);
@@ -285,25 +294,43 @@ export function Workspace({
     <ResizablePanelGroup
       id="workspace-layout"
       className="studio"
-      data-sidebar-collapsed={collapsed}
-      disabled={collapsed}
+      data-sidebar-collapsed={railOnly}
+      disabled={railOnly}
     >
       <ResizablePanel
         id="workspace-sidebar"
-        defaultSize="250px"
-        minSize="175px"
-        maxSize="38%"
+        defaultSize={window.reviewer.integratedTitleBar ? '290px' : '250px'}
+        minSize={window.reviewer.integratedTitleBar ? '245px' : '175px'}
+        maxSize="46%"
         groupResizeBehavior="preserve-pixel-size"
       >
         <RepositorySidebar
           openSettings={() => {
-            setPanel('settings');
+            setSettingsOpen(true);
             refresh();
           }}
-          openInbox={openInbox}
+          openInbox={() => (repliesOpen ? setRepliesOpen(false) : openInbox())}
+          repliesButton={repliesButton}
+          settingsOpen={settingsOpen}
+          fileToolSlot={setFileToolSlot}
+          repliesPane={
+            repliesOpen && (
+              <RepliesPane
+                inbox={inbox}
+                busy={checking}
+                update={(i) => setInbox((current) => (current.account === i.account ? i : current))}
+                refresh={refreshInbox}
+                settings={() => setSettingsOpen(true)}
+                close={() => {
+                  setRepliesOpen(false);
+                  repliesButton.current?.focus();
+                }}
+              />
+            )
+          }
           unread={inbox.items.filter((i) => i.unread).length}
-          collapsed={collapsed}
-          onToggle={() => setCollapsed(!collapsed)}
+          collapsed={railOnly}
+          onToggle={() => showRepositories(collapsed || repliesOpen)}
           activeUrl={activeUrl}
           onOpen={openMonitored}
           onSummarise={(pr) => openMonitored(pr, 'summarise')}
@@ -312,9 +339,13 @@ export function Workspace({
           onHome={() => select(null)}
         />
       </ResizablePanel>
-      <ResizableHandle label="Resize repository sidebar" disabled={collapsed} />
+      <ResizableHandle label="Resize repository sidebar" disabled={railOnly} />
       <ResizablePanel id="workspace-page" className="studio-page">
-        {panel === 'settings' && (
+        <span role="status" className="visually-hidden">
+          {inbox.added > 0 &&
+            (inbox.added === 1 ? '1 new review reply' : inbox.added + ' new review replies')}
+        </span>
+        {settingsOpen && (
           <SettingsPane
             theme={theme}
             chooseTheme={chooseTheme}
@@ -324,42 +355,17 @@ export function Workspace({
             chooseType={chooseType}
             onLoginStart={invalidateInbox}
             onConnected={refresh}
-            close={() => setPanel(null)}
+            close={() => setSettingsOpen(false)}
             error={appearanceError}
           />
         )}
-        {panel === 'replies' && (
-          <RepliesPane
-            inbox={inbox}
-            busy={checking}
-            update={(i) => {
-              setInbox((current) => (current.account === i.account ? i : current));
-              setToast('');
-            }}
-            refresh={refreshInbox}
-            settings={() => setPanel('settings')}
-            close={() => {
-              setPanel(null);
-              setToast('');
-            }}
-          />
-        )}
-        {toast && panel !== 'replies' && (
-          <div className="reply-toast" role="status">
-            <Bell size={16} />
-            <button onClick={openInbox}>{toast}</button>
-            <button aria-label="Dismiss reply alert" onClick={() => setToast('')}>
-              <X size={14} />
-            </button>
-          </div>
-        )}
-
         {appearanceError && <p role="alert">{appearanceError}</p>}
         {agentError && <p role="alert">{agentError}</p>}
         {activeUrl ? (
           <Reader
+            fileToolSlot={fileToolSlot}
             accountEpoch={inbox.account}
-            headerAction={agentPicker}
+            agentPicker={agentPicker}
             agents={agents}
             command={command?.url === activeUrl ? command : null}
             onPublished={() => setReviewEpoch((n) => n + 1)}
@@ -370,39 +376,32 @@ export function Workspace({
         ) : (
           <div className="shell">
             <header className="home-bar">
-              <Inbox size={16} /> All reviews {agentPicker}
+              <Layers2 size={16} /> Workspace
             </header>
             <main>
-              <div className="workspace-hero">
-                <div className="home-intro">
-                  <div>
-                    <h1>Review workspace</h1>
-                    <p>Open a pull request or pick up where you left off.</p>
-                  </div>
+              <h1>Review workspace</h1>
+              <form className="pr-entry" onSubmit={submit}>
+                <label htmlFor="pr-url">
+                  <Link2 size={16} /> GitHub pull request URL
+                </label>
+                <div className="entry">
+                  <input
+                    id="pr-url"
+                    type="text"
+                    inputMode="url"
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="https://github.com/owner/repo/pull/123"
+                    value={url}
+                    disabled={busy}
+                    onChange={(event) => setUrl(event.target.value)}
+                    required
+                  />
+                  <button type="submit" disabled={busy || reviews === null}>
+                    {busy ? 'Saving…' : 'Save pull request'}
+                  </button>
                 </div>
-                <form className="pr-entry" onSubmit={submit}>
-                  <label htmlFor="pr-url">
-                    <Link2 size={16} /> GitHub pull request URL
-                  </label>
-                  <div className="entry">
-                    <input
-                      id="pr-url"
-                      type="text"
-                      inputMode="url"
-                      spellCheck={false}
-                      autoComplete="off"
-                      placeholder="https://github.com/owner/repo/pull/123"
-                      value={url}
-                      disabled={busy}
-                      onChange={(event) => setUrl(event.target.value)}
-                      required
-                    />
-                    <button type="submit" disabled={busy || reviews === null}>
-                      {busy ? 'Saving…' : 'Save pull request'} <ArrowUpRight size={15} />
-                    </button>
-                  </div>
-                </form>
-              </div>
+              </form>
               {error && <p role="alert">{error}</p>}
               <p className="notice" role="status">
                 {notice}
@@ -427,10 +426,11 @@ export function Workspace({
                             {new URL(item.url).pathname.split('/').slice(1, 3).join('/')}
                           </strong>{' '}
                           <code>#{item.url.split('/').at(-1)}</code>
+                          <time dateTime={item.savedAt}>
+                            {new Date(item.savedAt).toLocaleDateString()}
+                          </time>
+                          <ChevronRight size={15} aria-hidden />
                         </button>
-                        <time dateTime={item.savedAt}>
-                          {new Date(item.savedAt).toLocaleDateString()}
-                        </time>
                       </li>
                     ))}
                   </ul>

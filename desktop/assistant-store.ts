@@ -146,6 +146,13 @@ export function assistantStore(db: DatabaseSync) {
     setExecutable(agent: AgentId, path: string) {
       db.prepare('INSERT OR REPLACE INTO agent_paths VALUES(?,?)').run(agent, path);
     },
+    citedSource(url: string, run: string, id: number) {
+      const row = db.prepare('SELECT data FROM conversation WHERE url=? AND run=?').get(url, run);
+      return (
+        row &&
+        turn.parse(JSON.parse(String(row.data))).sourceCitations?.find((ref) => ref.id === id)
+      );
+    },
     history(url: string) {
       return db
         .prepare('SELECT data FROM conversation WHERE url=? ORDER BY id')

@@ -1,0 +1,15 @@
+appId: com.github.parveshh.localreviewer
+productName: Local Reviewer
+directories:
+  output: release
+artifactName: Local-Reviewer-${version}-${os}-${arch}.${ext}
+icon: resources/local-reviewer.png
+files:
+  - dist/**/*
+  - resources/local-reviewer.png
+  - '!node_modules/**/*'
+mac:
+  category: public.app-category.developer-tools
+  identity: '-'
+win:
+  executableName: Local Reviewer

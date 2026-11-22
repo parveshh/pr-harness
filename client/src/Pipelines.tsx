@@ -1,3 +1,5 @@
+import { FailedCheck, type SelectedFailure } from './FailedCheck.js';
+import type { AttemptKey } from '../../shared/failure.js';
 import { useEffect, useState } from 'react';
 import {
   CircleCheck,
@@ -108,7 +110,9 @@ function usePipelines(url: string, head: string, watching: boolean) {
 
 // The PR's pipeline: a title bar button with the overall standing, and a view of every
 // run, its jobs and their steps.
-export function PipelineStatus({ url, head }: { url: string; head: string }) {
+type ReviewRevision = Pick<AttemptKey, 'url' | 'head' | 'revision'>;
+export function PipelineStatus({ url, head, revision }: ReviewRevision) {
+  const [failure, setFailure] = useState<SelectedFailure | null>(null);
   const [open, setOpen] = useState(false);
   const { data, busy, checkedAt, error, reload } = usePipelines(url, head, open);
   const overall = data ? overallOutcome(data.runs) : null;
@@ -125,39 +129,54 @@ export function PipelineStatus({ url, head }: { url: string; head: string }) {
         onClick={() => setOpen(true)}
       >
         {overall ? <Mark outcome={overall} /> : <Workflow size={14} aria-hidden />}
-        <span>Pipeline</span>
+        <span>Checks</span>
       </button>
       {open && (
         <WorkspaceDialog
           title="Pipeline"
           icon={<Workflow size={21} />}
           wide
-          onClose={() => setOpen(false)}
+          onClose={() => {
+            setOpen(false);
+            setFailure(null);
+          }}
         >
-          <div className="pipeline-view">
-            <div className="pipeline-toolbar">
-              <span>
-                Commit <code>{head.slice(0, 8)}</code>
-                {overall && (
-                  <>
-                    {' '}
-                    · <strong data-outcome={overall}>{labels[overall]}</strong>
-                  </>
-                )}
-                {checkedAt && ' · checked ' + new Date(checkedAt).toLocaleTimeString()}
-              </span>
-              <button className="secondary" disabled={busy} onClick={reload}>
-                <RotateCw size={13} /> {busy ? 'Checking…' : 'Refresh'}
-              </button>
+          {failure ? (
+            <FailedCheck selection={failure} back={() => setFailure(null)} />
+          ) : (
+            <div className="pipeline-view">
+              <div className="pipeline-toolbar">
+                <span>
+                  Commit <code>{head.slice(0, 8)}</code>
+                  {overall && (
+                    <>
+                      {' '}
+                      · <strong data-outcome={overall}>{labels[overall]}</strong>
+                    </>
+                  )}
+                  {checkedAt && ' · checked ' + new Date(checkedAt).toLocaleTimeString()}
+                </span>
+                <button className="secondary" disabled={busy} onClick={reload}>
+                  <RotateCw size={13} /> {busy ? 'Checking…' : 'Refresh'}
+                </button>
+              </div>
+              {error && <p role="alert">{error}</p>}
+              {!data && !error && <p role="status">Reading the runs for this commit…</p>}
+              {data && !data.runs.length && (
+                <p>No GitHub Actions runs were found for this commit.</p>
+              )}
+              {data?.runs.map((run) => (
+                <RunView
+                  key={run.id + ':' + run.attempt}
+                  run={run}
+                  superseded={!current.has(run)}
+                  review={{ url, head, revision }}
+                  investigate={setFailure}
+                />
+              ))}
+              {data?.truncated && <p>Older runs for this commit are not shown.</p>}
             </div>
-            {error && <p role="alert">{error}</p>}
-            {!data && !error && <p role="status">Reading the runs for this commit…</p>}
-            {data && !data.runs.length && <p>No GitHub Actions runs were found for this commit.</p>}
-            {data?.runs.map((run) => (
-              <RunView key={run.id + ':' + run.attempt} run={run} superseded={!current.has(run)} />
-            ))}
-            {data?.truncated && <p>Older runs for this commit are not shown.</p>}
-          </div>
+          )}
         </WorkspaceDialog>
       )}
     </>
@@ -167,7 +186,47 @@ export function PipelineStatus({ url, head }: { url: string; head: string }) {
 function openOnGitHub(url: string) {
   void window.reviewer.openChatLink(url).catch(() => {});
 }
-function RunView({ run, superseded }: { run: PipelineRun; superseded: boolean }) {
+function RunView({
+  run,
+  superseded,
+  review,
+  investigate,
+}: {
+  run: PipelineRun;
+  superseded: boolean;
+  review: ReviewRevision;
+  investigate: (selection: SelectedFailure) => void;
+}) {
+  const [attempt, setAttempt] = useState(run.attempt);
+  const [history, setHistory] = useState<{ attempt: number; jobs: PipelineJob[] } | null>(null);
+  const [problem, setProblem] = useState('');
+  const [retry, setRetry] = useState(0);
+  const { url, head, revision } = review;
+  useEffect(() => {
+    if (attempt === run.attempt) return;
+    const session = crypto.randomUUID();
+    let current = true;
+    window.reviewer
+      .pipelineAttempt({ url, head, revision, run: run.id, attempt }, session)
+      .then((jobs) => {
+        if (current) setHistory({ attempt, jobs });
+      })
+      .catch((e: unknown) => {
+        if (current) setProblem(readableError(e));
+      });
+    return () => {
+      current = false;
+      void window.reviewer.closeFailure(session).catch(() => {});
+    };
+  }, [url, head, revision, run.id, run.attempt, attempt, retry]);
+  const historical = attempt !== run.attempt;
+  const jobs = historical ? (history?.attempt === attempt ? history.jobs : []) : run.jobs;
+  function choose(n: number) {
+    setProblem('');
+    setHistory(null);
+    setAttempt(n);
+  }
+
   const outcome = outcomeOf(run);
   return (
     <section
@@ -194,14 +253,60 @@ function RunView({ run, superseded }: { run: PipelineRun; superseded: boolean })
           <ExternalLink size={13} /> Open on GitHub
         </button>
       </div>
-      {!run.jobsLoaded && <p>The jobs of this run could not be read.</p>}
-      {run.jobs.map((job) => (
-        <JobView key={job.id} job={job} />
+      {run.attempt > 1 && (
+        <div className="attempt-controls">
+          <button
+            className="secondary"
+            disabled={attempt === 1}
+            onClick={() => choose(attempt - 1)}
+          >
+            Previous attempt
+          </button>
+          <span>
+            Jobs from attempt {attempt} of {run.attempt}
+          </span>
+          <button className="secondary" disabled={!historical} onClick={() => choose(attempt + 1)}>
+            Next attempt
+          </button>
+        </div>
+      )}
+      {historical &&
+        (problem ? (
+          <p role="alert">
+            {problem}{' '}
+            <button
+              onClick={() => {
+                setProblem('');
+                setRetry((n) => n + 1);
+              }}
+            >
+              Retry jobs
+            </button>
+          </p>
+        ) : history?.attempt !== attempt ? (
+          <p role="status">Reading this attempt’s jobs…</p>
+        ) : (
+          !jobs.length && <p>No jobs reported for this attempt.</p>
+        ))}
+      {!historical && !run.jobsLoaded && <p>The jobs of this run could not be read.</p>}
+      {jobs.map((job) => (
+        <JobView
+          key={job.id}
+          job={job}
+          investigate={() =>
+            investigate({
+              key: { ...review, run: run.id, attempt },
+              workflow: run.workflow,
+              number: run.number,
+              job,
+            })
+          }
+        />
       ))}
     </section>
   );
 }
-function JobView({ job }: { job: PipelineJob }) {
+function JobView({ job, investigate }: { job: PipelineJob; investigate: () => void }) {
   const outcome = outcomeOf(job);
   return (
     // A job that needs attention starts open. Passed and skipped jobs start folded.
@@ -216,6 +321,11 @@ function JobView({ job }: { job: PipelineJob }) {
           {took(job.startedAt, job.completedAt) && ' · ' + took(job.startedAt, job.completedAt)}
         </small>
       </summary>
+      {outcome === 'failed' && (
+        <button className="secondary" onClick={investigate}>
+          Investigate failure
+        </button>
+      )}
       <ol>
         {job.steps.map((step) => {
           const state = outcomeOf(step);

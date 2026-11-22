@@ -1,3 +1,20 @@
+import {
+  attemptKey,
+  failureKey,
+  type AttemptKey,
+  type FailureKey,
+  type FailureReport,
+} from '../shared/failure.js';
+import { locateFailure, readFailure } from './check-failures.js';
+import {
+  candidates,
+  changedPulls,
+  prepareComparison,
+  investigate,
+  pairPromptVersion,
+} from './cross-pr.js';
+import { pairRequest } from '../shared/cross-pr.js';
+import { lessonKey, saveLesson } from '../shared/lessons.js';
 import { UnconfirmedReply } from './github.js';
 import { discussionReply, resolveRequest } from '../shared/discussions.js';
 import { listDiscussions, resolveDiscussion, sendDiscussionReply } from './discussions.js';
@@ -20,6 +37,7 @@ import {
   selection,
   reviewPrompt,
   chatRequest,
+  citedSourceKey,
 } from '../shared/assistant.js';
 import { pullRequestUrl } from '../shared/reviews.js';
 import { discover, runAgent } from './agents.js';
@@ -76,6 +94,114 @@ export function registerWorkspace(
       return fn(event, ...args);
     });
   };
+  type PairSession = {
+    run: string;
+    repo: string;
+    controller: AbortController;
+    prepared?: Awaited<ReturnType<typeof prepareComparison>>;
+    investigating: boolean;
+  };
+  let pair: PairSession | undefined;
+  function monitored(input: unknown) {
+    const name = repoName.parse(input);
+    if (!data.repositories().some((r) => r.name === name))
+      throw Error('Choose a monitored repository.');
+    return name;
+  }
+  function endPair() {
+    pair?.controller.abort();
+    pair = undefined;
+  }
+  function preparedPair(input: unknown) {
+    const run = z.uuid().parse(input);
+    if (pair?.run !== run || !pair.prepared) throw Error('Reopen the comparison to continue.');
+    monitored(pair.repo);
+    return { session: pair, prepared: pair.prepared };
+  }
+  let scan: { run: string; controller: AbortController } | undefined;
+  handle('pair:candidates', async (_, input, id) => {
+    const repo = monitored(input),
+      run = z.uuid().parse(id);
+    scan?.controller.abort();
+    const controller = new AbortController();
+    scan = { run, controller };
+    try {
+      return await candidates(repo, controller.signal);
+    } finally {
+      if (scan?.controller === controller) scan = undefined;
+    }
+  });
+  handle('pair:cancel-candidates', (_, id) => {
+    if (scan?.run === z.uuid().parse(id)) scan?.controller.abort();
+  });
+  handle('pair:prepare', async (_, input) => {
+    const request = pairRequest.parse(input);
+    monitored(request.repo);
+    endPair();
+    const session: PairSession = {
+      run: request.run,
+      repo: request.repo,
+      controller: new AbortController(),
+      investigating: false,
+    };
+    pair = session;
+    try {
+      const prepared = await prepareComparison(request, store.reader, session.controller.signal);
+      session.controller.signal.throwIfAborted();
+      session.prepared = prepared;
+      return prepared.summary;
+    } catch (error) {
+      if (pair === session) endPair();
+      throw error;
+    }
+  });
+  handle('pair:check', (_, input) => {
+    const { session, prepared } = preparedPair(input);
+    return changedPulls(session.repo, prepared.summary, session.controller.signal);
+  });
+  handle('pair:analyze', async (_, input) => {
+    const { session, prepared } = preparedPair(input);
+    if (session.investigating) throw Error('This comparison is already running.');
+    session.investigating = true;
+    try {
+      const installed = await agents();
+      const selection = data.selection(installed[0]?.id ?? 'codex');
+      const agent = installed.find((a) => a.id === selection.agent);
+      if (!agent) throw Error('Select an installed coding agent in the title bar and retry.');
+      const url = 'https://github.com/' + session.repo + '/pull/' + prepared.summary.left.number;
+      const signal = session.controller.signal;
+      const source = pinnedSource(join(userData, 'pr-source'), url);
+      const result = await investigate(
+        prepared,
+        (instructions, input) =>
+          runAgent(
+            agent,
+            { ...selection, prompt: instructions },
+            instructions,
+            input,
+            signal,
+            () => {},
+          ),
+        (...args) => source.read(...args),
+        signal,
+      );
+      signal.throwIfAborted();
+      return {
+        findings: result.findings,
+        gaps: result.gaps,
+        agent: agent.id,
+        run: session.run,
+        requestedModel: selection.model,
+        reportedModel: result.reportedModel,
+        promptVersion: pairPromptVersion,
+      };
+    } finally {
+      session.investigating = false;
+    }
+  });
+  handle('pair:close', (_, input) => {
+    if (z.uuid().parse(input) === pair?.run) endPair();
+  });
   const account = githubLogin();
   const replies = replyMonitor(store.replies, shutdown.signal);
   handle('settings:type', () => store.typography());
@@ -105,6 +231,24 @@ export function registerWorkspace(
     store.replies.mark(name, id);
     return replies.state();
   });
+  handle('reader:cited-source', async (_, input) => {
+    const { url, run, id } = citedSourceKey.parse(input);
+    if (store.reader.active() !== url) throw Error('Reopen this pull request to view its source.');
+    const ref = data.citedSource(url, run, id);
+    if (!ref) throw Error('This source is unavailable in the saved answer.');
+    try {
+      return await pinnedSource(join(userData, 'pr-source'), url).text(
+        ref.commit,
+        ref.path,
+        shutdown.signal,
+      );
+    } catch (cause) {
+      throw Error(
+        'Could not load the cited file at its saved commit. Check your connection and repository access, then retry.',
+        { cause },
+      );
+    }
+  });
   handle('reader:full-file', async (_, input) => {
     const key = fileKey.parse(input);
     const view = store.reader.read(key.url);
@@ -130,15 +274,52 @@ export function registerWorkspace(
     }
   });
   // Review threads last listed for each PR. Only those may be resolved from the window.
-  const listedThreads = new Map<string, Set<string>>();
+  const listedThreads = new Map<
+    string,
+    Map<string, { id: number; path: string | null; resolved: boolean }>
+  >();
   handle('discussions:list', async (_, input) => {
     const url = pullRequestUrl.parse(input);
     const result = await listDiscussions(url, shutdown.signal, undefined, undefined, true);
     listedThreads.set(
       url,
-      new Set(result.threads.flatMap((t) => (t.resolution ? [t.resolution.node] : []))),
+      new Map(
+        result.threads.flatMap((t) =>
+          t.resolution
+            ? [
+                [
+                  t.resolution.node,
+                  { id: t.id, path: t.path, resolved: t.resolution.resolved },
+                ] as const,
+              ]
+            : [],
+        ),
+      ),
     );
     return result;
+  });
+  function activeLessonReview(input: unknown) {
+    const url = pullRequestUrl.parse(input);
+    if (store.reader.active() !== url)
+      throw Error('Reopen this pull request to access review lessons.');
+    return url;
+  }
+  handle('lessons:list', (_, input) => store.lessons.list(activeLessonReview(input)));
+  handle('lessons:save', (_, input) => {
+    const request = saveLesson.parse(input);
+    const url = activeLessonReview(request.sourceUrl);
+    const thread = Array.from(listedThreads.get(url)?.values() ?? []).find(
+      (t) => t.id === request.threadId,
+    );
+    if (!thread?.resolved || !thread.path)
+      throw Error('Refresh discussions and choose a resolved file discussion.');
+    store.lessons.save({ ...request, path: thread.path });
+    return store.lessons.list(url);
+  });
+  handle('lessons:forget', (_, input, key) => {
+    const url = activeLessonReview(input);
+    store.lessons.forget(url, lessonKey.parse(key));
+    return store.lessons.list(url);
   });
   const postingReplies = new Set<string>();
   handle('discussions:reply', async (_, input) => {
@@ -159,12 +340,15 @@ export function registerWorkspace(
       postingReplies.delete(key);
     }
   });
-  handle('discussions:resolve', (_, input) => {
+  handle('discussions:resolve', async (_, input) => {
     const req = resolveRequest.parse(input);
     if (store.reader.active() !== req.url) throw Error('Reopen this PR before resolving.');
     if (!listedThreads.get(req.url)?.has(req.node))
       throw Error('This conversation is no longer listed. Refresh the discussions.');
-    return resolveDiscussion(req, shutdown.signal);
+    const result = await resolveDiscussion(req, shutdown.signal);
+    const thread = listedThreads.get(req.url)?.get(req.node);
+    if (thread) thread.resolved = result.resolved;
+    return result;
   });
   const readPipelines = pipelineReader();
   handle('pipelines:list', (_, input) => {
@@ -172,7 +356,103 @@ export function registerWorkspace(
     // Checks are read for the commit under review, which may trail the PR's newest push.
     const head = store.reader.read(url)?.meta.head;
     if (!head) throw Error('Open this PR before checking its pipeline.');
-    return readPipelines(url, head, shutdown.signal);
+    return readPipelines.read(url, head, shutdown.signal);
+  });
+  function failureRevision(key: AttemptKey) {
+    const view = store.reader.read(key.url);
+    if (
+      !view ||
+      store.reader.active() !== key.url ||
+      view.revision !== key.revision ||
+      view.meta.head !== key.head
+    )
+      throw Error('The reviewed revision changed. Reopen Checks to investigate this commit.');
+    return view;
+  }
+  const historyReads = new Map<string, AbortController>();
+  handle('pipelines:attempt', async (_, input, id) => {
+    const key = attemptKey.parse(input);
+    failureRevision(key);
+    const session = z.uuid().parse(id);
+    const controller = new AbortController();
+    historyReads.set(session, controller);
+    try {
+      const jobs = await readPipelines.attemptJobs(key, controller.signal);
+      controller.signal.throwIfAborted();
+      failureRevision(key);
+      return jobs;
+    } finally {
+      historyReads.delete(session);
+    }
+  });
+  let failure: { key: FailureKey; controller: AbortController; report?: FailureReport } | undefined;
+  let sourceRead: { id: string; controller: AbortController } | undefined;
+  function closeSource() {
+    sourceRead?.controller.abort();
+    sourceRead = undefined;
+  }
+  function closeFailure() {
+    closeSource();
+    failure?.controller.abort();
+    failure = undefined;
+  }
+  handle('pipelines:investigate', async (_, input) => {
+    const key = failureKey.parse(input);
+    failureRevision(key);
+    closeFailure();
+    const controller = new AbortController();
+    failure = { key, controller };
+    try {
+      const report = await readFailure(key, readPipelines.attemptJobs, controller.signal);
+      controller.signal.throwIfAborted();
+      failureRevision(key);
+      failure.report = report;
+      return report;
+    } catch (error) {
+      if (failure?.controller === controller) closeFailure();
+      throw error;
+    }
+  });
+  handle('pipelines:close-location', (_, id) => {
+    if (z.uuid().parse(id) === sourceRead?.id) closeSource();
+  });
+  handle('pipelines:location', async (_, id, value, request) => {
+    const session = z.uuid().parse(id),
+      index = z.number().int().nonnegative().parse(value);
+    if (!failure || failure.key.session !== session)
+      throw Error('Reopen the failure to inspect its code.');
+    const { key, report } = failure;
+    const annotation = report?.annotations[index]?.location;
+    if (!annotation) throw Error('Choose an annotation from this job.');
+    const view = failureRevision(key);
+    const file = view.files.find((f) => f.path === annotation.path && f.status !== 'removed');
+    const patch =
+      file && (file.kind === 'partial' || file.kind === 'text')
+        ? store.reader.patch({ ...key, path: file.path })
+        : null;
+    const readId = z.uuid().parse(request);
+    closeSource();
+    const controller = new AbortController();
+    sourceRead = { id: readId, controller };
+    try {
+      const location = await locateFailure(
+        annotation,
+        key.head,
+        patch,
+        pinnedSource(join(userData, 'pr-source'), key.url),
+        controller.signal,
+      );
+      controller.signal.throwIfAborted();
+      failureRevision(key);
+      return location;
+    } finally {
+      if (sourceRead?.controller === controller) sourceRead = undefined;
+    }
+  });
+  handle('pipelines:close-failure', (_, id) => {
+    const session = z.uuid().parse(id);
+    historyReads.get(session)?.abort();
+    if (session === failure?.key.session) closeFailure();
   });
   const publisher = reviewPublisher(store, undefined, undefined, shutdown.signal);
   handle('drafts:list', (_, url) => store.drafts.get(pullRequestUrl.parse(url)));
@@ -354,9 +634,19 @@ export function registerWorkspace(
       data.seen(url);
       badge();
     },
-    cancel: () => runs.cancelAll(),
+    cancel: () => {
+      for (const read of historyReads.values()) read.abort();
+      closeFailure();
+      scan?.controller.abort();
+      endPair();
+      runs.cancelAll();
+    },
     close: () => {
       account.cancel();
+      for (const read of historyReads.values()) read.abort();
+      closeFailure();
+      scan?.controller.abort();
+      endPair();
       shutdown.abort();
       runs.cancelAll();
     },

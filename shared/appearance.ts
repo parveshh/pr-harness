@@ -11,6 +11,7 @@ export const appearance = z.enum([
   'arctic',
   'rosewood',
   'ink',
+  'light',
 ]);
 export type Appearance = z.infer<typeof appearance>;
 export const appearanceNames: Record<Appearance, string> = {
@@ -24,10 +25,11 @@ export const appearanceNames: Record<Appearance, string> = {
   arctic: 'Arctic',
   rosewood: 'Rosewood',
   ink: 'Ink',
+  light: 'Light',
 };
 
 // The accent colours buttons, selection outlines and other highlights. Neutral keeps the
-// theme's own light grey.
+// theme's own grey.
 export const accent = z.enum([
   'neutral',
   'blue',

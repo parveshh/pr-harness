@@ -1,14 +1,17 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { CrossPrComparison } from './CrossPrComparison.js';
+import { useEffect, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
+import { Button, Dialog, DialogTrigger, Input, Popover, TextField } from 'react-aria-components';
 import { login, readableError, repoName, type Repository } from '../../shared/assistant.js';
 
 import {
   BookMarked,
+  ChevronDown,
+  Search,
   GitPullRequest,
-  Inbox,
+  GitCompareArrows,
   Layers2,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
+  Folders,
   Plus,
   HardDrive,
   Bell,
@@ -30,6 +33,10 @@ export function RepositorySidebar({
   collapsed,
   onToggle,
   openInbox,
+  repliesButton,
+  repliesPane,
+  settingsOpen,
+  fileToolSlot,
   openSettings,
   unread,
 }: {
@@ -43,16 +50,22 @@ export function RepositorySidebar({
   collapsed: boolean;
   onToggle: () => void;
   openInbox: () => void;
+  repliesButton: RefObject<HTMLButtonElement | null>;
+  repliesPane: ReactNode;
+  settingsOpen: boolean;
+  fileToolSlot: (node: HTMLSpanElement | null) => void;
   openSettings: () => void;
   unread: number;
 }) {
   const [repos, setRepos] = useState<Repository[]>([]),
     [adding, setAdding] = useState(false),
     [name, setName] = useState(''),
+    [comparison, setComparison] = useState<string | null>(null),
     [manage, setManage] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const workingPrs = useWorkingPrs();
+  const repositoriesOpen = !collapsed && !repliesPane;
   const selected = repos.find((r) => r.name === manage);
   function openAdd() {
     setError('');
@@ -145,6 +158,27 @@ export function RepositorySidebar({
     >
       <nav className="workspace-rail" aria-label="Workspace tools">
         <button
+          onClick={onHome}
+          aria-label="Workspace"
+          title="Workspace"
+          aria-current={!activeUrl ? 'page' : undefined}
+        >
+          <Layers2 size={21} />
+        </button>
+        <button
+          onClick={onToggle}
+          aria-expanded={repositoriesOpen}
+          aria-controls={repositoriesOpen ? 'repository-list' : undefined}
+          aria-label={repositoriesOpen ? 'Hide repositories' : 'Show repositories'}
+          title={repositoriesOpen ? 'Hide repositories' : 'Show repositories'}
+        >
+          <Folders size={19} />
+        </button>
+        <span ref={fileToolSlot} className="file-tool-slot" />
+        <button
+          ref={repliesButton}
+          aria-expanded={!!repliesPane}
+          aria-controls={repliesPane ? 'review-replies' : undefined}
           title="Review replies"
           aria-label={'Review replies, ' + unread + ' unread'}
           onClick={openInbox}
@@ -155,38 +189,15 @@ export function RepositorySidebar({
         <button
           title="Settings"
           aria-label="Settings"
+          aria-expanded={settingsOpen}
           className="rail-settings"
           onClick={openSettings}
         >
           <Settings size={19} />
         </button>
       </nav>
-      <div className="sidebar-brand">
-        {!collapsed && (
-          <>
-            <span className="mark">
-              <Layers2 size={19} />
-            </span>
-            <strong>Local Reviewer</strong>
-          </>
-        )}
-        <button
-          className="rail-toggle"
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          onClick={onToggle}
-        >
-          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-        </button>
-      </div>
-      {!collapsed && (
-        <div className="sidebar-contents">
-          <button
-            className="nav-home"
-            aria-current={!activeUrl ? 'page' : undefined}
-            onClick={onHome}
-          >
-            <Inbox size={17} /> All reviews
-          </button>
+      {repositoriesOpen && (
+        <div id="repository-list" className="sidebar-contents">
           <div className="sidebar-title">
             <h2>Repositories</h2>
             <button aria-label="Add repository" title="Add repository" onClick={openAdd}>
@@ -203,6 +214,13 @@ export function RepositorySidebar({
               <div className="repo-group-name">
                 <BookMarked size={14} />
                 <strong title={r.name}>{r.name}</strong>
+                <button
+                  title="Compare pull requests"
+                  aria-label={'Compare pull requests in ' + r.name}
+                  onClick={() => setComparison(r.name)}
+                >
+                  <GitCompareArrows size={15} />
+                </button>
                 <button
                   title="Manage authors"
                   aria-label={'Manage authors for ' + r.name}
@@ -302,12 +320,16 @@ export function RepositorySidebar({
           {error && !manage && !adding && <p role="alert">{error}</p>}
         </div>
       )}
-      {!collapsed && (
+      {repositoriesOpen && (
         <div className="sidebar-foot">
           <span className="local-status">
             <HardDrive size={13} /> Local workspace
           </span>
         </div>
+      )}
+      {repliesPane}
+      {comparison && (
+        <CrossPrComparison key={comparison} repo={comparison} close={() => setComparison(null)} />
       )}
       {adding && (
         <WorkspaceDialog title="Add repository" busy={busy} onClose={() => setAdding(false)}>
@@ -347,20 +369,10 @@ export function RepositorySidebar({
             key={selected.name}
             repo={selected}
             busy={busy}
-            onWatch={(authors) => {
-              const previous = selected.watching;
-              const show = (watching: string[]) =>
-                setRepos((rows) =>
-                  rows.map((row) => (row.name === selected.name ? { ...row, watching } : row)),
-                );
-              show(authors);
-              update(() =>
-                window.reviewer.watchAuthors(selected.name, authors).catch((error: unknown) => {
-                  show(previous);
-                  throw error;
-                }),
-              );
-            }}
+            error={error}
+            onWatch={(authors, done) =>
+              update(() => window.reviewer.watchAuthors(selected.name, authors), done)
+            }
             onRefresh={() => update(() => window.reviewer.syncRepository(selected.name, true))}
           />
           {(error || selected.error) && <p role="alert">{error || selected.error}</p>}
@@ -385,19 +397,17 @@ export function RepositorySidebar({
 function AuthorPicker({
   repo,
   busy,
+  error,
   onWatch,
   onRefresh,
 }: {
   repo: Repository;
   busy: boolean;
-  onWatch: (authors: string[]) => void;
+  error: string;
+  onWatch: (authors: string[], done: () => void) => void;
   onRefresh: () => void;
 }) {
-  const [filter, setFilter] = useState('');
-  const names = [...new Set([...repo.watching, ...repo.authors])]
-    .sort()
-    .filter((a) => a.includes(filter.trim().toLowerCase()));
-  const custom = login.safeParse(filter.replace(/^@/, ''));
+  const [open, setOpen] = useState(false);
   return (
     <>
       <div className="authors-heading">
@@ -407,38 +417,102 @@ function AuthorPicker({
         </button>
       </div>
       <p>Open pull requests from selected authors appear in the sidebar.</p>
-      <label htmlFor="author-filter">Find or add a GitHub username</label>
-      <input
-        id="author-filter"
+      <DialogTrigger isOpen={open} onOpenChange={setOpen}>
+        <Button
+          className="author-trigger"
+          isDisabled={busy}
+          aria-label={`Select authors, ${repo.watching.length} selected`}
+        >
+          {repo.watching.length ? `${repo.watching.length} selected` : 'Select authors'}
+          <ChevronDown size={16} aria-hidden />
+        </Button>
+        <Popover className="author-popover" placement="bottom start" offset={4}>
+          <Dialog className="author-menu" aria-label="Select authors">
+            <AuthorOptions
+              repo={repo}
+              busy={busy}
+              error={error}
+              onSave={(authors) => onWatch(authors, () => setOpen(false))}
+            />
+          </Dialog>
+        </Popover>
+      </DialogTrigger>
+      {repo.checked && <small>Last checked {new Date(repo.checked).toLocaleString()}</small>}
+    </>
+  );
+}
+
+function AuthorOptions({
+  repo,
+  busy,
+  error,
+  onSave,
+}: {
+  repo: Repository;
+  busy: boolean;
+  error: string;
+  onSave: (authors: string[]) => void;
+}) {
+  const [selected, setSelected] = useState(() => new Set(repo.watching));
+  const [filter, setFilter] = useState('');
+  const query = filter.trim().replace(/^@/, '').toLowerCase();
+  const authors = new Set([...repo.authors, ...repo.watching, ...selected]);
+  const matches = [...authors].filter((author) => author.includes(query)).sort();
+  const custom = login.safeParse(query);
+  const addCustom = custom.success && !authors.has(custom.data);
+  function toggle(author: string) {
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (next.has(author)) next.delete(author);
+      else next.add(author);
+      return next;
+    });
+  }
+  return (
+    <>
+      <TextField
+        className="author-search"
+        type="search"
+        aria-label="Search authors"
+        autoFocus
+        autoComplete="off"
+        spellCheck="false"
         value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        placeholder="Search authors"
-      />
-      <div className="author-list">
-        {names.map((author) => (
+        onChange={setFilter}
+      >
+        <Search size={16} aria-hidden />
+        <Input placeholder="Search or add a username" />
+      </TextField>
+      <div className="author-list" role="group" aria-label="Authors">
+        {matches.map((author) => (
           <label key={author}>
             <input
               type="checkbox"
               disabled={busy}
-              checked={repo.watching.includes(author)}
-              onChange={(e) =>
-                onWatch(
-                  e.target.checked
-                    ? [...repo.watching, author]
-                    : repo.watching.filter((a) => a !== author),
-                )
-              }
+              checked={selected.has(author)}
+              onChange={() => toggle(author)}
             />
             {author}
           </label>
         ))}
+        {matches.length === 0 && (
+          <p role="status">
+            {query ? 'No matching authors.' : 'No authors found. Enter a GitHub username.'}
+          </p>
+        )}
+        {addCustom && (
+          <button className="quiet" disabled={busy} onClick={() => toggle(custom.data)}>
+            Monitor @{custom.data}
+          </button>
+        )}
       </div>
-      {custom.success && !names.includes(custom.data) && (
-        <button disabled={busy} onClick={() => onWatch([...repo.watching, custom.data])}>
-          Monitor @{custom.data}
+      {error && <p role="alert">{error}</p>}
+      <div className="author-menu-footer">
+        <span aria-live="polite">{selected.size} selected</span>
+        <button disabled={busy} onClick={() => onSave([...selected])}>
+          {busy ? 'Saving…' : 'Apply selection'}
         </button>
-      )}
-      {repo.checked && <small>Last checked {new Date(repo.checked).toLocaleString()}</small>}
+      </div>
     </>
   );
 }

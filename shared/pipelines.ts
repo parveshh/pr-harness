@@ -1,3 +1,4 @@
+import type { AttemptKey, FailureKey, FailureReport, FailureLocation } from './failure.js';
 import { z } from 'zod';
 
 // A GitHub Actions workflow run for the PR's head commit, its jobs and their steps.
@@ -51,6 +52,11 @@ export type PipelineJob = z.infer<typeof pipelineJob>;
 export type PipelineStep = z.infer<typeof pipelineStep>;
 export type PipelineOutcome = 'running' | 'queued' | 'waiting' | 'failed' | 'passed' | 'skipped';
 export interface PipelineBridge {
+  pipelineAttempt(key: AttemptKey, session: string): Promise<PipelineJob[]>;
+  investigateFailure(key: FailureKey): Promise<FailureReport>;
+  failureLocation(session: string, index: number, request: string): Promise<FailureLocation>;
+  closeFailureLocation(request: string): Promise<void>;
+  closeFailure(session: string): Promise<void>;
   pipelines(url: string): Promise<Pipelines>;
 }
 

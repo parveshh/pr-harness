@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Bell, Check, ExternalLink, Settings, UserRound, RefreshCw } from 'lucide-react';
+import {
+  Bell,
+  ChevronLeft,
+  Check,
+  ExternalLink,
+  Settings,
+  UserRound,
+  RefreshCw,
+} from 'lucide-react';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 import {
   accent as accents,
@@ -271,7 +279,17 @@ export function RepliesPane({
     });
   }
   return (
-    <WorkspaceDialog title="Review replies" icon={<Bell size={21} />} wide onClose={close}>
+    <section
+      className="sidebar-contents replies-pane"
+      id="review-replies"
+      aria-labelledby="replies-heading"
+    >
+      <div className="sidebar-title">
+        <h2 id="replies-heading">Review replies</h2>
+        <button aria-label="Close review replies" title="Hide review replies" onClick={close}>
+          <ChevronLeft size={16} />
+        </button>
+      </div>
       <div className="inbox-actions">
         <small>
           {inbox.account
@@ -332,6 +350,6 @@ export function RepliesPane({
           </button>
         ))}
       </div>
-    </WorkspaceDialog>
+    </section>
   );
 }

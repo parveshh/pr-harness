@@ -1,3 +1,6 @@
+import { failureLocation, failureReport } from '../shared/failure.js';
+import { freshness, candidate, pairSummary, pairAnalysis } from '../shared/cross-pr.js';
+import { reviewLesson } from '../shared/lessons.js';
 import { discussionMessage, discussions, resolveResult } from '../shared/discussions.js';
 import { typography, signIn, inbox } from '../shared/workspace.js';
 import { accent, appearance } from '../shared/appearance.js';
@@ -8,13 +11,43 @@ import { pinnedQuestion, questionEvidence } from '../shared/questions.js';
 import { changeEvidence } from '../shared/rereview.js';
 import { readerView } from '../shared/reader.js';
 import { z } from 'zod';
-import { pipelines } from '../shared/pipelines.js';
+import { pipelines, pipelineJob } from '../shared/pipelines.js';
 import { repository, config, agentCatalog, turn, activity } from '../shared/assistant.js';
 
 const reviewer: ReviewerBridge = {
+  comparisonCandidates: async (repo, run) =>
+    candidate.array().parse(await ipcRenderer.invoke('pair:candidates', repo, run)),
+  cancelCandidateScan: async (run) => {
+    await ipcRenderer.invoke('pair:cancel-candidates', run);
+  },
+  preparePair: async (request) =>
+    pairSummary.parse(await ipcRenderer.invoke('pair:prepare', request)),
+  analyzePair: async (run) => pairAnalysis.parse(await ipcRenderer.invoke('pair:analyze', run)),
+  checkPair: async (run) => freshness.parse(await ipcRenderer.invoke('pair:check', run)),
+  closePair: async (run) => {
+    await ipcRenderer.invoke('pair:close', run);
+  },
+  reviewLessons: async (url) =>
+    reviewLesson.array().parse(await ipcRenderer.invoke('lessons:list', url)),
+  saveReviewLesson: async (input) =>
+    reviewLesson.array().parse(await ipcRenderer.invoke('lessons:save', input)),
+  forgetReviewLesson: async (url, key) =>
+    reviewLesson.array().parse(await ipcRenderer.invoke('lessons:forget', url, key)),
   discussions: async (url) => discussions.parse(await ipcRenderer.invoke('discussions:list', url)),
   replyToDiscussion: async (req) =>
     discussionMessage.parse(await ipcRenderer.invoke('discussions:reply', req)),
+  pipelineAttempt: async (key, session) =>
+    pipelineJob.array().parse(await ipcRenderer.invoke('pipelines:attempt', key, session)),
+  investigateFailure: async (key) =>
+    failureReport.parse(await ipcRenderer.invoke('pipelines:investigate', key)),
+  failureLocation: async (session, index, request) =>
+    failureLocation.parse(await ipcRenderer.invoke('pipelines:location', session, index, request)),
+  closeFailureLocation: async (request) => {
+    await ipcRenderer.invoke('pipelines:close-location', request);
+  },
+  closeFailure: async (session) => {
+    await ipcRenderer.invoke('pipelines:close-failure', session);
+  },
   pipelines: async (url) => pipelines.parse(await ipcRenderer.invoke('pipelines:list', url)),
   resolveDiscussion: async (req) =>
     resolveResult.parse(await ipcRenderer.invoke('discussions:resolve', req)),
@@ -126,6 +159,8 @@ const reviewer: ReviewerBridge = {
     pinnedQuestion.array().parse(await ipcRenderer.invoke('questions:address', key, addressed)),
   questionEvidence: async (key) =>
     questionEvidence.parse(await ipcRenderer.invoke('questions:evidence', key)),
+  citedSource: async (key) =>
+    z.string().parse(await ipcRenderer.invoke('reader:cited-source', key)),
   fullFile: async (key) => z.string().parse(await ipcRenderer.invoke('reader:full-file', key)),
   filePatch: async (key) => z.string().parse(await ipcRenderer.invoke('reader:patch', key)),
   remember: async (value) => {

@@ -4,7 +4,7 @@
     "user": {
       "login": "reviewer"
     },
-    "body": "Restore the selected file on restart.",
+    "body": "## What changes\n\n- **Review progress:** Restore the selected file on restart.",
     "base": {
       "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "ref": "main"

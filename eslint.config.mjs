@@ -8,6 +8,7 @@ import globals from 'globals';
 export default defineConfig([
   globalIgnores([
     'dist/**',
+    'release/**',
     'coverage/**',
     '.local-reviewer/**',
     '**/fixtures/diffs/**',

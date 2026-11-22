@@ -1,4 +1,4 @@
-import { replaceCitations } from '../../shared/markdown-citations.js';
+import type { ReactNode, RefObject } from 'react';
 import { ChatMarkdown } from './components/ChatMarkdown.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 import { memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -16,15 +16,24 @@ import {
   type ContextMode,
   type Scope,
   type Turn,
-  type Anchor,
+  type ChatRequest,
   type Citation,
+  type SourceCitation,
 } from '../../shared/assistant.js';
-import { Sparkles, ArrowUp, LoaderCircle, SlidersHorizontal } from 'lucide-react';
+import {
+  UserRound,
+  Sparkles,
+  ArrowUp,
+  LoaderCircle,
+  SlidersHorizontal,
+  ChevronRight,
+} from 'lucide-react';
 import { splitHunks } from '../../shared/reader.js';
 import type { ReaderView, ReaderFile } from '../../shared/reader.js';
 
 export function ReviewChat({
   agents,
+  agentPicker,
   summaryRequest,
   onSummaryStarted,
   url,
@@ -32,18 +41,23 @@ export function ReviewChat({
   file,
   selection,
   jump,
-  onDraft,
+  openSource,
+  collapse,
+  composerRef,
 }: {
   agents: AgentCatalog | null;
+  agentPicker: ReactNode;
   // Set when a summary was asked for outside this pane, such as from the sidebar.
   summaryRequest: number | null;
   onSummaryStarted: () => void;
   url: string;
   view: ReaderView;
   file: ReaderFile;
-  selection: Anchor | null;
+  selection: ChatRequest['selection'];
   jump: (cite: Citation) => void;
-  onDraft: ((cite: Citation, body: string) => void) | undefined;
+  openSource: (run: string, cite: SourceCitation) => void;
+  collapse: () => void;
+  composerRef: RefObject<HTMLTextAreaElement | null>;
 }) {
   // The harness and model come from the app-wide choice. This pane owns the scoped prompt.
   const [config, setConfig] = useState<Config | null>(null),
@@ -62,6 +76,7 @@ export function ReviewChat({
     [configFailed, setConfigFailed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const alive = useRef(false);
+  const loadedConfigUrl = useRef<string | null>(null);
   const messages = useMemo(
     () => [...history, ...chat.completed.filter((m) => !history.some((h) => h.run === m.run))],
     [history, chat.completed],
@@ -74,18 +89,22 @@ export function ReviewChat({
   useEffect(() => {
     alive.current = true;
     let current = true;
-    window.reviewer
-      .agentConfig(url)
-      .then((c) => {
-        if (current) {
-          apply(c);
-        }
-      })
-      .catch((e) => {
-        if (!current) return;
-        setError(readableError(e));
-        setConfigFailed(true);
-      });
+    // Revealing the chat after an update must preserve edits to its instructions.
+    if (loadedConfigUrl.current !== url) {
+      window.reviewer
+        .agentConfig(url)
+        .then((c) => {
+          if (current) {
+            loadedConfigUrl.current = url;
+            apply(c);
+          }
+        })
+        .catch((e) => {
+          if (!current) return;
+          setError(readableError(e));
+          setConfigFailed(true);
+        });
+    }
     return () => {
       current = false;
       alive.current = false;
@@ -172,7 +191,7 @@ export function ReviewChat({
           ? 'Another answer is running. Summarise the PR when it finishes.'
           : agent
             ? 'Review instructions could not be loaded, so the summary did not start.'
-            : 'Choose an installed harness in the title bar, then summarise the PR.',
+            : 'Choose an installed harness in the model picker, then summarise the PR.',
       );
   });
   useEffect(() => {
@@ -192,8 +211,8 @@ export function ReviewChat({
           </span>{' '}
           Review chat
         </h2>
+        <div className="chat-agent-picker">{agentPicker}</div>
         <div className="chat-heading-tools">
-          <small>{view.meta.head.slice(0, 8)}</small>
           {prompt !== null && config && (
             <fieldset disabled={running}>
               <button
@@ -279,12 +298,20 @@ export function ReviewChat({
               )}
             </fieldset>
           )}
+          <button
+            className="pane-toggle"
+            title="Collapse review chat"
+            aria-label="Collapse review chat"
+            onClick={collapse}
+          >
+            <ChevronRight size={17} />
+          </button>
         </div>
       </div>
       {!agent && agents && (
         <p className="chat-harness-hint">
           {agentNames[agents.selection.agent]} was not found. Choose an installed harness in the
-          title bar.
+          Review chat header.
         </p>
       )}
       <div
@@ -298,9 +325,15 @@ export function ReviewChat({
       >
         {messages.map((m) => (
           <div className="exchange" key={m.run}>
+            <strong className="chat-speaker">
+              <UserRound size={14} /> You
+            </strong>
             <div className="chat-question">
               <ChatMarkdown text={m.question} />
             </div>
+            <strong className="chat-speaker assistant-speaker">
+              <Sparkles size={13} /> Assistant
+            </strong>
             <small>
               {m.settings.agent} · {m.reportedModel || m.settings.model || 'agent default'} ·{' '}
               {m.revision.split('...').at(-1)?.slice(0, 8)}
@@ -314,7 +347,7 @@ export function ReviewChat({
               turn={m}
               current={m.revision === view.revision}
               jump={jump}
-              onDraft={onDraft}
+              openSource={openSource}
             />
           </div>
         ))}
@@ -354,12 +387,18 @@ export function ReviewChat({
           <small className="context-file">
             {file.path} ·{' '}
             {selection
-              ? 'line ' + selection.line + ' (' + selection.side + ')'
+              ? (selection.startLine && selection.startLine !== selection.line
+                  ? 'lines ' + selection.startLine + '–' + selection.line
+                  : 'line ' + selection.line) +
+                ' (' +
+                selection.side +
+                ')'
               : file.status === 'added'
                 ? 'new file'
                 : 'hunk ' + (file.hunk + 1)}
           </small>
           <textarea
+            ref={composerRef}
             id="chat-question"
             aria-label="Ask about the diff"
             rows={4}
@@ -446,27 +485,14 @@ const Answer = memo(function Answer({
   turn,
   current,
   jump,
-  onDraft,
+  openSource,
 }: {
   url: string;
   turn: Turn;
   current: boolean;
   jump: (cite: Citation) => void;
-  onDraft: ((cite: Citation, body: string) => void) | undefined;
+  openSource: (run: string, cite: SourceCitation) => void;
 }) {
-  const draft = useMemo(() => {
-    let anchor: Citation | undefined;
-    const body = replaceCitations(turn.answer, (id, marker) => {
-      const cite = turn.citations.find((c) => c.id === id);
-      if (!cite) {
-        const source = turn.sourceCitations?.find((s) => s.id === id);
-        return source ? source.url : marker;
-      }
-      anchor ??= cite;
-      return cite.path + ':' + cite.line;
-    });
-    return anchor ? { anchor, body } : null;
-  }, [turn.answer, turn.citations, turn.sourceCitations]);
   const [archive, setArchive] = useState<Citation | null>(null);
   const [original, setOriginal] = useState('');
   useEffect(() => {
@@ -492,7 +518,8 @@ const Answer = memo(function Answer({
           citations={turn.citations}
           sourceCitations={turn.sourceCitations}
           onCite={(cite) => {
-            if (current) jump(cite);
+            if ('commit' in cite) openSource(turn.run, cite);
+            else if (current) jump(cite);
             else {
               setOriginal('');
               setArchive(cite);
@@ -500,15 +527,6 @@ const Answer = memo(function Answer({
           }}
         />
       </div>
-      {current && draft && onDraft && (
-        <button
-          className="secondary"
-          title="Start an editable review comment from this answer, on the first line it cites"
-          onClick={() => onDraft(draft.anchor, draft.body)}
-        >
-          Draft from answer
-        </button>
-      )}
       {archive && (
         <blockquote>
           <strong>

@@ -10,8 +10,7 @@ import {
 import { diffLines } from '../../shared/diff.js';
 import { highlightRows, languageFor } from '../../shared/highlight.js';
 import { CodeLine } from './components/CodeLine.js';
-import type { FileKey } from '../../shared/reader.js';
-import { readableError } from '../../shared/assistant.js';
+import { readableError, type CitedSourceKey } from '../../shared/assistant.js';
 
 // Each page starts with enough line information to render it independently.
 export type FileFocus = { side: 'old' | 'new'; line: number };
@@ -49,23 +48,35 @@ function pages(text: string, focus: FileFocus | null) {
 }
 export function FullFile({
   url,
-  revision,
   path,
+  target,
   discussions,
+  codeLessons,
   focus,
-}: FileKey & {
+}: {
+  url: string;
+  path: string;
+  target: string | Pick<CitedSourceKey, 'run' | 'id'>;
   focus: FileFocus | null;
-  discussions: (old: number | null, current: number | null) => ReactNode;
+  codeLessons?: (lines: string[]) => ReactNode;
+  discussions?: (old: number | null, current: number | null) => ReactNode;
 }) {
   const [text, setText] = useState<string | null>(null),
     [error, setError] = useState(''),
     [chosen, setPage] = useState<number | null>(null),
     [retry, setRetry] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
+  const snapshot = typeof target !== 'string';
   useEffect(() => {
     let current = true;
-    window.reviewer
-      .fullFile({ url, revision, path })
+    const request =
+      typeof target === 'string'
+        ? window.reviewer.fullFile({ url, revision: target, path })
+        : window.reviewer.citedSource({ url, run: target.run, id: target.id }).then((source) =>
+            // Present a single immutable snapshot as context lines in the paged code reader.
+            source ? ' ' + source.replace(/\n$/, '').replaceAll('\n', '\n ') : '',
+          );
+    request
       .then((value) => {
         if (current) setText(value);
       })
@@ -75,7 +86,7 @@ export function FullFile({
     return () => {
       current = false;
     };
-  }, [url, revision, path, retry]);
+  }, [url, target, path, retry]);
   const { offsets, initial } = useMemo(() => pages(text ?? '', focus), [text, focus]);
   const page = chosen ?? initial;
   useLayoutEffect(() => {
@@ -91,6 +102,10 @@ export function FullFile({
     return diffLines('@@ -' + start.old + ' +' + start.next + ' @@\n' + body).lines;
   }, [offsets, page, text]);
   const syntax = useMemo(() => highlightRows(lines, languageFor(path)), [lines, path]);
+  const reminders = useMemo(
+    () => codeLessons?.(lines.map((line) => line.text)),
+    [codeLessons, lines],
+  );
   if (error)
     return (
       <p className="patch-note" role="alert">
@@ -131,11 +146,12 @@ export function FullFile({
           </button>
         </div>
       )}
+      {reminders}
       <div
         ref={scroller}
         className="diff-scroll"
         role="region"
-        aria-label="Full file with changes"
+        aria-label={snapshot ? 'Cited source' : 'Full file with changes'}
         tabIndex={0}
       >
         <div className="diff-content">
@@ -143,15 +159,16 @@ export function FullFile({
             <Fragment key={i}>
               <div
                 className={'diff-line ' + line.kind}
+                data-selected={snapshot && line.newLine === focus?.line ? true : undefined}
                 data-old-line={line.oldLine ?? undefined}
                 data-new-line={line.newLine ?? undefined}
               >
                 <span className="comment-gutter" />
-                <span className="gutter">{line.oldLine}</span>
+                {!snapshot && <span className="gutter">{line.oldLine}</span>}
                 <span className="gutter">{line.newLine}</span>
                 <CodeLine text={line.text} tokens={syntax[i] ?? null} />
               </div>
-              {discussions(line.oldLine, line.newLine)}
+              {discussions?.(line.oldLine, line.newLine)}
             </Fragment>
           ))}
         </div>

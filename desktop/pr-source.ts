@@ -118,6 +118,9 @@ export function pinnedSource(root: string, url: string, run: Git = git) {
     return { blob, text: bytes.toString('utf8') };
   }
   return {
+    async text(commit: string, path: string, signal: AbortSignal) {
+      return (await regularFile(commit, path, signal)).text;
+    },
     async fullFile(
       head: string,
       before: string | null | undefined,

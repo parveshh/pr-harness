@@ -53,12 +53,6 @@
   margin: 10px 0;
   font-size: 0.875rem;
 }
-.description {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 10rem;
-  overflow: auto;
-}
 .reading-grid {
   display: grid;
   grid-template-columns: minmax(180px, 26%) minmax(0, 1fr);
@@ -199,32 +193,31 @@
   padding-left: 8px;
   padding-right: 12px;
 }
-/* Syntax colours for highlight.js token classes. Every palette is dark, and each colour
-   also has to read on the addition and deletion backgrounds. */
+/* Syntax colours for highlight.js token classes. Each pair also reads on the addition and deletion backgrounds. */
 .code-line :is(.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag) {
-  color: #d3aeff;
+  color: light-dark(#613693, #d3aeff);
 }
 .code-line :is(.hljs-string, .hljs-regexp, .hljs-char, .hljs-template-variable) {
-  color: #ecc98b;
+  color: light-dark(#62490b, #ecc98b);
 }
 .code-line :is(.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet) {
-  color: #f5ad84;
+  color: light-dark(#873a13, #f5ad84);
 }
 .code-line :is(.hljs-comment, .hljs-quote, .hljs-meta) {
-  color: #9fb1b3;
+  color: light-dark(#4e5b64, #9fb1b3);
   font-style: italic;
 }
 .code-line :is(.hljs-title, .hljs-section, .hljs-selector-id, .hljs-selector-class) {
-  color: #93ccff;
+  color: light-dark(#164d87, #93ccff);
 }
 .code-line :is(.hljs-type, .hljs-built_in, .hljs-class, .hljs-selector-attr, .hljs-link) {
-  color: #84dcd2;
+  color: light-dark(#005c55, #84dcd2);
 }
 .code-line :is(.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-params) {
-  color: #b9d7f5;
+  color: light-dark(#354d69, #b9d7f5);
 }
 .code-line :is(.hljs-name, .hljs-tag, .hljs-selector-pseudo) {
-  color: #f4b0c0;
+  color: light-dark(#873049, #f4b0c0);
 }
 .code-line .hljs-emphasis {
   font-style: italic;
@@ -550,4 +543,43 @@
   .reader .file-actions {
     justify-content: flex-start;
   }
+}
+
+.review-lessons {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.8rem;
+  border-inline-start: 2px solid var(--accent);
+  overflow-wrap: anywhere;
+}
+.review-lessons h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  margin: 0;
+}
+.review-lessons ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.review-lessons li p {
+  white-space: pre-wrap;
+  margin: 0.5rem 0 0.2rem;
+}
+.review-lessons small,
+.lesson-editor small {
+  color: var(--muted);
+}
+.review-lessons button {
+  margin-inline-start: 0.35rem;
+}
+.lesson-editor,
+.lesson-editor label {
+  display: grid;
+  gap: 0.5rem;
+}
+.lesson-editor {
+  padding: 1rem;
+  overflow-wrap: anywhere;
 }

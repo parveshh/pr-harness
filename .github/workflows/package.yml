@@ -1,0 +1,68 @@
+name: Package desktop
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - package.json
+      - package-lock.json
+      - electron-builder.yml
+      - electron.vite.config.mjs
+      - resources/local-reviewer.png
+      - scripts/packaged-smoke.mjs
+      - .github/workflows/package.yml
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run package:mac
+      - name: Launch the app from the disk image
+        run: |
+          mount="$RUNNER_TEMP/local-reviewer-dmg"
+          mkdir -p "$mount"
+          hdiutil attach release/*.dmg -readonly -nobrowse -mountpoint "$mount"
+          trap 'hdiutil detach "$mount"' EXIT
+          executable="$mount/Local Reviewer.app/Contents/MacOS/Local Reviewer"
+          lipo "$executable" -verify_arch arm64 x86_64
+          codesign --verify --deep --strict "$mount/Local Reviewer.app"
+          node scripts/packaged-smoke.mjs "$executable"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: release/*.dmg
+          if-no-files-found: error
+          compression-level: 0
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run package:win
+      - name: Install and launch the app
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release/*.exe
+          $installed = Join-Path $env:RUNNER_TEMP 'local-reviewer-installed'
+          $process = Start-Process $installer.FullName -ArgumentList '/S', "/D=$installed" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
+          node scripts/packaged-smoke.mjs "$installed/Local Reviewer.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: release/*.exe
+          if-no-files-found: error
+          compression-level: 0

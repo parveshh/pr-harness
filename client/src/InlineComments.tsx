@@ -1,3 +1,4 @@
+import { UserRound } from 'lucide-react';
 import { useState } from 'react';
 import type { Bundle, Draft, Edit } from '../../shared/publish.js';
 import { readableError } from '../../shared/assistant.js';
@@ -45,7 +46,11 @@ export function InlineComments({
         .filter((c) => c.id !== editor?.id)
         .map((c) => (
           <div className="inline-note" key={c.id}>
-            <small>Draft · {locationLabel(c)}</small>
+            <div className="draft-byline">
+              <UserRound size={14} />
+              <strong>You</strong>
+              <small title={locationLabel(c)}>Draft · Local</small>
+            </div>
             <p>{c.body}</p>
             <div>
               <button

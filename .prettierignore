@@ -5,3 +5,4 @@ coverage/
 **/fixtures/diffs/
 *.sqlite*
 package-lock.json
+release/
