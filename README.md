@@ -4,6 +4,10 @@ An Electron desktop workspace for reading GitHub pull requests file by file. SQL
 
 For a walkthrough of the reader, repository lessons, cross-PR comparisons, and failed checks, see the [review workflow guide](docs/review-workflows.md).
 
+## Download the desktop app
+
+On macOS, open the universal disk image and drag **Local Reviewer** to **Applications**. On Windows x64, run the installer. Install Git and GitHub CLI and sign in with `gh auth login` to fetch pull requests. The macOS build uses an ad-hoc signature and has no Apple notarization. The Windows installer has no publisher signature. [GitHub releases](https://github.com/parveshh/pr-harness/releases)
+
 ## Run locally
 
 Use the Node version in `.nvmrc`, then run `npm ci` and `npm run dev`. This launches Electron with live renderer updates. For a production build, run `npm run build` followed by `npm start`. The first launch may download the Electron binary.
@@ -20,7 +24,7 @@ Drag a divider, or focus it and use the arrow keys, to resize the sidebar, chang
 
 New workspaces start with the Ink palette and green accent. Change appearance in **Settings** on the navigation rail. Existing workspaces keep their saved choices.
 
-The changed-file tree groups files by folder. Filter by name or path. Collapse the tree or the full-height chat with its heading chevron. Reopen either from the PR header. The rail opens the repository list, replies, or settings.
+The changed-file tree groups files by folder. Filter by name or path. Collapse the tree or the full-height chat with its heading chevron. Use the files icon in the left rail to show or hide the tree. Reopen chat from the PR header. The rail highlights open panes.
 
 ## Review with a local agent
 
@@ -92,7 +96,7 @@ The gear at the bottom of the left rail opens **Settings**. Choose one of ten th
 
 **Connect account** starts GitHub CLI browser sign-in for github.com. Complete the authorization on GitHub. Settings displays the active CLI account, and **Switch account** starts another sign-in.
 
-The bell opens **Review replies**. Local Reviewer checks saved PRs and open PRs from monitored authors while the app is running, then catches up on reopen. A new threaded reply from someone else produces an in-app alert and unread badge. Open a reply to go to its GitHub discussion, or mark the inbox read. Each GitHub account has its own read state.
+The bell toggles the **Review replies** sidebar beside your workspace. Local Reviewer checks saved PRs and open PRs from monitored authors while the app is running, then catches up on reopen. A new threaded reply from someone else updates the unread badge on the bell. Open a reply to go to its GitHub discussion, or mark the inbox read. Each GitHub account has its own read state.
 
 ## Remember review lessons
 

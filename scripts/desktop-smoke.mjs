@@ -327,7 +327,7 @@ try {
     const collapsedSidebarWidth = await page
       .locator('#workspace-sidebar')
       .evaluate((el) => el.clientWidth);
-    await toolsRail.getByRole('button', { name: 'Expand sidebar' }).click();
+    await toolsRail.getByRole('button', { name: 'Show repositories' }).click();
     const expandedSidebarWidth = await page
       .locator('#workspace-sidebar')
       .evaluate((el) => el.clientWidth);
@@ -336,11 +336,11 @@ try {
         BrowserWindow.getAllWindows()[0].getWindowButtonPosition(),
       );
       assert.deepEqual(pos, { x: 14, y: 19 });
-      const collapse = page.getByRole('button', { name: 'Collapse sidebar' });
+      const collapse = page.getByRole('button', { name: 'Hide repositories' });
       const pinned = await collapse.boundingBox();
       assert.ok(pinned && pinned.y >= pos.y + 16);
       await collapse.click();
-      const expand = page.getByRole('button', { name: 'Expand sidebar' });
+      const expand = page.getByRole('button', { name: 'Show repositories' });
       assert.deepEqual(await expand.boundingBox(), pinned);
       await expand.click();
     }
@@ -382,7 +382,7 @@ try {
         expandedSidebarWidth,
       );
       assert.deepEqual(await toolsRail.boundingBox(), railBounds);
-      await toolsRail.getByRole('button', { name: 'Collapse sidebar' }).click();
+      await toolsRail.getByRole('button', { name: 'Hide repositories' }).click();
       await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
       await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
       assert.equal(await workspaceButton.getAttribute('aria-current'), 'page');
@@ -392,7 +392,7 @@ try {
       );
       assert.deepEqual(await toolsRail.boundingBox(), railBounds);
       await resize(app, page, 570, 720);
-      await toolsRail.getByRole('button', { name: 'Expand sidebar' }).click();
+      await toolsRail.getByRole('button', { name: 'Show repositories' }).click();
       const previousTextSize = await page.evaluate(() => {
         const root = globalThis.document.documentElement;
         const previous = root.dataset.textSize;
@@ -418,13 +418,13 @@ try {
         if (previous) globalThis.document.documentElement.dataset.textSize = previous;
         else delete globalThis.document.documentElement.dataset.textSize;
       }, previousTextSize);
-      await toolsRail.getByRole('button', { name: 'Collapse sidebar' }).click();
+      await toolsRail.getByRole('button', { name: 'Hide repositories' }).click();
       await resize(app, page, 1380, 720);
       await page.getByRole('button', { name: /example\/project.*#12/ }).click();
       await region.waitFor();
       assert.equal(await workspaceButton.getAttribute('aria-current'), null);
       assert.deepEqual(await toolsRail.boundingBox(), railBounds);
-      await toolsRail.getByRole('button', { name: 'Expand sidebar' }).click();
+      await toolsRail.getByRole('button', { name: 'Show repositories' }).click();
       await page.getByRole('button', { name: 'Add repository', exact: true }).click();
       await page.getByLabel('Repository', { exact: true }).fill('example/project');
       await capture(page, 'add-repository');
@@ -752,12 +752,18 @@ try {
       await files.getByLabel('Filter files').fill('');
       await treeFolder.click();
       await page.getByRole('button', { name: 'Collapse file tree' }).click();
-      await page
-        .getByRole('button', { name: 'Expand file tree' })
+      await toolsRail
+        .getByRole('button', { name: 'Show changed files', expanded: false })
         .and(page.locator(':focus'))
         .waitFor();
       assert.equal(await files.count(), 0);
-      await page.getByRole('button', { name: 'Expand file tree' }).click();
+      await toolsRail.getByRole('button', { name: 'Show changed files' }).click();
+      await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
+      await toolsRail.getByRole('button', { name: 'Hide changed files', expanded: true }).click();
+      await resize(app, page, 850, 720);
+      await region.waitFor();
+      await resize(app, page, 1380, 720);
+      await toolsRail.getByRole('button', { name: 'Show changed files', expanded: false }).click();
       await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
       const chatText = chat.getByLabel('Ask about the diff');
       await chatText.fill('Does this line wrap?');
@@ -805,6 +811,11 @@ try {
       assert.ok((await chat.evaluate((el) => el.clientWidth)) > chatBefore);
       restoredFilesWidth = await fileWidth();
       await resize(app, page, 850, 720);
+      await page.getByRole('button', { name: 'Diff', exact: true }).click();
+      await toolsRail.getByRole('button', { name: 'Show changed files', expanded: false }).click();
+      await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
+      await toolsRail.getByRole('button', { name: 'Hide changed files', expanded: true }).click();
+      await region.waitFor();
       await page.getByRole('button', { name: 'Chat', exact: true }).click();
       await resize(app, page, 850, 440);
       await chat.getByLabel('Context', { exact: true }).selectOption('full-pr');
@@ -1109,7 +1120,7 @@ try {
       await chat.getByText(/lines 40–42 \(new\)/).waitFor();
       await capture(page, 'inline-range');
       if (preview) {
-        await page.getByRole('button', { name: 'Collapse sidebar' }).click();
+        await page.getByRole('button', { name: 'Hide repositories' }).click();
         await resize(app, page, 1731, 909);
         await page.getByRole('button', { name: 'Review actions', exact: true }).click();
         await page.getByRole('menuitem', { name: 'Approve PR' }).waitFor();
@@ -1121,7 +1132,7 @@ try {
         await capture(page, 'review-workspace');
         await page.keyboard.press('Escape');
         await resize(app, page, 1380, 720);
-        await page.getByRole('button', { name: 'Expand sidebar' }).click();
+        await page.getByRole('button', { name: 'Show repositories' }).click();
       }
       // A question saved with an older version still follows its hunk across a push.
       await page.evaluate(async (pr) => {
@@ -1165,7 +1176,7 @@ try {
     await resize(reopened, page, 1380, 720);
     if (!live) {
       const files = page.getByRole('navigation', { name: 'Changed files' });
-      await page.getByRole('button', { name: 'Collapse sidebar' }).waitFor();
+      await page.getByRole('button', { name: 'Hide repositories' }).waitFor();
       await files.waitFor();
       assert.ok(Math.abs((await files.evaluate((el) => el.clientWidth)) - restoredFilesWidth) < 3);
       await page.getByRole('heading', { name: 'Review notes' }).first().waitFor();
@@ -1311,7 +1322,7 @@ try {
       await queue.getByLabel('Filter files').fill('');
       await folder.click();
 
-      const collapseSidebar = page.getByRole('button', { name: 'Collapse sidebar' });
+      const collapseSidebar = page.getByRole('button', { name: 'Hide repositories' });
       const startedExpanded = await collapseSidebar.isVisible();
       if (startedExpanded) await collapseSidebar.click();
       if (process.platform === 'darwin') {
@@ -1331,7 +1342,7 @@ try {
       await readerFile.click();
       await delta.getByText('+guard retries', { exact: true }).waitFor();
       await resize(reopened, page, 1380, 720);
-      if (startedExpanded) await page.getByRole('button', { name: 'Expand sidebar' }).click();
+      if (startedExpanded) await page.getByRole('button', { name: 'Show repositories' }).click();
       const queueWidth = await queue.evaluate((el) => el.clientWidth);
       const separator = page.getByRole('separator', { name: 'Resize re-review queue and diff' });
       const divider = await separator.boundingBox();
@@ -1466,13 +1477,20 @@ try {
       await page.clock.fastForward(125000);
       // Account for timers created before the test clock was installed.
       await page.evaluate(() => globalThis.dispatchEvent(new globalThis.Event('focus')));
-      await page.getByRole('button', { name: '1 new review reply', exact: true }).click();
-      const inbox = page.getByRole('dialog', { name: 'Review replies' });
+      await page.getByRole('status').filter({ hasText: '1 new review reply' }).waitFor();
+      await page.getByRole('button', { name: 'Review replies, 1 unread', expanded: false }).click();
+      const inbox = page.getByRole('region', { name: 'Review replies' });
+      await page.getByRole('button', { name: /^Review replies,/, expanded: true }).waitFor();
+      assert.equal(await page.getByRole('dialog').count(), 0);
       await inbox.getByText('Added coverage for concurrent retries.', { exact: true }).waitFor();
       await capture(page, 'reply-inbox');
       await inbox.getByRole('button', { name: 'Mark all read' }).click();
       await inbox.getByText('@fixture-reviewer · 0 unread', { exact: true }).waitFor();
-      await inbox.getByRole('button', { name: 'Close' }).click();
+      await inbox.getByRole('button', { name: 'Close review replies' }).click();
+      await page
+        .getByRole('button', { name: /^Review replies,/, expanded: false })
+        .and(page.locator(':focus'))
+        .waitFor();
       await writeFile(repliesFile, '[]');
       await writeFile(switchedAccount, '');
       await page.getByRole('button', { name: /^Review replies,/ }).click();
@@ -1480,7 +1498,11 @@ try {
       assert.equal(await inbox.getByText('Added coverage for concurrent retries.').count(), 0);
       await inbox.getByText('@second-reviewer · 0 unread', { exact: true }).waitFor();
       assert.equal(await inbox.getByText('Added coverage for concurrent retries.').count(), 0);
-      await inbox.getByRole('button', { name: 'Close' }).click();
+      await inbox.getByRole('button', { name: 'Close review replies' }).click();
+      await page
+        .getByRole('button', { name: /^Review replies,/, expanded: false })
+        .and(page.locator(':focus'))
+        .waitFor();
     }
     await page.getByRole('button', { name: 'Back to workspace' }).click();
     await page.getByLabel('GitHub pull request URL').waitFor();

@@ -1,5 +1,5 @@
 import { CrossPrComparison } from './CrossPrComparison.js';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { login, readableError, repoName, type Repository } from '../../shared/assistant.js';
 
 import {
@@ -8,8 +8,7 @@ import {
   GitCompareArrows,
   Layers2,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
+  Folders,
   Plus,
   HardDrive,
   Bell,
@@ -31,6 +30,10 @@ export function RepositorySidebar({
   collapsed,
   onToggle,
   openInbox,
+  repliesButton,
+  repliesPane,
+  settingsOpen,
+  fileToolSlot,
   openSettings,
   unread,
 }: {
@@ -44,6 +47,10 @@ export function RepositorySidebar({
   collapsed: boolean;
   onToggle: () => void;
   openInbox: () => void;
+  repliesButton: RefObject<HTMLButtonElement | null>;
+  repliesPane: ReactNode;
+  settingsOpen: boolean;
+  fileToolSlot: (node: HTMLSpanElement | null) => void;
   openSettings: () => void;
   unread: number;
 }) {
@@ -55,6 +62,7 @@ export function RepositorySidebar({
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const workingPrs = useWorkingPrs();
+  const repositoriesOpen = !collapsed && !repliesPane;
   const selected = repos.find((r) => r.name === manage);
   function openAdd() {
     setError('');
@@ -156,13 +164,18 @@ export function RepositorySidebar({
         </button>
         <button
           onClick={onToggle}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          title={collapsed ? 'Show repositories' : 'Hide repositories'}
+          aria-expanded={repositoriesOpen}
+          aria-controls={repositoriesOpen ? 'repository-list' : undefined}
+          aria-label={repositoriesOpen ? 'Hide repositories' : 'Show repositories'}
+          title={repositoriesOpen ? 'Hide repositories' : 'Show repositories'}
         >
-          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          <Folders size={19} />
         </button>
+        <span ref={fileToolSlot} className="file-tool-slot" />
         <button
+          ref={repliesButton}
+          aria-expanded={!!repliesPane}
+          aria-controls={repliesPane ? 'review-replies' : undefined}
           title="Review replies"
           aria-label={'Review replies, ' + unread + ' unread'}
           onClick={openInbox}
@@ -173,14 +186,15 @@ export function RepositorySidebar({
         <button
           title="Settings"
           aria-label="Settings"
+          aria-expanded={settingsOpen}
           className="rail-settings"
           onClick={openSettings}
         >
           <Settings size={19} />
         </button>
       </nav>
-      {!collapsed && (
-        <div className="sidebar-contents">
+      {repositoriesOpen && (
+        <div id="repository-list" className="sidebar-contents">
           <div className="sidebar-title">
             <h2>Repositories</h2>
             <button aria-label="Add repository" title="Add repository" onClick={openAdd}>
@@ -303,13 +317,14 @@ export function RepositorySidebar({
           {error && !manage && !adding && <p role="alert">{error}</p>}
         </div>
       )}
-      {!collapsed && (
+      {repositoriesOpen && (
         <div className="sidebar-foot">
           <span className="local-status">
             <HardDrive size={13} /> Local workspace
           </span>
         </div>
       )}
+      {repliesPane}
       {comparison && (
         <CrossPrComparison key={comparison} repo={comparison} close={() => setComparison(null)} />
       )}

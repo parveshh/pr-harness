@@ -15,7 +15,9 @@
     "typecheck": "tsc -p client --noEmit && tsc -p desktop --noEmit",
     "test": "node --import tsx --test desktop/*.test.ts",
     "build": "npm run typecheck && electron-vite build",
-    "test:desktop": "node scripts/desktop-smoke.mjs"
+    "test:desktop": "node scripts/desktop-smoke.mjs",
+    "package:mac": "npm run build && electron-builder --mac dmg --universal --publish never",
+    "package:win": "npm run build && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "lowlight": "^3.3.0",
@@ -38,6 +40,7 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.3.0",
     "electron": "45.4.1",
+    "electron-builder": "26.18.0",
     "electron-vite": "6.0.0",
     "eslint": "10.15.0",
     "eslint-config-prettier": "10.1.8",
@@ -51,5 +54,7 @@
     "vite": "8.3.8"
   },
   "productName": "Local Reviewer",
-  "main": "dist/main/main.js"
+  "main": "dist/main/main.js",
+  "description": "A desktop workspace for reviewing GitHub pull requests.",
+  "author": "parveshh"
 }

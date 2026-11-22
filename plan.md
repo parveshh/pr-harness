@@ -21,7 +21,7 @@ The workspace also supports repository and author monitoring with new pull reque
 2. **Measure large PRs.** Time first diff, full-file loading and scrolling, and cross-file answers. The current full-file reader pages long text. Git source reads have a 2 MiB limit per file. GitHub can return an incomplete file inventory or patch.
 3. **Try guided reading order and PR description checks.** These are proposed experiments. The two-push trial can use a question saved in an earlier version.
 4. **Evaluate automatic explanations and batch re-analysis.** Today reviewers request an explanation or ask a chat question. Use trial feedback and model latency before choosing a default.
-5. **Prepare desktop distribution.** Local development and build scripts exist. Packaging, signing, and release testing on each intended delivery platform remain open.
+5. **Prepare signed desktop distribution.** The release build produces a universal macOS disk image and a Windows x64 installer. Developer ID signing, Apple notarization, and Windows publisher signing remain open.
 
 ## One review from start to finish
 

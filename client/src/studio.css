@@ -1779,21 +1779,31 @@ body,
   display: grid;
   place-items: center;
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   padding: 0;
-  color: var(--muted);
-  border-radius: 8px;
+  color: color-mix(in srgb, var(--muted) 85%, var(--rail));
+  border: 1px solid transparent;
+  border-radius: 9px;
   background: transparent;
 }
-.repo-sidebar .workspace-rail button[aria-current='page'],
-.repo-sidebar .workspace-rail button[aria-expanded='true'] {
-  background: var(--selection);
-  color: var(--ink-bright);
+.file-tool-slot {
+  display: contents;
 }
 .repo-sidebar .workspace-rail button:hover {
   color: var(--ink-bright);
-  background: var(--hover);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.repo-sidebar .workspace-rail button:is([aria-current='page'], [aria-expanded='true']) {
+  color: var(--control);
+  background: color-mix(in srgb, var(--ink) 11%, var(--rail));
+  border-color: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+@media (forced-colors: active) {
+  .repo-sidebar .workspace-rail button:is([aria-current='page'], [aria-expanded='true']) {
+    border-color: Highlight;
+    color: Highlight;
+  }
 }
 .rail-settings {
   margin-top: auto;
@@ -2003,24 +2013,11 @@ body,
   letter-spacing: 0.1em;
   user-select: all;
 }
-.reply-toast {
-  position: fixed;
-  z-index: 12;
-  right: 16px;
-  bottom: 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--edge);
-  background: var(--raised);
-  border-radius: 9px;
-  box-shadow: 0 8px 22px #0004;
+.replies-pane {
+  overflow-wrap: anywhere;
 }
-.reply-toast button {
-  padding: 3px;
-  background: transparent;
-  color: var(--ink);
+.replies-pane :is(.inbox-actions, .reply-by) {
+  flex-wrap: wrap;
 }
 .inbox-actions {
   padding-bottom: 12px;

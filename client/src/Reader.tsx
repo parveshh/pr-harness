@@ -7,6 +7,7 @@ import { PinnedQuestions, QuestionLinks, type QuestionPanel } from './PinnedQues
 import { RevisionChanges, revisionQueue } from './RevisionChanges.js';
 import { InlineComments } from './InlineComments.js';
 import { Activity, Fragment } from 'react';
+import { createPortal } from 'react-dom';
 import { usePanelRef } from 'react-resizable-panels';
 import { ChangedFiles } from './ChangedFiles.js';
 import {
@@ -36,7 +37,7 @@ import {
   UserRound,
   RotateCw,
   FileCode2,
-  PanelLeftOpen,
+  Files,
   PanelRightOpen,
   Sparkles,
   Pin,
@@ -60,6 +61,7 @@ function message(error: unknown) {
 export type PrCommand = { id: number; url: string; kind: 'summarise' | 'approve' };
 
 export function Reader({
+  fileToolSlot,
   url,
   onBack,
   headerAction,
@@ -71,6 +73,7 @@ export function Reader({
   url: string;
   onBack: () => void;
   headerAction: ReactNode;
+  fileToolSlot: HTMLSpanElement | null;
   agents: AgentCatalog | null;
   command: PrCommand | null;
   onPublished: () => void;
@@ -130,8 +133,21 @@ export function Reader({
   const [editor, setEditor] = useState<DraftEditor | null>(null);
   const filePanel = usePanelRef();
   const chatPanel = usePanelRef();
-  const expandFilesButton = useRef<HTMLButtonElement>(null);
+  const fileToolButton = useRef<HTMLButtonElement>(null);
   const expandChatButton = useRef<HTMLButtonElement>(null);
+  const paneSwitch = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  const hasView = !!view;
+  useLayoutEffect(() => {
+    const tabs = paneSwitch.current;
+    if (!tabs) return;
+    // The reader's container query exposes these controls when only one pane fits.
+    const measure = () => setCompact(tabs.getClientRects().length > 0);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(tabs);
+    return () => observer.disconnect();
+  }, [hasView]);
   const fileFilter = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const [filesClosed, setFilesClosed] = useState(false);
@@ -152,6 +168,19 @@ export function Reader({
   }
   const [paneName, setPaneName] = useState<'files' | 'diff' | 'chat'>('diff');
   useLayoutEffect(focusPanelControl, [filesClosed, chatClosed, paneName]);
+  const filesVisible = compact ? paneName === 'files' : !filesClosed;
+  function hideFiles() {
+    pendingFocus.current = fileToolButton;
+    setPaneName('diff');
+    if (!compact) filePanel.current?.collapse();
+    fileToolButton.current?.focus();
+  }
+  function showFiles() {
+    pendingFocus.current = fileFilter;
+    filePanel.current?.expand();
+    setPaneName('files');
+    focusPanelControl();
+  }
   // Each sidebar command becomes a one-shot request for the pane that carries it out.
   const [seenCommand, setSeenCommand] = useState<number | null>(null);
   const [summaryRequest, setSummaryRequest] = useState<number | null>(null);
@@ -234,7 +263,6 @@ export function Reader({
     };
   }, [url, attempt]);
 
-  const hasView = !!view;
   useEffect(() => {
     if (loading || transition || !hasView) return;
     let live = true,
@@ -361,7 +389,7 @@ export function Reader({
   const nextUnread = [...files.slice(index + 1), ...files.slice(0, index)].find(
     (file) => !file.reviewed,
   );
-  const visiblePane = (!selected || since) && paneName === 'chat' ? 'diff' : paneName;
+  const visiblePane = paneName === 'chat' && (!selected || since) ? 'diff' : paneName;
   function selectLine(anchor: Anchor, extend: boolean) {
     if (!view) return;
     const origin = rangeOrigin.current;
@@ -428,8 +456,23 @@ export function Reader({
           }}
         />
       )}
+      {view &&
+        fileToolSlot &&
+        createPortal(
+          <button
+            ref={fileToolButton}
+            aria-expanded={filesVisible}
+            aria-controls="review-files"
+            aria-label={filesVisible ? 'Hide changed files' : 'Show changed files'}
+            title={filesVisible ? 'Hide changed files' : 'Show changed files'}
+            onClick={filesVisible ? hideFiles : showFiles}
+          >
+            <Files size={19} />
+          </button>,
+          fileToolSlot,
+        )}
       {view && (
-        <div className="pane-switch" aria-label="Review panes">
+        <div ref={paneSwitch} className="pane-switch" aria-label="Review panes">
           {(['files', 'diff', 'chat'] as const)
             .filter((name) => !since || name !== 'chat')
             .map((name) => (
@@ -461,8 +504,8 @@ export function Reader({
               minSize="165px"
               collapsible
               panelRef={filePanel}
-              inert={filesClosed}
-              aria-hidden={filesClosed || undefined}
+              inert={!filesVisible}
+              aria-hidden={!filesVisible || undefined}
               onResize={(size) => setFilesClosed(size.asPercentage === 0)}
             >
               <ChangedFiles
@@ -471,10 +514,7 @@ export function Reader({
                 selected={queue ? queue.path : selected?.path}
                 counts={commentCounts}
                 filterRef={fileFilter}
-                collapse={() => {
-                  pendingFocus.current = expandFilesButton;
-                  filePanel.current?.collapse();
-                }}
+                collapse={hideFiles}
                 choose={(path) => {
                   if (queue) showComparison(true, path);
                   else {
@@ -529,20 +569,6 @@ export function Reader({
                 >
                   <Pin size={14} />
                   <span>Pinned questions</span> {questions.filter((q) => !q.addressed).length}
-                </button>
-              )}
-              {filesClosed && (
-                <button
-                  className="pane-toggle"
-                  ref={expandFilesButton}
-                  aria-label="Expand file tree"
-                  title="Expand file tree"
-                  onClick={() => {
-                    pendingFocus.current = fileFilter;
-                    filePanel.current?.expand();
-                  }}
-                >
-                  <PanelLeftOpen size={16} />
                 </button>
               )}
               {chatClosed && !since && (
