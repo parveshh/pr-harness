@@ -25,15 +25,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run package:mac
-      - name: Launch the app from the disk image
+      - name: Install and launch the app from the disk image
         run: |
           mount="$RUNNER_TEMP/local-reviewer-dmg"
           mkdir -p "$mount"
           hdiutil attach release/*.dmg -readonly -nobrowse -mountpoint "$mount"
           trap 'hdiutil detach "$mount"' EXIT
-          executable="$mount/Local Reviewer.app/Contents/MacOS/Local Reviewer"
+          installed="$RUNNER_TEMP/Local Reviewer.app"
+          ditto "$mount/Local Reviewer.app" "$installed"
+          executable="$installed/Contents/MacOS/Local Reviewer"
           lipo "$executable" -verify_arch arm64 x86_64
-          codesign --verify --deep --strict "$mount/Local Reviewer.app"
+          codesign --verify --deep --strict "$installed"
           node scripts/packaged-smoke.mjs "$executable"
       - uses: actions/upload-artifact@v4
         with:
