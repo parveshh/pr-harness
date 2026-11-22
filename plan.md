@@ -21,7 +21,7 @@ The workspace also supports repository and author monitoring with new pull reque
 2. **Measure large PRs.** Time first diff, full-file loading and scrolling, and cross-file answers. The current full-file reader pages long text. Git source reads have a 2 MiB limit per file. GitHub can return an incomplete file inventory or patch.
 3. **Try guided reading order and PR description checks.** These are proposed experiments. The two-push trial can use a question saved in an earlier version.
 4. **Evaluate automatic explanations and batch re-analysis.** Today reviewers request an explanation or ask a chat question. Use trial feedback and model latency before choosing a default.
-5. **Prepare signed desktop distribution.** The release build produces a universal macOS disk image and a Windows x64 installer. Developer ID signing, Apple notarization, and Windows publisher signing remain open.
+5. **Prepare signed desktop distribution.** The release build produces a macOS disk image for Apple silicon and a Windows x64 installer. Developer ID signing, Apple notarization, and Windows publisher signing remain open.
 
 ## One review from start to finish
 
@@ -59,9 +59,7 @@ Store the base, merge base, and head commit IDs for each snapshot. The full PR v
 
 **Agent integration.** Start with one working adapter, then prove portability with the second before calling the picker complete. Each adapter discovers its executable and version, reports model choices when supported, starts a review with the selected model and instructions, streams events, and cancels a run. Where model discovery is unavailable, offer the agent default and a manually entered model ID. Surface rejected choices and let the reviewer select again. Record agent, requested model, reported model when available, and prompt version with each answer. Switching agents starts a fresh run with the selected local conversation context.
 
-**Review instructions.** Offer an editable default system prompt with a local per-repository override. Preview the effective instructions and save a version with each run. Source files, PR descriptions, and comments enter as quoted review material. Give the agent read-only evidence from the pinned revision. The app owns GitHub writes. Start with this editable default:
-
-> Explain the behaviour before and after the change. Cite the file and lines for each material claim. For a possible defect, describe the triggering conditions and the effect on the caller. If the answer depends on missing evidence, name what you would inspect. Treat the author's stated intent as a claim to check. Keep routine changes brief.
+**Review instructions.** Offer an editable default system prompt with a local per-repository override. Preview the effective instructions and save a version with each run. Source files, PR descriptions, and comments enter as quoted review material. Give the agent read-only evidence from the pinned revision. The app owns GitHub writes. The [editable default prompt](./shared/assistant.ts) guides the reviewer through tracing behaviour, checking failure paths and tests, and writing findings with evidence.
 
 **Consistency.** Build each snapshot against pinned commits and check that the PR stayed on that revision while fetching mutable metadata. Key generated explanations by their input files, prompt version, agent and model. Store each draft with its original excerpt, file, side, line range and revision. Before publishing, refresh the head and validate the anchors against the current GitHub diff. If a submission times out, reconcile against the reviewer's GitHub reviews before retrying. [GitHub inline comment anchors](https://docs.github.com/en/rest/pulls/comments#create-a-review-comment-for-a-pull-request)
 

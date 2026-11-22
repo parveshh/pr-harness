@@ -20,14 +20,23 @@ CREATE TABLE agent_paths(agent TEXT PRIMARY KEY,path TEXT NOT NULL) STRICT;
 CREATE TABLE conversation(id INTEGER PRIMARY KEY,run TEXT NOT NULL UNIQUE,url TEXT NOT NULL REFERENCES saved_reviews(url),data TEXT NOT NULL) STRICT;
 CREATE INDEX conversation_pr ON conversation(url,id);
 PRAGMA user_version=3;`;
+const fileOverviewPrompt =
+  'Answer the reviewer’s question directly. When asked for a file overview, describe what a newly added file introduces and how it fits into the PR, or explain how an existing file’s behaviour changed. Cite the file and lines for each material claim. For a possible defect, describe the triggering conditions and the effect on the caller. If the answer depends on missing evidence, name what you would inspect. Treat the author’s stated intent as a claim to check. Keep routine changes brief.';
 // Choosing an agent or model in earlier versions also saved a copy of the built-in prompt.
-export function migrateDefaultPrompt(db: DatabaseSync) {
+export function migrateFileOverviewPrompt(db: DatabaseSync) {
   const previous =
     'Explain the behaviour before and after the change. Cite the file and lines for each material claim. For a possible defect, describe the triggering conditions and the effect on the caller. If the answer depends on missing evidence, name what you would inspect. Treat the author’s stated intent as a claim to check. Keep routine changes brief.';
+  replaceStoredPrompt(db, previous, fileOverviewPrompt);
+  db.exec('PRAGMA user_version=11');
+}
+export function migrateDetailedReviewPrompt(db: DatabaseSync) {
+  replaceStoredPrompt(db, fileOverviewPrompt, defaultPrompt);
+  db.exec('PRAGMA user_version=15');
+}
+function replaceStoredPrompt(db: DatabaseSync, previous: string, replacement: string) {
   db.prepare(
     "UPDATE agent_preferences SET settings=json_set(settings,'$.prompt',?) WHERE CASE WHEN json_valid(settings) THEN json_extract(settings,'$.prompt') END = ?",
-  ).run(defaultPrompt, previous);
-  db.exec('PRAGMA user_version=11');
+  ).run(replacement, previous);
 }
 // Earlier versions stored a harness and model with every prompt scope. The app default
 // becomes the single app-wide choice. Scoped rows keep supplying their prompt.

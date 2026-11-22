@@ -10,7 +10,8 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   assistantMigration,
   assistantStore,
-  migrateDefaultPrompt,
+  migrateDetailedReviewPrompt,
+  migrateFileOverviewPrompt,
   migrateGlobalSelection,
 } from './assistant-store.js';
 import { readerMigration, readerStore } from './reader-store.js';
@@ -21,7 +22,7 @@ export function openStore(filename: string) {
   try {
     db.exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version < 0 || version > 14)
+    if (typeof version !== 'number' || version < 0 || version > 15)
       throw new Error('This workspace requires a newer Local Reviewer.');
     if (version === 0) {
       db.exec(`CREATE TABLE saved_reviews (url TEXT PRIMARY KEY, saved_at TEXT NOT NULL) STRICT;
@@ -39,13 +40,14 @@ export function openStore(filename: string) {
     if (version < 8) db.exec(settingsMigration);
     if (version < 9) db.exec(replyTargetsMigration);
     if (version < 10) migrateRevisionNavigation(db);
-    if (version < 11) migrateDefaultPrompt(db);
+    if (version < 11) migrateFileOverviewPrompt(db);
     if (version < 12) migrateGlobalSelection(db);
     if (version < 13)
       db.exec(
         "ALTER TABLE workspace ADD COLUMN accent TEXT NOT NULL DEFAULT 'neutral'; PRAGMA user_version=13;",
       );
     if (version < 14) db.exec(lessonMigration);
+    if (version < 15) migrateDetailedReviewPrompt(db);
     if (version === 0)
       db.prepare('UPDATE workspace SET appearance=?, accent=? WHERE id=1').run('ink', 'green');
     db.exec('COMMIT');

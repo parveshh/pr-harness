@@ -6,7 +6,7 @@ For a walkthrough of the reader, repository lessons, cross-PR comparisons, and f
 
 ## Download the desktop app
 
-On macOS, open the universal disk image and drag **Local Reviewer** to **Applications**. On Windows x64, run the installer. Install Git and GitHub CLI and sign in with `gh auth login` to fetch pull requests. The macOS build uses an ad-hoc signature and has no Apple notarization. The Windows installer has no publisher signature. [GitHub releases](https://github.com/parveshh/pr-harness/releases)
+On a Mac with Apple silicon, open the arm64 disk image and drag **Local Reviewer** to **Applications**. On Windows x64, run the installer. Install Git and GitHub CLI and sign in with `gh auth login` to fetch pull requests. The macOS build uses an ad-hoc signature and has no Apple notarization. The Windows installer has no publisher signature. [GitHub releases](https://github.com/parveshh/pr-harness/releases)
 
 ## Run locally
 

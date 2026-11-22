@@ -77,6 +77,32 @@ await test('upgrade built-in prompts, keep custom prompts, and turn the app defa
   });
 });
 
+await test('version 14 saved built-in prompts upgrade while custom instructions keep their scope', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'reviewer-prompt-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'workspace.sqlite');
+  const url = 'https://github.com/org/repo/pull/1';
+  const old = openStore(path);
+  old.assistant.savePrompt(url, 'default', 'Check compatibility.');
+  old.assistant.savePrompt(
+    url,
+    'repository',
+    'Answer the reviewer’s question directly. When asked for a file overview, describe what a newly added file introduces and how it fits into the PR, or explain how an existing file’s behaviour changed. Cite the file and lines for each material claim. For a possible defect, describe the triggering conditions and the effect on the caller. If the answer depends on missing evidence, name what you would inspect. Treat the author’s stated intent as a claim to check. Keep routine changes brief.',
+  );
+  old.assistant.savePrompt(url, 'review', 'Trace retries.');
+  old.close();
+  const legacy = new DatabaseSync(path);
+  legacy.exec('PRAGMA user_version=14');
+  legacy.close();
+
+  const upgraded = openStore(path);
+  t.after(() => upgraded.close());
+  const promptFor = (pr: string) => upgraded.assistant.preferences(pr, 'codex').settings.prompt;
+  assert.equal(promptFor(url), 'Trace retries.');
+  assert.equal(promptFor(url + '2'), defaultPrompt);
+  assert.equal(promptFor('https://github.com/org/other/pull/1'), 'Check compatibility.');
+});
+
 await test('an upgrade without a saved app default leaves the harness choice to the first installed agent', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'reviewer-selection-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -134,10 +160,10 @@ await test('opening a newer schema preserves its version and contents', (t) => {
   const db = new DatabaseSync(path);
   t.after(() => db.close());
   db.exec(
-    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=15",
+    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=16",
   );
   assert.throws(() => openStore(path), /newer Local Reviewer/);
-  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 15);
+  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 16);
   assert.equal(db.prepare('SELECT value FROM future').get()?.value, 'preserve');
 });
 
