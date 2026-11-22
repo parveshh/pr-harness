@@ -2,6 +2,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import {
   defaultPrompt,
+  defaultSummaryPrompt,
+  type PromptPurpose,
   repoOf,
   reviewPrompt,
   selection,
@@ -70,8 +72,21 @@ export function assistantStore(db: DatabaseSync) {
       selection.safeParse(row).data ?? { agent: first, model: '', provider: 'default' as const }
     );
   }
-  const key = (url: string, scope: Scope) =>
-    scope === 'review' ? url : scope === 'repository' ? repoOf(url) : 'default';
+  const key = (url: string, scope: Scope, purpose: PromptPurpose) =>
+    (purpose === 'summary' ? 'summary:' : '') +
+    (scope === 'review' ? url : scope === 'repository' ? repoOf(url) : 'default');
+  function preferences(url: string, purpose: PromptPurpose) {
+    for (const scope of ['review', 'repository', 'default'] as const) {
+      const row = db
+        .prepare('SELECT settings FROM agent_preferences WHERE scope=?')
+        .get(key(url, scope, purpose));
+      if (row) return { scope, ...scopedPrompt.parse(JSON.parse(String(row.settings))) };
+    }
+    return {
+      scope: 'default' as const,
+      prompt: purpose === 'summary' ? defaultSummaryPrompt : defaultPrompt,
+    };
+  }
   return {
     repositories,
     add(name: string) {
@@ -126,27 +141,20 @@ export function assistantStore(db: DatabaseSync) {
       );
     },
     preferences(url: string, first: AgentId) {
-      const agent = chosen(first);
-      for (const scope of ['review', 'repository', 'default'] as const) {
-        const row = db
-          .prepare('SELECT settings FROM agent_preferences WHERE scope=?')
-          .get(key(url, scope));
-        if (row)
-          return {
-            scope,
-            settings: { ...agent, ...scopedPrompt.parse(JSON.parse(String(row.settings))) },
-          };
-      }
-      return { scope: 'default' as const, settings: { ...agent, prompt: defaultPrompt } };
+      const { scope, prompt } = preferences(url, 'review');
+      return { scope, settings: { ...chosen(first), prompt } };
     },
-    savePrompt(url: string, scope: Scope, prompt: string) {
+    summaryPreferences(url: string) {
+      return preferences(url, 'summary');
+    },
+    savePrompt(url: string, scope: Scope, prompt: string, purpose: PromptPurpose = 'review') {
       db.prepare('INSERT OR REPLACE INTO agent_preferences VALUES(?,?)').run(
-        key(url, scope),
+        key(url, scope, purpose),
         JSON.stringify({ prompt }),
       );
     },
-    clearPrompt(url: string, scope: Scope) {
-      db.prepare('DELETE FROM agent_preferences WHERE scope=?').run(key(url, scope));
+    clearPrompt(url: string, scope: Scope, purpose: PromptPurpose = 'review') {
+      db.prepare('DELETE FROM agent_preferences WHERE scope=?').run(key(url, scope, purpose));
     },
     executable(agent: AgentId) {
       const value = db.prepare('SELECT path FROM agent_paths WHERE agent=?').get(agent)?.path;

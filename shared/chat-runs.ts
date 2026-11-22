@@ -6,7 +6,7 @@ import {
   type Turn,
 } from './assistant.js';
 
-export type RunKind = 'question' | 'summary';
+export type RunKind = 'question' | 'summary' | 'review';
 export type ActiveRun = {
   run: string;
   kind: RunKind;
@@ -107,7 +107,7 @@ export function createChatRuns(bridge: Bridge, now: () => number = Date.now) {
         try {
           await options.before?.();
           if (cancelled.has(run)) throw new Error('Review cancelled.');
-          const turn = await bridge.ask(request);
+          const turn = await bridge.ask({ ...request, kind });
           settle(url, run, (chat) => ({
             ...chat,
             error: '',

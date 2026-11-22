@@ -2669,3 +2669,34 @@ body,
   border: 1px solid var(--line);
   color: var(--ink);
 }
+
+.review-findings {
+  display: grid;
+  gap: 10px;
+  overflow-wrap: anywhere;
+}
+.review-findings article {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.review-findings h3,
+.review-findings h4,
+.review-findings p {
+  margin: 0;
+}
+.review-findings summary {
+  cursor: pointer;
+}
+.review-findings pre {
+  overflow: auto;
+  max-height: 12rem;
+}
+.review-findings label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}

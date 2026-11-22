@@ -1,3 +1,4 @@
+import { finding, type AssessFinding } from './findings.js';
 import { z } from 'zod';
 import { pullRequestUrl } from './reviews.js';
 
@@ -10,6 +11,11 @@ Check where the behaviour can break. Choose cases that follow from this change. 
 Read the tests as a caller would. Identify the setup, the action, and the outcome the assertions actually verify. For a bug fix, ask whether that assertion would have caught the old behaviour. If an important path is uncovered, describe one specific case and the outcome it should assert. Distinguish reading a test from observing it pass.
 
 Report each distinct finding once, highest impact first. Give it a short title naming the failure. Explain who or what triggers it, which changed line causes it, and the effect on the caller or user. Cite the relevant lines using the supplied evidence IDs. Suggest a focused correction or verification step when it helps. If evidence is incomplete, identify the missing caller, source, or test and explain which conclusion depends on it. If you find no actionable defect, say so plainly and mention any material gap in coverage. Keep routine changes brief.`;
+export const defaultSummaryPrompt = `Help a reviewer understand this pull request before reading it. Start with its purpose and the observable behaviour before and after the change. Group related changes by behaviour, name the entry points and files that explain them, and give a short reading order for the most consequential changes. Describe what the tests cover and identify any material gaps in the available evidence. Cite the pinned evidence for factual claims and distinguish the author’s stated intent from what the diff shows. Keep routine changes brief.`;
+export const promptPurpose = z.enum(['review', 'summary']);
+export type PromptPurpose = z.infer<typeof promptPurpose>;
+export const prReviewQuestion =
+  'Review this whole pull request for actionable defects. Trace affected callers and tests, report the impact of each finding, and propose a concise inline comment suitable for the author. State any material gaps in coverage.';
 export const repoName = z
   .string()
   .trim()
@@ -51,7 +57,12 @@ export const agentInfo = z.object({
   models: z.array(z.string()),
 });
 export const scope = z.enum(['default', 'repository', 'review']);
-export const config = z.object({ agents: z.array(agentInfo), settings: prefs, scope });
+export const config = z.object({
+  agents: z.array(agentInfo),
+  settings: prefs,
+  scope,
+  summary: z.object({ scope, prompt: reviewPrompt }),
+});
 export const agentCatalog = z.object({ agents: z.array(agentInfo), selection });
 export const agentNames: Record<AgentId, string> = {
   codex: 'Codex CLI',
@@ -88,6 +99,7 @@ export const citedSourceKey = z.object({
 export type CitedSourceKey = z.infer<typeof citedSourceKey>;
 export type SourceCitation = z.infer<typeof sourceCitation>;
 export const chatRequest = z.object({
+  kind: z.enum(['question', 'summary', 'review']).optional(),
   contextMode: contextMode.optional(),
   run: z.uuid(),
   url: pullRequestUrl,
@@ -99,6 +111,7 @@ export const chatRequest = z.object({
   question: z.string().trim().min(1).max(8000),
 });
 export const turn = z.object({
+  findings: finding.array().optional(),
   contextMode: contextMode.optional(),
   run: z.uuid(),
   revision: z.string(),
@@ -153,8 +166,9 @@ export interface AssistantBridge {
   agentSelection(): Promise<AgentCatalog>;
   saveSelection(value: Selection): Promise<AgentCatalog>;
   agentConfig(url: string): Promise<Config>;
-  savePrompt(url: string, scope: Scope, prompt: string): Promise<Config>;
-  clearPrompt(url: string, target: Scope): Promise<Config>;
+  savePrompt(url: string, scope: Scope, prompt: string, purpose?: PromptPurpose): Promise<Config>;
+  clearPrompt(url: string, target: Scope, purpose?: PromptPurpose): Promise<Config>;
+  assessFinding(value: AssessFinding): Promise<Turn>;
   chooseExecutable(agent: AgentId): Promise<boolean>;
   history(url: string): Promise<Turn[]>;
   ask(request: ChatRequest): Promise<Turn>;

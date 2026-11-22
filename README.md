@@ -30,9 +30,11 @@ The changed-file tree groups files by folder. Filter by name or path. Collapse t
 
 Choose the harness and model from the picker in the Review chat header. It supports Codex CLI, Claude Code, Cursor Agent (`cursor-agent` or `agent`), Antigravity CLI (`agy`), and GitHub Copilot CLI (`copilot`). Install and sign in to the CLI you want to use. Your choice applies to every PR and survives a restart. Leave the model blank to use the agent default. Codex can also use a local Ollama or LM Studio provider. If discovery misses an installation, use **Choose executable** in the same picker.
 
-In **Review chat**, the sliders button in the heading opens **Review instructions**, where you edit the built-in prompt and save it for the app, repository, or PR. A PR prompt takes precedence over its repository and app defaults. **Use inherited instructions** removes the current override.
+In **Review chat**, the sliders button in the heading opens **Review instructions**, where you choose separate prompts for **PR summary** and **Code review and questions**. Edit either prompt and save it for the app, repository, or PR. A PR prompt takes precedence over its repository and app defaults. **Use inherited instructions** removes the current override.
 
 Choose **Summarise PR** for an overview of the whole pull request: its purpose, the main behaviour changes by area, the riskiest changes to read first, and gaps in the tests. It always uses Full PR context, described below, and the answer lists changed files the agent did not inspect.
+
+Choose **Review PR** in chat or on the PR’s sidebar row to review the pinned revision. Each finding includes its priority and proposed comment. Open its line or range to inspect the code, then mark it **Valid** or **Dismissed**. **Add draft comments** copies validated, anchored findings into the local review. You can edit the drafts and submit them through **Finish review**. Decisions survive a restart. After opening a new revision, run the review again to draft against the updated lines.
 
 Each PR has its own chat: its conversation, the question you are typing, and any answer in progress. An answer keeps running when you open another PR or return to **Workspace**, and its PR row in the sidebar shows a turning ring until it finishes. Reopen the PR to follow or cancel it. One answer runs per PR, and up to three PRs can have an answer running at once. While an answer runs, chat shows what was asked, how long it has taken, and the agent's latest text, and scrolls to keep it in view unless you have scrolled up.
 

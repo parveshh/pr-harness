@@ -1042,6 +1042,21 @@ try {
       await region.waitFor();
       await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
       await chat.getByLabel('Context', { exact: true }).selectOption('focused');
+      await chat.getByRole('button', { name: 'Review instructions', exact: true }).click();
+      const promptDialog = page.getByRole('dialog', { name: 'Review instructions' });
+      const existingReviewPrompt = await promptDialog.getByLabel(/^Review prompt/).inputValue();
+      await promptDialog.getByLabel(/^Instructions for/).selectOption('summary');
+      const customSummary = 'Summarise the behaviour and highlight the changed tests.';
+      await promptDialog.getByLabel(/^Summary prompt/).fill(customSummary);
+      await promptDialog.getByLabel(/^Save instructions for/).selectOption('review');
+      await promptDialog.getByRole('button', { name: 'Save instructions', exact: true }).click();
+      await promptDialog.getByText('Instructions saved.').waitFor();
+      await promptDialog.getByLabel(/^Instructions for/).selectOption('review');
+      assert.equal(
+        await promptDialog.getByLabel(/^Review prompt/).inputValue(),
+        existingReviewPrompt,
+      );
+      await promptDialog.getByRole('button', { name: 'Close', exact: true }).click();
       await chat.getByLabel('Ask about the diff').fill('Half-typed question');
       await chat.getByRole('button', { name: 'Summarise PR', exact: true }).click();
       const summary = chat
@@ -1054,6 +1069,11 @@ try {
         .waitFor();
       assert.equal(await chat.getByLabel('Context', { exact: true }).inputValue(), 'focused');
       assert.equal(await chat.getByLabel('Ask about the diff').inputValue(), 'Half-typed question');
+      const summaryInstructions = await page.evaluate(async () => {
+        const url = await globalThis.reviewer.activeReview();
+        return (await globalThis.reviewer.history(url)).at(-1)?.settings.prompt;
+      });
+      assert.equal(summaryInstructions, customSummary);
       // The same summary and an approval can be started from the PR's row in the sidebar.
       const trackedRow = page
         .getByRole('complementary', { name: 'Repository sidebar' })
@@ -1531,6 +1551,24 @@ try {
       await page.getByRole('button', { name: 'Open update' }).click();
       await page.getByText('Base changed', { exact: true }).waitFor();
       await delta.getByText('+retargeted guard', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Review pull request #12', exact: true }).click();
+      const findings = page.getByRole('region', { name: 'Review findings' });
+      await findings.getByText('Retry loses its update', { exact: true }).waitFor();
+      const messageOrder = await page.locator('.exchange .chat-question').allTextContents();
+      const rejected = findings.getByLabel('Validation for Unconfirmed caller');
+      await rejected.selectOption('dismissed');
+      await page.waitForFunction(
+        () =>
+          globalThis.document.querySelector('[aria-label="Validation for Unconfirmed caller"]')
+            ?.value === 'dismissed',
+      );
+      await findings.getByLabel('Validation for Retry loses its update').selectOption('valid');
+      await findings.getByRole('button', { name: 'Add 1 draft comment' }).click();
+      await findings.getByText('Added to drafts').waitFor();
+      assert.deepEqual(
+        await page.locator('.exchange .chat-question').allTextContents(),
+        messageOrder,
+      );
       const date = new Date().toISOString();
       await writeFile(
         repliesFile,

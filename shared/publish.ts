@@ -1,3 +1,5 @@
+import type { Turn } from './assistant.js';
+import type { DraftFindings } from './findings.js';
 import { z } from 'zod';
 import { lineRange } from './assistant.js';
 import { pullRequestUrl } from './reviews.js';
@@ -45,6 +47,7 @@ export type Edit = z.infer<typeof editRequest>;
 export type PublishKey = z.infer<typeof publishKey>;
 export type Pending = z.infer<typeof pendingReview>;
 export interface PublishBridge {
+  draftFindings(request: DraftFindings): Promise<{ turn: Turn; bundle: Bundle }>;
   reviewDrafts(url: string): Promise<Bundle>;
   editDrafts(url: string, version: number, edit: Edit): Promise<Bundle>;
   reviewIdentity(): Promise<string>;

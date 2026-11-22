@@ -95,6 +95,30 @@ if (args.includes('--version')) {
         gaps: [],
       }),
     );
+  } else if (question?.startsWith('Review this whole pull request')) {
+    const rows = selected.addedFile?.lines ?? evidence;
+    const end = rows.find((row) => row.side === 'new') ?? rows[0];
+    await respond(
+      JSON.stringify({
+        coverage: 'Checked the changed diff lines.',
+        findings: [
+          {
+            title: 'Retry loses its update',
+            priority: 'high',
+            comment: 'Persist the result before returning so a retry can recover it.',
+            startId: end.id,
+            endId: end.id,
+          },
+          {
+            title: 'Unconfirmed caller',
+            priority: 'low',
+            comment: 'Verify the caller contract.',
+            startId: null,
+            endId: null,
+          },
+        ],
+      }),
+    );
   } else if (lookups?.length === 0) {
     const query = selected.path === 'src/reader.ts' ? 'Review workspace' : 'first change';
     const prLookup = [{ op: 'search_diff', query }, { op: 'files' }];

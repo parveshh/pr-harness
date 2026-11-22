@@ -333,6 +333,7 @@ export function Workspace({
           onToggle={() => showRepositories(collapsed || repliesOpen)}
           activeUrl={activeUrl}
           onOpen={openMonitored}
+          onReview={(pr) => openMonitored(pr, 'review')}
           onSummarise={(pr) => openMonitored(pr, 'summarise')}
           onApprove={(pr) => openMonitored(pr, 'approve')}
           refresh={reviewEpoch}

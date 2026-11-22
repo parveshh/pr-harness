@@ -18,6 +18,7 @@ import {
   Settings,
   Sparkles,
   CircleCheck,
+  ListChecks,
   LoaderCircle,
 } from 'lucide-react';
 import { useWorkingPrs } from './chatRuns.js';
@@ -26,6 +27,7 @@ import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 export function RepositorySidebar({
   onOpen,
   onSummarise,
+  onReview,
   onApprove,
   refresh,
   onHome,
@@ -41,6 +43,7 @@ export function RepositorySidebar({
   unread,
 }: {
   onOpen: (url: string) => void;
+  onReview: (url: string) => void;
   onSummarise: (url: string) => void;
   onApprove: (url: string) => void;
   // Changes when the PR list should be read from GitHub again, such as after a review.
@@ -252,7 +255,9 @@ export function RepositorySidebar({
                       const working = run
                         ? run === 'summary'
                           ? 'Summarising'
-                          : 'Answering a question in'
+                          : run === 'review'
+                            ? 'Reviewing'
+                            : 'Answering a question in'
                         : null;
                       return (
                         <div
@@ -285,13 +290,22 @@ export function RepositorySidebar({
                                 <LoaderCircle className="spin" size={14} aria-hidden />
                               </span>
                             ) : (
-                              <button
-                                aria-label={'Summarise pull request #' + p.number}
-                                title="Summarise this PR"
-                                onClick={() => onSummarise(pr)}
-                              >
-                                <Sparkles size={14} />
-                              </button>
+                              <>
+                                <button
+                                  aria-label={'Review pull request #' + p.number}
+                                  title="Review this PR for findings"
+                                  onClick={() => onReview(pr)}
+                                >
+                                  <ListChecks size={14} />
+                                </button>
+                                <button
+                                  aria-label={'Summarise pull request #' + p.number}
+                                  title="Summarise this PR"
+                                  onClick={() => onSummarise(pr)}
+                                >
+                                  <Sparkles size={14} />
+                                </button>
+                              </>
                             )}
                             <button
                               aria-label={

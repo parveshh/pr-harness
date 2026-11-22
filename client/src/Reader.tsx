@@ -58,7 +58,7 @@ function message(error: unknown) {
 }
 
 // An action chosen on a PR's sidebar row, carried out once that PR is open.
-export type PrCommand = { id: number; url: string; kind: 'summarise' | 'approve' };
+export type PrCommand = { id: number; url: string; kind: 'summarise' | 'review' | 'approve' };
 
 export function Reader({
   fileToolSlot,
@@ -183,12 +183,14 @@ export function Reader({
   }
   // Each sidebar command becomes a one-shot request for the pane that carries it out.
   const [seenCommand, setSeenCommand] = useState<number | null>(null);
-  const [summaryRequest, setSummaryRequest] = useState<number | null>(null);
+  const [prRequest, setPrRequest] = useState<{ id: number; kind: 'review' | 'summary' } | null>(
+    null,
+  );
   const [approveRequest, setApproveRequest] = useState<number | null>(null);
   if (command && command.id !== seenCommand) {
     setSeenCommand(command.id);
-    if (command.kind === 'summarise') {
-      setSummaryRequest(command.id);
+    if (command.kind !== 'approve') {
+      setPrRequest({ id: command.id, kind: command.kind === 'review' ? 'review' : 'summary' });
       setPaneName('chat');
     } else setApproveRequest(command.id);
   }
@@ -208,7 +210,7 @@ export function Reader({
   const [questionPanel, setQuestionPanel] = useState<QuestionPanel | null>(null);
   const questions = view?.questions ?? [];
   const inspectQuestion = (id: string) => setQuestionPanel({ kind: 'inspect', id });
-  const since = !!view?.since && summaryRequest === null;
+  const since = !!view?.since && prRequest === null;
   const queue = useMemo(
     () => (since && view?.comparison ? revisionQueue(view, view.comparison) : null),
     [view, since],
@@ -354,6 +356,14 @@ export function Reader({
   );
   const files = view?.files ?? [];
   const selected = files.find((file) => file.path === view?.selected);
+  if (prRequest && !selected && !loading) {
+    setPrRequest(null);
+    setSaveError(
+      view
+        ? 'There are no changed files to review on this revision.'
+        : 'Load the pull request before starting a review.',
+    );
+  }
   const threadsByLine = useMemo(
     () => discussionsByLine(discussions.data, view?.meta, selected?.path),
     [discussions.data, view?.meta, selected?.path],
@@ -966,10 +976,14 @@ export function Reader({
             >
               <ReviewChat
                 agents={agents}
-                summaryRequest={summaryRequest}
-                onSummaryStarted={() => {
+                prRequest={prRequest}
+                bundle={bundle}
+                onDrafts={(next) =>
+                  setBundle((prev) => (prev && prev.version > next.version ? prev : next))
+                }
+                onPrStarted={() => {
                   if (view.since) showComparison(false);
-                  setSummaryRequest(null);
+                  setPrRequest(null);
                   chatPanel.current?.expand();
                 }}
                 url={url}

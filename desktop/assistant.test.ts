@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { defaultPrompt, type Citation, type Selection } from '../shared/assistant.js';
+import {
+  defaultPrompt,
+  defaultSummaryPrompt,
+  type Citation,
+  type Selection,
+} from '../shared/assistant.js';
 import type { ReaderView } from '../shared/reader.js';
 import { buildAgentContext, citedAnswer } from './evidence.js';
 import { monitor } from './monitor.js';
@@ -31,6 +36,14 @@ await test('one harness and model apply to every PR while prompts fall back thro
     scope: 'default',
     settings: { ...chosen, prompt: 'app' },
   });
+  assert.equal(data.summaryPreferences(url).prompt, defaultSummaryPrompt);
+  data.savePrompt(url, 'default', 'Summarise briefly.', 'summary');
+  data.savePrompt(url, 'repository', 'Summarise by caller.', 'summary');
+  assert.equal(data.summaryPreferences(url).prompt, 'Summarise by caller.');
+  assert.equal(data.summaryPreferences(other).prompt, 'Summarise briefly.');
+  data.clearPrompt(url, 'repository', 'summary');
+  assert.equal(data.summaryPreferences(url).prompt, 'Summarise briefly.');
+  assert.equal(data.preferences(url, 'claude').settings.prompt, 'review');
   data.clearPrompt(url, 'review');
   assert.equal(data.preferences(url, 'claude').scope, 'repository');
   data.saveSelection({ agent: 'claude', model: 'b', provider: 'default' });

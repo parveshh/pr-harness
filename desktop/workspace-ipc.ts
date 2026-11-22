@@ -1,3 +1,6 @@
+import { findingsInstructions, readFindings } from './pr-findings.js';
+import { assessFinding, draftFindings } from '../shared/findings.js';
+import { promptPurpose } from '../shared/assistant.js';
 import {
   attemptKey,
   failureKey,
@@ -85,7 +88,11 @@ export function registerWorkspace(
   }
   async function config(url: string) {
     const installed = await agents();
-    return { agents: installed, ...data.preferences(url, installed[0]?.id ?? 'codex') };
+    return {
+      agents: installed,
+      summary: data.summaryPreferences(url),
+      ...data.preferences(url, installed[0]?.id ?? 'codex'),
+    };
   }
   const runs = chatRuns();
   const handle = (name: string, fn: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown) => {
@@ -507,14 +514,19 @@ export function registerWorkspace(
     data.saveSelection(selection.parse(value));
     return chosen();
   });
-  handle('agent:save-prompt', async (_, value, target, text) => {
+  handle('agent:save-prompt', async (_, value, target, text, purpose) => {
     const url = pullRequestUrl.parse(value);
-    data.savePrompt(url, scope.parse(target), reviewPrompt.parse(text));
+    data.savePrompt(
+      url,
+      scope.parse(target),
+      reviewPrompt.parse(text),
+      promptPurpose.parse(purpose),
+    );
     return config(url);
   });
-  handle('agent:clear-prompt', async (_, value, target) => {
+  handle('agent:clear-prompt', async (_, value, target, purpose) => {
     const url = pullRequestUrl.parse(value);
-    data.clearPrompt(url, scope.parse(target));
+    data.clearPrompt(url, scope.parse(target), promptPurpose.parse(purpose));
     return config(url);
   });
   handle('agent:choose', async (_, value) => {
@@ -551,6 +563,8 @@ export function registerWorkspace(
     const snapshot = store.reader.read(url);
     return data.history(url).map((msg) => annotated(url, msg, snapshot));
   });
+  handle('chat:assess-finding', (_, value) => store.findings.assess(assessFinding.parse(value)));
+  handle('chat:draft-findings', (_, value) => store.findings.draft(draftFindings.parse(value)));
   handle('chat:cancel', (_, id) => runs.cancel(z.uuid().parse(id)));
   handle('chat:ask', async (event, value) => {
     const req = chatRequest.parse(value);
@@ -559,19 +573,25 @@ export function registerWorkspace(
       throw new Error('Reopen this revision before asking a question.');
     const signal = runs.begin(req.url, req.run);
     try {
-      const { agents, settings } = await config(req.url);
+      const configForRun = await config(req.url);
+      const { agents } = configForRun;
+      const settings =
+        req.kind === 'summary'
+          ? { ...configForRun.settings, prompt: configForRun.summary.prompt }
+          : configForRun.settings;
       const agent = agents.find((a) => a.id === settings.agent);
       if (!agent) throw new Error('Select an installed agent first.');
       signal.throwIfAborted();
       const patch = (path: string) =>
         store.reader.patch({ url: req.url, path, revision: req.revision });
       const { sources, context } = buildAgentContext(view, req, data.history(req.url), patch);
-      const full = req.contextMode === 'full-pr';
+      const full = req.kind === 'review' || req.kind === 'summary' || req.contextMode === 'full-pr';
       const sourceLines: SourceCitation[] = [];
       const instructions = [
         settings.prompt,
         citationInstruction,
         ...(full ? [lookupInstructions] : []),
+        ...(req.kind === 'review' ? [findingsInstructions] : []),
       ].join('\n\n');
       const progress = (text: string) => {
         if (!event.sender.isDestroyed()) event.sender.send('chat:activity', { run: req.run, text });
@@ -610,10 +630,12 @@ export function registerWorkspace(
           )
         : await ask(JSON.stringify(context));
       signal.throwIfAborted();
-      const answer = citedAnswer(output.answer, sources, sourceLines);
+      const review = req.kind === 'review' ? readFindings(output.answer, sources, patch) : null;
+      const answer = citedAnswer(review?.coverage ?? output.answer, sources, sourceLines);
       const result = {
         ...answer,
-        contextMode: req.contextMode ?? 'focused',
+        ...(review && { findings: review.findings }),
+        contextMode: full ? ('full-pr' as const) : ('focused' as const),
         run: req.run,
         revision: req.revision,
         path: req.path,

@@ -148,6 +148,18 @@ export function buildAgentContext(
       .map((t) => ({
         question: t.question,
         answer: replaceCitations(t.answer, () => '').slice(0, 3500),
+        ...(t.findings && {
+          findings: t.findings
+            .map((f) => ({
+              title: f.title,
+              comment: f.comment,
+              verdict: f.verdict,
+              path: f.location?.path,
+              line: f.location?.line,
+            }))
+            .slice(0, 8)
+            .map((f) => ({ ...f, comment: f.comment.slice(0, 350) })),
+        }),
       })),
     evidence: sources
       .filter((s) => !newFile || s.path !== selected.path)

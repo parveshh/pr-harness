@@ -1,3 +1,4 @@
+import { findingStore } from './finding-store.js';
 import { lessonMigration, lessonStore } from './lessons.js';
 import type { Bundle } from '../shared/publish.js';
 import { typography } from '../shared/workspace.js';
@@ -64,6 +65,12 @@ export function openStore(filename: string) {
   const drafts = draftStore(db);
   const reader = readerStore(db);
   return {
+    findings: findingStore(
+      db,
+      drafts,
+      (url) => reader.read(url)?.revision,
+      (url, revision, path) => reader.patch({ url, revision, path }),
+    ),
     replies: replyStore(db),
     lessons: lessonStore(db),
     typography: () =>

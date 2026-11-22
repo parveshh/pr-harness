@@ -106,14 +106,20 @@ const reviewer: ReviewerBridge = {
   },
   removeRepository: async (name) =>
     repository.array().parse(await ipcRenderer.invoke('repos:remove', name)),
+  assessFinding: async (value) =>
+    turn.parse(await ipcRenderer.invoke('chat:assess-finding', value)),
+  draftFindings: async (value) =>
+    z
+      .object({ turn, bundle: reviewBundle })
+      .parse(await ipcRenderer.invoke('chat:draft-findings', value)),
   agentConfig: async (url) => config.parse(await ipcRenderer.invoke('agent:config', url)),
   agentSelection: async () => agentCatalog.parse(await ipcRenderer.invoke('agent:selection')),
   saveSelection: async (value) =>
     agentCatalog.parse(await ipcRenderer.invoke('agent:select', value)),
-  savePrompt: async (url, scope, prompt) =>
-    config.parse(await ipcRenderer.invoke('agent:save-prompt', url, scope, prompt)),
-  clearPrompt: async (url, target) =>
-    config.parse(await ipcRenderer.invoke('agent:clear-prompt', url, target)),
+  savePrompt: async (url, scope, prompt, purpose = 'review') =>
+    config.parse(await ipcRenderer.invoke('agent:save-prompt', url, scope, prompt, purpose)),
+  clearPrompt: async (url, target, purpose = 'review') =>
+    config.parse(await ipcRenderer.invoke('agent:clear-prompt', url, target, purpose)),
   chooseExecutable: async (agent) =>
     z.boolean().parse(await ipcRenderer.invoke('agent:choose', agent)),
   history: async (url) => turn.array().parse(await ipcRenderer.invoke('chat:history', url)),

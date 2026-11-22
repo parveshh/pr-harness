@@ -1,3 +1,6 @@
+import type { Finding } from '../../shared/findings.js';
+import { ReviewFindings } from './ReviewFindings.js';
+import type { Bundle, CommentAnchor } from '../../shared/publish.js';
 import type { ReactNode, RefObject } from 'react';
 import { ChatMarkdown } from './components/ChatMarkdown.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
@@ -7,6 +10,9 @@ import type { ActiveRun, RunKind } from '../../shared/chat-runs.js';
 import {
   agentNames,
   defaultPrompt,
+  defaultSummaryPrompt,
+  prReviewQuestion,
+  type PromptPurpose,
   readableError,
   reviewPrompt,
   scope as scopeSchema,
@@ -34,8 +40,10 @@ import type { ReaderView, ReaderFile } from '../../shared/reader.js';
 export function ReviewChat({
   agents,
   agentPicker,
-  summaryRequest,
-  onSummaryStarted,
+  prRequest,
+  bundle,
+  onDrafts,
+  onPrStarted,
   url,
   view,
   file,
@@ -47,27 +55,41 @@ export function ReviewChat({
 }: {
   agents: AgentCatalog | null;
   agentPicker: ReactNode;
-  // Set when a summary was asked for outside this pane, such as from the sidebar.
-  summaryRequest: number | null;
-  onSummaryStarted: () => void;
+  // A one-shot PR action requested from the sidebar.
+  prRequest: { id: number; kind: 'summary' | 'review' } | null;
+  bundle: Bundle | null;
+  onDrafts: (bundle: Bundle) => void;
+  onPrStarted: () => void;
   url: string;
   view: ReaderView;
   file: ReaderFile;
   selection: ChatRequest['selection'];
-  jump: (cite: Citation) => void;
+  jump: (cite: CommentAnchor) => void;
   openSource: (run: string, cite: SourceCitation) => void;
   collapse: () => void;
   composerRef: RefObject<HTMLTextAreaElement | null>;
 }) {
   // The harness and model come from the app-wide choice. This pane owns the scoped prompt.
   const [config, setConfig] = useState<Config | null>(null),
-    [prompt, setPrompt] = useState<string | null>(null),
-    [scope, setScope] = useState<Scope>('default');
+    [reviewText, setReviewText] = useState<string | null>(null),
+    [summaryText, setSummaryText] = useState<string | null>(null),
+    [reviewScope, setReviewScope] = useState<Scope>('default'),
+    [summaryScope, setSummaryScope] = useState<Scope>('default'),
+    [purpose, setPurpose] = useState<PromptPurpose>('review');
+  const forSummary = purpose === 'summary';
+  const [prompt, setPrompt] = forSummary
+    ? ([summaryText, setSummaryText] as const)
+    : ([reviewText, setReviewText] as const);
+  const [scope, setScope] = forSummary
+    ? ([summaryScope, setSummaryScope] as const)
+    : ([reviewScope, setReviewScope] as const);
+  const effectiveScope = forSummary ? config?.summary.scope : config?.scope;
   // Runs, answers and the composer draft belong to the PR and live in the chat store, so
   // they survive opening another PR. This pane keeps only what it shows while mounted.
   const chat = usePrChat(url);
   const running = !!chat.active,
     question = chat.draft;
+  const [assessments, setAssessments] = useState<ReadonlyMap<string, Finding[]>>(new Map());
   const [history, setHistory] = useState<Turn[]>([]),
     [error, setError] = useState(''),
     [extra, setExtra] = useState(''),
@@ -81,10 +103,16 @@ export function ReviewChat({
     () => [...history, ...chat.completed.filter((m) => !history.some((h) => h.run === m.run))],
     [history, chat.completed],
   );
-  function apply(c: Config) {
+  function apply(c: Config, changed?: PromptPurpose) {
     setConfig(c);
-    setPrompt(c.settings.prompt);
-    setScope(c.scope);
+    if (changed !== 'summary') {
+      setReviewText(c.settings.prompt);
+      setReviewScope(c.scope);
+    }
+    if (changed !== 'review') {
+      setSummaryText(c.summary.prompt);
+      setSummaryScope(c.summary.scope);
+    }
   }
   useEffect(() => {
     alive.current = true;
@@ -125,19 +153,25 @@ export function ReviewChat({
     };
   }, [url, view.revision]);
   const agent = agents?.agents.find((a) => a.id === agents.selection.agent);
-  async function save() {
-    const text = reviewPrompt.safeParse(prompt);
+  async function save(target: PromptPurpose) {
+    const summary = target === 'summary';
+    const text = reviewPrompt.safeParse(summary ? summaryText : reviewText);
     if (!text.success) throw Error('Enter a review prompt of up to 16,000 characters.');
-    const c = await window.reviewer.savePrompt(url, scope, text.data);
+    const c = await window.reviewer.savePrompt(
+      url,
+      summary ? summaryScope : reviewScope,
+      text.data,
+      target,
+    );
     if (alive.current) {
-      apply(c);
+      apply(c, target);
       setNotice('Instructions saved.');
     }
     return c;
   }
   function configure() {
     setError('');
-    save().catch((e) => setError(readableError(e)));
+    save(purpose).catch((e) => setError(readableError(e)));
   }
   // `typed` marks a question from the composer, which is cleared once it is answered.
   function send(
@@ -148,7 +182,11 @@ export function ReviewChat({
   ) {
     if (running || prompt === null || !agent || !text.trim()) return;
     setError('');
-    const edited = !config || scope !== config.scope || prompt !== config.settings.prompt;
+    const target = kind === 'summary' ? 'summary' : 'review';
+    const edited =
+      kind === 'summary'
+        ? summaryScope !== config?.summary.scope || summaryText !== config?.summary.prompt
+        : reviewScope !== config?.scope || reviewText !== config?.settings.prompt;
     chatRuns.start(
       {
         run: crypto.randomUUID(),
@@ -163,7 +201,7 @@ export function ReviewChat({
       },
       kind,
       // Edited instructions are saved first so the answer uses them.
-      { clearDraft: typed, ...(edited ? { before: save } : {}) },
+      { clearDraft: typed, ...(edited ? { before: () => save(target) } : {}) },
     );
   }
   // Follow the conversation while the reviewer is at its end. A new run always brings its
@@ -178,28 +216,34 @@ export function ReviewChat({
   useLayoutEffect(() => {
     if (following.current && log.current) log.current.scrollTop = log.current.scrollHeight;
   }, [activeRun, progress, messages.length]);
-  const canSummarise = !!agent && !running && prompt !== null;
-  // A summary asked for from the sidebar waits only while the harness list or the prompt is
+  const canRunPrAction = !!agent && !running && prompt !== null;
+  // A PR action requested from the sidebar waits only while the harness list or the prompt is
   // still loading. After that it either starts or says why not, so it never fires later.
-  const takeSummaryRequest = useEffectEvent(() => {
+  const takePrRequest = useEffectEvent(() => {
     if (!agents || (prompt === null && !configFailed)) return;
-    onSummaryStarted();
-    if (canSummarise) send(summaryQuestion, 'full-pr', false, 'summary');
+    onPrStarted();
+    if (canRunPrAction && prRequest)
+      send(
+        prRequest.kind === 'review' ? prReviewQuestion : summaryQuestion,
+        'full-pr',
+        false,
+        prRequest.kind,
+      );
     else
       setError(
         running
-          ? 'Another answer is running. Summarise the PR when it finishes.'
+          ? 'Another answer is running. Try again when it finishes.'
           : agent
-            ? 'Review instructions could not be loaded, so the summary did not start.'
-            : 'Choose an installed harness in the model picker, then summarise the PR.',
+            ? 'Review instructions could not be loaded, so this run could not start.'
+            : 'Choose an installed harness in the model picker, then try again.',
       );
   });
   useEffect(() => {
     // Starting a run is the external action here, and marking it as running or refused is
     // part of answering the request. The request is cleared in the same step.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (summaryRequest !== null) takeSummaryRequest();
-  }, [summaryRequest, agents, prompt, configFailed]);
+    if (prRequest !== null) takePrRequest();
+  }, [prRequest, agents, prompt, configFailed]);
   const canAsk =
     !!agent && !running && (contextMode === 'full-pr' || ['text', 'partial'].includes(file.kind));
   return (
@@ -233,6 +277,19 @@ export function ReviewChat({
                 >
                   <div className="chat-settings">
                     <label>
+                      Instructions for
+                      <select
+                        value={purpose}
+                        onChange={(e) => {
+                          setPurpose(e.target.value === 'summary' ? 'summary' : 'review');
+                          setNotice('');
+                        }}
+                      >
+                        <option value="review">Code review and questions</option>
+                        <option value="summary">PR summary</option>
+                      </select>
+                    </label>
+                    <label>
                       Save instructions for
                       <select
                         value={scope}
@@ -241,24 +298,24 @@ export function ReviewChat({
                           setNotice('');
                         }}
                       >
-                        <option value="default" disabled={config.scope !== 'default'}>
+                        <option value="default" disabled={effectiveScope !== 'default'}>
                           App default
                         </option>
-                        <option value="repository" disabled={config.scope === 'review'}>
+                        <option value="repository" disabled={effectiveScope === 'review'}>
                           This repository
                         </option>
                         <option value="review">This pull request</option>
                       </select>
                     </label>
-                    {config.scope !== 'default' && (
+                    {effectiveScope !== 'default' && (
                       <button
                         type="button"
                         className="quiet"
                         onClick={() => {
                           window.reviewer
-                            .clearPrompt(url, config.scope)
+                            .clearPrompt(url, effectiveScope ?? 'default', purpose)
                             .then((next) => {
-                              apply(next);
+                              apply(next, purpose);
                               setNotice('Using inherited instructions.');
                             })
                             .catch((e) => setError(readableError(e)));
@@ -268,7 +325,7 @@ export function ReviewChat({
                       </button>
                     )}
                     <label>
-                      Review prompt
+                      {forSummary ? 'Summary prompt' : 'Review prompt'}
                       <textarea
                         rows={14}
                         value={prompt}
@@ -282,7 +339,7 @@ export function ReviewChat({
                       type="button"
                       className="quiet"
                       onClick={() => {
-                        setPrompt(defaultPrompt);
+                        setPrompt(forSummary ? defaultSummaryPrompt : defaultPrompt);
                         setNotice('');
                       }}
                     >
@@ -349,6 +406,21 @@ export function ReviewChat({
               jump={jump}
               openSource={openSource}
             />
+            {m.findings && (
+              <ReviewFindings
+                url={url}
+                turn={m}
+                current={m.revision === view.revision}
+                bundle={bundle}
+                jump={jump}
+                findings={assessments.get(m.run) ?? m.findings}
+                onUpdated={(next) => {
+                  const updated = next.findings;
+                  if (updated) setAssessments((prev) => new Map(prev).set(next.run, updated));
+                }}
+                onDrafts={onDrafts}
+              />
+            )}
           </div>
         ))}
         {chat.active && <RunProgress run={chat.active} />}
@@ -363,11 +435,19 @@ export function ReviewChat({
           <button
             type="button"
             className="summarise-pr"
-            disabled={!canSummarise}
+            disabled={!canRunPrAction}
             title="Uses Full PR context"
             onClick={() => send(summaryQuestion, 'full-pr', false, 'summary')}
           >
             Summarise PR
+          </button>
+          <button
+            type="button"
+            disabled={!canRunPrAction}
+            title="Review the full PR for actionable findings"
+            onClick={() => send(prReviewQuestion, 'full-pr', false, 'review')}
+          >
+            Review PR
           </button>
           <button
             type="button"
@@ -469,7 +549,11 @@ function RunProgress({ run }: { run: ActiveRun }) {
         <LoaderCircle className="spin" size={14} aria-hidden />
         {/* Only the label is announced. The clock and streamed text change too often. */}
         <span role="status">
-          {run.kind === 'summary' ? 'Summarising the pull request' : 'Working on an answer'}
+          {run.kind === 'summary'
+            ? 'Summarising the pull request'
+            : run.kind === 'review'
+              ? 'Reviewing the pull request'
+              : 'Working on an answer'}
           {run.contextMode === 'full-pr' && ' · Full PR'}
         </span>
         <span aria-hidden> · {seconds}s</span>
@@ -490,7 +574,7 @@ const Answer = memo(function Answer({
   url: string;
   turn: Turn;
   current: boolean;
-  jump: (cite: Citation) => void;
+  jump: (cite: CommentAnchor) => void;
   openSource: (run: string, cite: SourceCitation) => void;
 }) {
   const [archive, setArchive] = useState<Citation | null>(null);
