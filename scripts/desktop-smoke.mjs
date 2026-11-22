@@ -85,7 +85,7 @@ if (!live) {
   const pairBase = git('rev-parse', 'HEAD');
   const pairPulls = [];
   for (const [number, title, path, body] of [
-    [21, 'Rename event field', 'emit.ts', 'send({ customerId: account.id });'],
+    [21, 'Rename event field in @emit.ts', 'emit.ts', 'send({ customerId: account.id });'],
     [22, 'Consume emitted event', 'consume.ts', 'record(event.accountId);'],
     [23, 'Adjust margin', 'layout.css', 'main { margin: 1em; }'],
   ]) {
@@ -179,7 +179,7 @@ if (!live) {
       "if(process.argv.includes('user')) { if(fs.existsSync(switchedAccount)) setTimeout(()=>console.log(JSON.stringify({login:'second-reviewer'})),250); else console.log(JSON.stringify({login:'fixture-reviewer'})); }",
       "else if(process.argv.includes('POST')) { const payload=JSON.parse(fs.readFileSync(0,'utf8')); fs.appendFileSync(posted,JSON.stringify(payload)+'\\n'); process.exit(1); }",
       "else if(process.argv.some(a=>a.includes('/reviews?'))) { if(!fs.existsSync(posted)){console.log('[]');return;} const payload=JSON.parse(fs.readFileSync(posted,'utf8').trim()); console.log(JSON.stringify([{id:75,body:payload.body,commit_id:payload.commit_id,state:'COMMENTED',user:{login:'fixture-reviewer'}}])); }",
-      "else if(process.argv.some(a=>a.includes('/contributors?'))) console.log(JSON.stringify([{login:'octo'},{login:'other'}]));",
+      "else if(process.argv.some(a=>a.includes('/contributors?'))) console.log(JSON.stringify([{login:'octo'},{login:'other'},...Array.from({length:28},(_,i)=>({login:'contributor-'+(i+1)}))]));",
       // A second pull request is opened once the test asks for it.
       "else if(process.argv.some(a=>a.includes('/issues?'))) console.log(JSON.stringify([{number:12,title:'Tracked PR',user:{login:'octo'},pull_request:{}},...(fs.existsSync(" +
         JSON.stringify(join(directory, 'new-pr')) +
@@ -191,7 +191,7 @@ if (!live) {
     ].join('\n'),
     { mode: 0o755 },
   );
-  for (const id of ['codex', 'claude']) {
+  for (const id of ['codex', 'claude', 'agent', 'agy', 'copilot']) {
     await writeFile(join(directory, id), await readFile(resolve('fixtures/agents/mock-cli.mjs')), {
       mode: 0o755,
     });
@@ -226,11 +226,14 @@ async function resize(app, page, width, height) {
     mobile: false,
   });
 }
-// The harness and model are chosen once, in the title bar, for the whole app.
+// The harness and model are chosen once, in the Review chat header, for the whole app.
 async function chooseHarness(page, { agent, model }) {
   await page.getByRole('button', { name: /^Harness and model: / }).click();
   const form = page.getByRole('dialog', { name: 'Harness and model', exact: true });
   if (agent) await form.getByLabel('Harness', { exact: true }).selectOption(agent);
+  if (agent === 'cursor' || agent === 'antigravity') {
+    await form.locator('datalist option[value="fixture-model"]').waitFor({ state: 'attached' });
+  }
   await form.getByLabel('Model', { exact: true }).fill(model);
   await page.keyboard.press('Escape');
   await form.waitFor({ state: 'hidden' });
@@ -316,6 +319,12 @@ try {
         '#b8a8f5',
       );
       await capture(page, 'accent');
+      await settingsPane.getByText('Light', { exact: true }).click();
+      await page.waitForFunction(
+        () =>
+          globalThis.getComputedStyle(globalThis.document.documentElement).colorScheme === 'light',
+      );
+      await capture(page, 'light-settings');
       await settingsPane.getByText('Green', { exact: true }).click();
       await settingsPane.getByText('Default', { exact: true }).click();
       await settingsPane.getByRole('button', { name: 'Close' }).click();
@@ -360,6 +369,7 @@ try {
       await page.evaluate(() =>
         globalThis.localStorage.setItem('react-resizable-panels:review-layout', 'invalid'),
       );
+    assert.equal(await page.getByRole('button', { name: /^Harness and model/ }).count(), 0);
     await page.getByLabel('GitHub pull request URL').fill(url);
     await page.getByRole('button', { name: 'Save pull request' }).click();
     await page
@@ -432,14 +442,57 @@ try {
         .getByRole('dialog', { name: 'Add repository' })
         .getByRole('button', { name: 'Add repository' })
         .click();
-      const dialog = page.getByRole('dialog');
-      await dialog.getByRole('checkbox', { name: 'octo', exact: true }).check();
+      const dialog = page.getByRole('dialog', { name: 'example/project' });
+      await dialog.getByRole('button', { name: 'Select authors' }).press('Enter');
+      const picker = page.getByRole('dialog', { name: 'Select authors' });
+      const search = picker.getByRole('searchbox', { name: 'Search authors' });
+      await search.and(page.locator(':focus')).waitFor();
+      assert.ok((await picker.getByRole('checkbox').count()) >= 30);
+      assert.ok(
+        await picker.getByRole('group').evaluate((el) => el.scrollHeight > el.clientHeight),
+      );
+      await search.fill('@CONTRIBUTOR-28');
+      await picker.getByLabel('contributor-28', { exact: true }).check();
+      await search.fill('octo');
+      await picker.getByLabel('octo', { exact: true }).check();
+      await search.fill('extra-login');
+      await picker.getByRole('button', { name: 'Monitor @extra-login' }).click();
+      await picker.getByText('3 selected', { exact: true }).waitFor();
+      await search.fill('');
+      await capture(page, 'author-picker');
+      await picker.getByRole('button', { name: 'Apply selection' }).click();
+      await dialog.getByRole('button', { name: 'Select authors, 3 selected' }).click();
+      assert.ok(await picker.getByLabel('extra-login', { exact: true }).isChecked());
+      assert.ok(await picker.getByLabel('octo', { exact: true }).isChecked());
+      await picker.getByLabel('contributor-28', { exact: true }).uncheck();
+      await page.keyboard.press('Escape');
+      await dialog.getByRole('button', { name: 'Select authors, 3 selected' }).click();
+      assert.ok(await picker.getByLabel('contributor-28', { exact: true }).isChecked());
+      await picker.getByLabel('contributor-28', { exact: true }).uncheck();
+      await picker.getByLabel('extra-login', { exact: true }).uncheck();
+      await picker.getByRole('button', { name: 'Apply selection' }).click();
+      await dialog.getByRole('button', { name: 'Select authors, 1 selected' }).waitFor();
       await dialog.getByRole('button', { name: 'Close', exact: true }).click();
       const sidebar = page.getByRole('complementary', { name: 'Repository sidebar' });
       const compareButton = sidebar.getByRole('button', {
         name: 'Compare pull requests in example/project',
       });
       const pairDialog = page.getByRole('dialog', { name: 'Compare pull requests' });
+      for (const agent of ['cursor', 'antigravity', 'copilot']) {
+        await chooseHarness(page, { agent, model: 'fixture-model' });
+        await compareButton.click();
+        await pairDialog.getByLabel('First pull request').selectOption('21');
+        await pairDialog.getByLabel('Second pull request').selectOption('22');
+        await pairDialog.getByRole('button', { name: 'Compare revisions' }).click();
+        await pairDialog.getByRole('button', { name: 'Investigate with selected agent' }).click();
+        await pairDialog
+          .getByText('The consumer reads a field the producer no longer emits.')
+          .waitFor();
+        const shownModel = agent === 'antigravity' ? 'reported-fixture-model' : 'fixture-model';
+        await pairDialog.getByText(agent + ' · ' + shownModel, { exact: true }).waitFor();
+        await pairDialog.getByRole('button', { name: 'Close', exact: true }).click();
+      }
+      await chooseHarness(page, { agent: 'codex', model: 'fixture-model' });
       await writeFile(slowList, '');
       await compareButton.click();
       // Close while gh is actually waiting on a page of results.
@@ -742,6 +795,22 @@ try {
       await page.getByRole('button', { name: 'Changes', exact: true }).click();
       await page.getByRole('button', { name: 'README.md, added', exact: true }).click();
       const chat = page.getByRole('region', { name: 'Review chat' });
+      const headerPicker = chat
+        .locator('.chat-heading')
+        .getByRole('button', { name: /^Harness and model:/ });
+      await headerPicker.waitFor();
+      await chat.getByRole('heading', { name: 'Review chat' }).hover();
+      const pickerColours = () =>
+        headerPicker.evaluate((el) => {
+          const style = globalThis.getComputedStyle(el);
+          return [style.backgroundColor, style.borderTopColor];
+        });
+      const transparent = 'rgba(0, 0, 0, 0)';
+      assert.deepEqual(await pickerColours(), [transparent, transparent]);
+      const idleBounds = await headerPicker.boundingBox();
+      await headerPicker.hover();
+      assert.ok((await pickerColours()).every((colour) => colour !== transparent));
+      assert.deepEqual(await headerPicker.boundingBox(), idleBounds);
       const files = page.getByRole('navigation', { name: 'Changed files' });
       const fileWidth = () => files.evaluate((el) => el.clientWidth);
       const treeFolder = files.getByRole('button', { name: 'src', exact: true });
@@ -817,6 +886,10 @@ try {
       await toolsRail.getByRole('button', { name: 'Hide changed files', expanded: true }).click();
       await region.waitFor();
       await page.getByRole('button', { name: 'Chat', exact: true }).click();
+      await headerPicker.press('Enter');
+      await page.getByRole('dialog', { name: 'Harness and model' }).waitFor();
+      await page.keyboard.press('Escape');
+      await headerPicker.and(page.locator(':focus-visible')).waitFor();
       await resize(app, page, 850, 440);
       await chat.getByLabel('Context', { exact: true }).selectOption('full-pr');
       await chat.getByLabel('Ask about the diff').fill('Keep my question');
@@ -1198,7 +1271,7 @@ try {
           const { palette, accent, font } = globalThis.document.documentElement.dataset;
           return { palette, accent, font };
         }),
-        { palette: 'ink', accent: 'green', font: 'humanist' },
+        { palette: 'light', accent: 'green', font: 'humanist' },
       );
       await page
         .getByText(/claude · fixture-model.*Full PR/)

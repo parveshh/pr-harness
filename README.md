@@ -28,7 +28,7 @@ The changed-file tree groups files by folder. Filter by name or path. Collapse t
 
 ## Review with a local agent
 
-Choose the harness and model from the picker in **Review chat** or the workspace header. It lists Codex CLI and Claude Code, and the choice applies to every PR and survives a restart. Leave the model blank to use the agent default. Codex can also use a local Ollama or LM Studio provider. If discovery misses an installation, use **Choose executable** in the same picker.
+Choose the harness and model from the picker in the Review chat header. It supports Codex CLI, Claude Code, Cursor Agent (`cursor-agent` or `agent`), Antigravity CLI (`agy`), and GitHub Copilot CLI (`copilot`). Install and sign in to the CLI you want to use. Your choice applies to every PR and survives a restart. Leave the model blank to use the agent default. Codex can also use a local Ollama or LM Studio provider. If discovery misses an installation, use **Choose executable** in the same picker.
 
 In **Review chat**, the sliders button in the heading opens **Review instructions**, where you edit the built-in prompt and save it for the app, repository, or PR. A PR prompt takes precedence over its repository and app defaults. **Use inherited instructions** removes the current override.
 
@@ -60,7 +60,7 @@ The view refreshes about every ten seconds while it is open and up to three runs
 
 ## Monitor repositories
 
-In the sidebar, click **+** beside **Repositories**, enter a GitHub URL or `owner/repository`, and choose **Add repository**. Select authors from the contributor and recent PR lists, or enter a GitHub username. The sidebar lists their open PRs and refreshes about every two minutes while the app is open. Open a PR directly from the sidebar. The last successful list stays available offline.
+In the sidebar, click **+** beside **Repositories**, enter a GitHub URL or `owner/repository`, and choose **Add repository**. Choose **Select authors**, search by GitHub username, and check the authors to follow. You can also add a username missing from the list. Choose **Apply selection** to save them together. The sidebar lists their open PRs and refreshes about every two minutes while the app is open. Open a PR directly from the sidebar. The last successful list stays available offline.
 
 When a watched author opens a pull request, the app shows a system notification, counts it on the app icon in the Dock or launcher, and highlights its row with a **New** tag. Clicking the notification opens the PR. Opening the PR clears the tag and lowers the count. PRs that are listed because you just added a repository or chose an author are not treated as new. New PRs are found when the list refreshes, about every two minutes while the app's window is open, so a notification can trail GitHub by a few minutes. A PR that is closed and reopened is announced again, and a draft is announced when it is created. On macOS the count on the Dock icon needs notifications to be allowed for the app. Windows shows the notification and the highlight but no count on the icon.
 
@@ -74,7 +74,7 @@ Each PR row in the sidebar has two icons. The sparkle opens the PR and starts **
 
 ## Checks
 
-Run `npm run lint`, `npm run format:check`, `npm run typecheck`, and `npm test`. Use `npm run format` to apply formatting. After building, `npm run test:desktop` verifies repository dialogs, monitored authors, both agent adapters, citation navigation, cancellation, the file reader, draft editing and discarding, an offline restart, and receipt recovery after a simulated lost submission response with a temporary profile and fixture CLI on macOS or Linux. Use `npm run test:desktop -- --live` to exercise a public PR with your signed-in GitHub CLI. Both desktop tests require a graphical session.
+Run `npm run lint`, `npm run format:check`, `npm run typecheck`, and `npm test`. Use `npm run format` to apply formatting. After building, `npm run test:desktop` verifies repository dialogs, monitored authors, all five agent adapters, citation navigation, cancellation, the file reader, draft editing and discarding, an offline restart, and receipt recovery after a simulated lost submission response with a temporary profile and fixture CLI on macOS or Linux. Use `npm run test:desktop -- --live` to exercise a public PR with your signed-in GitHub CLI. Both desktop tests require a graphical session.
 
 ## Review another push
 
@@ -92,7 +92,7 @@ After you open an update, select a question to compare the original evidence wit
 
 ## Workspace settings and reply alerts
 
-The gear at the bottom of the left rail opens **Settings**. Choose one of ten themes, an accent colour for buttons and highlights, an interface font, and a text size. Settings is the only place the theme changes. Code keeps its monospaced font and follows the selected text size. Appearance is saved in SQLite.
+The gear at the bottom of the left rail opens **Settings**. Choose a theme, including **Light**, an accent colour for buttons and highlights, an interface font, and a text size. Settings is the only place the theme changes. Code keeps its monospaced font and follows the selected text size. Appearance is saved in SQLite.
 
 **Connect account** starts GitHub CLI browser sign-in for github.com. Complete the authorization on GitHub. Settings displays the active CLI account, and **Switch account** starts another sign-in.
 

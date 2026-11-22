@@ -35,7 +35,7 @@ export function AgentPicker({ catalog, onRetry, ...actions }: Props) {
   return (
     <DialogTrigger>
       <Button className="agent-trigger" aria-label={'Harness and model: ' + label}>
-        <Bot size={15} /> <span>{label}</span> <ChevronsUpDown size={13} />
+        <Bot size={15} /> <span title={label}>{label}</span> <ChevronsUpDown size={13} />
       </Button>
       <Popover className="agent-menu" placement="bottom end" offset={6}>
         <Dialog className="agent-form" aria-label="Harness and model">

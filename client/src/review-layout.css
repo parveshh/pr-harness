@@ -232,19 +232,23 @@
   padding: 3px 6px;
   font-size: 0.68rem;
 }
+.chat-agent-picker {
+  container-type: inline-size;
+  display: flex;
+  justify-content: flex-end;
+}
+@container (max-width: 125px) {
+  .chat-heading .agent-trigger svg:first-child {
+    display: none;
+  }
+}
 .workbench .chat-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
   background: transparent;
-  padding: 10px 12px 3px;
-}
-.chat-model {
-  padding: 0 10px 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--line);
-}
-.chat-model .agent-trigger {
-  max-width: 100%;
-  border: 1px solid var(--line);
-  background: var(--toolbar);
-  padding: 5px 7px;
 }
 .review-studio .chat-question {
   padding: 2px 0;
@@ -353,9 +357,6 @@
 }
 .review-studio .workbench .file-heading {
   border-bottom: 1px solid var(--line);
-}
-.review-studio .chat-model .agent-trigger {
-  margin: 2px 0;
 }
 
 /* A local reading measure lets the two panes resize without stretching paragraphs. */

@@ -33,6 +33,7 @@ import type { ReaderView, ReaderFile } from '../../shared/reader.js';
 
 export function ReviewChat({
   agents,
+  agentPicker,
   summaryRequest,
   onSummaryStarted,
   url,
@@ -41,11 +42,11 @@ export function ReviewChat({
   selection,
   jump,
   openSource,
-  modelPicker,
   collapse,
   composerRef,
 }: {
   agents: AgentCatalog | null;
+  agentPicker: ReactNode;
   // Set when a summary was asked for outside this pane, such as from the sidebar.
   summaryRequest: number | null;
   onSummaryStarted: () => void;
@@ -55,7 +56,6 @@ export function ReviewChat({
   selection: ChatRequest['selection'];
   jump: (cite: Citation) => void;
   openSource: (run: string, cite: SourceCitation) => void;
-  modelPicker: ReactNode;
   collapse: () => void;
   composerRef: RefObject<HTMLTextAreaElement | null>;
 }) {
@@ -211,6 +211,7 @@ export function ReviewChat({
           </span>{' '}
           Review chat
         </h2>
+        <div className="chat-agent-picker">{agentPicker}</div>
         <div className="chat-heading-tools">
           {prompt !== null && config && (
             <fieldset disabled={running}>
@@ -307,11 +308,10 @@ export function ReviewChat({
           </button>
         </div>
       </div>
-      <div className="chat-model">{modelPicker}</div>
       {!agent && agents && (
         <p className="chat-harness-hint">
           {agentNames[agents.selection.agent]} was not found. Choose an installed harness in the
-          model picker above.
+          Review chat header.
         </p>
       )}
       <div

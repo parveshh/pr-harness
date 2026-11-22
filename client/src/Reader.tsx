@@ -64,7 +64,7 @@ export function Reader({
   fileToolSlot,
   url,
   onBack,
-  headerAction,
+  agentPicker,
   agents,
   command,
   onPublished,
@@ -72,7 +72,7 @@ export function Reader({
 }: {
   url: string;
   onBack: () => void;
-  headerAction: ReactNode;
+  agentPicker: ReactNode;
   fileToolSlot: HTMLSpanElement | null;
   agents: AgentCatalog | null;
   command: PrCommand | null;
@@ -976,7 +976,7 @@ export function Reader({
                 view={view}
                 file={selected}
                 selection={selection}
-                modelPicker={headerAction}
+                agentPicker={agentPicker}
                 composerRef={composer}
                 collapse={() => {
                   pendingFocus.current = expandChatButton;

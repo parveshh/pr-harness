@@ -20,7 +20,7 @@ export const login = z
   .regex(/^[\w-]+(?:\[bot\])?$/i)
   .max(100)
   .toLowerCase();
-export const agentId = z.enum(['codex', 'claude']);
+export const agentId = z.enum(['codex', 'claude', 'cursor', 'antigravity', 'copilot']);
 // One harness and model serve the whole app. Review prompts stay scoped to the app,
 // a repository, or a PR.
 export const selection = z.object({
@@ -46,7 +46,13 @@ export const agentInfo = z.object({
 export const scope = z.enum(['default', 'repository', 'review']);
 export const config = z.object({ agents: z.array(agentInfo), settings: prefs, scope });
 export const agentCatalog = z.object({ agents: z.array(agentInfo), selection });
-export const agentNames = { codex: 'Codex CLI', claude: 'Claude Code' } as const;
+export const agentNames: Record<AgentId, string> = {
+  codex: 'Codex CLI',
+  claude: 'Claude Code',
+  cursor: 'Cursor Agent',
+  antigravity: 'Antigravity CLI',
+  copilot: 'GitHub Copilot CLI',
+};
 export const summaryQuestion =
   'Summarise this whole pull request. State its purpose, then the main behaviour changes grouped by area, the riskiest changes to read first, and any gaps in the tests. List changed files you did not inspect.';
 export const anchor = z.object({

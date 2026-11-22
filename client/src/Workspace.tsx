@@ -365,7 +365,7 @@ export function Workspace({
           <Reader
             fileToolSlot={fileToolSlot}
             accountEpoch={inbox.account}
-            headerAction={agentPicker}
+            agentPicker={agentPicker}
             agents={agents}
             command={command?.url === activeUrl ? command : null}
             onPublished={() => setReviewEpoch((n) => n + 1)}
@@ -376,7 +376,7 @@ export function Workspace({
         ) : (
           <div className="shell">
             <header className="home-bar">
-              <Layers2 size={16} /> Workspace {agentPicker}
+              <Layers2 size={16} /> Workspace
             </header>
             <main>
               <h1>Review workspace</h1>
