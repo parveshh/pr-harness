@@ -13,7 +13,7 @@ import type { Accent, Appearance } from '../../shared/appearance.js';
 import { useCallback, useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import { pullRequestUrl, type SavedReview } from '../../shared/reviews.js';
 import { RepositorySidebar } from './RepositorySidebar.js';
-import { GitPullRequest, Inbox, ArrowUpRight, Link2, Bell, X } from 'lucide-react';
+import { GitPullRequest, Layers2, ChevronRight, Link2, Bell, X } from 'lucide-react';
 import { EmptyState } from './components/EmptyState.js';
 import { Reader, type PrCommand } from './Reader.js';
 
@@ -29,7 +29,22 @@ export function Workspace({
 }) {
   useScrollIndicators();
   const [theme, setTheme] = useState(initialTheme);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('repository-sidebar-collapsed') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  function toggleSidebar() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem('repository-sidebar-collapsed', String(next));
+    } catch {
+      // Keep the current window usable when layout preferences cannot be stored.
+    }
+  }
   const [appearanceError, setAppearanceError] = useState('');
   function chooseTheme(next: Appearance) {
     window.reviewer
@@ -290,9 +305,9 @@ export function Workspace({
     >
       <ResizablePanel
         id="workspace-sidebar"
-        defaultSize="250px"
-        minSize="175px"
-        maxSize="38%"
+        defaultSize={window.reviewer.integratedTitleBar ? '290px' : '250px'}
+        minSize={window.reviewer.integratedTitleBar ? '245px' : '175px'}
+        maxSize="46%"
         groupResizeBehavior="preserve-pixel-size"
       >
         <RepositorySidebar
@@ -303,7 +318,7 @@ export function Workspace({
           openInbox={openInbox}
           unread={inbox.items.filter((i) => i.unread).length}
           collapsed={collapsed}
-          onToggle={() => setCollapsed(!collapsed)}
+          onToggle={toggleSidebar}
           activeUrl={activeUrl}
           onOpen={openMonitored}
           onSummarise={(pr) => openMonitored(pr, 'summarise')}
@@ -370,39 +385,32 @@ export function Workspace({
         ) : (
           <div className="shell">
             <header className="home-bar">
-              <Inbox size={16} /> All reviews {agentPicker}
+              <Layers2 size={16} /> Workspace {agentPicker}
             </header>
             <main>
-              <div className="workspace-hero">
-                <div className="home-intro">
-                  <div>
-                    <h1>Review workspace</h1>
-                    <p>Open a pull request or pick up where you left off.</p>
-                  </div>
+              <h1>Review workspace</h1>
+              <form className="pr-entry" onSubmit={submit}>
+                <label htmlFor="pr-url">
+                  <Link2 size={16} /> GitHub pull request URL
+                </label>
+                <div className="entry">
+                  <input
+                    id="pr-url"
+                    type="text"
+                    inputMode="url"
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="https://github.com/owner/repo/pull/123"
+                    value={url}
+                    disabled={busy}
+                    onChange={(event) => setUrl(event.target.value)}
+                    required
+                  />
+                  <button type="submit" disabled={busy || reviews === null}>
+                    {busy ? 'Saving…' : 'Save pull request'}
+                  </button>
                 </div>
-                <form className="pr-entry" onSubmit={submit}>
-                  <label htmlFor="pr-url">
-                    <Link2 size={16} /> GitHub pull request URL
-                  </label>
-                  <div className="entry">
-                    <input
-                      id="pr-url"
-                      type="text"
-                      inputMode="url"
-                      spellCheck={false}
-                      autoComplete="off"
-                      placeholder="https://github.com/owner/repo/pull/123"
-                      value={url}
-                      disabled={busy}
-                      onChange={(event) => setUrl(event.target.value)}
-                      required
-                    />
-                    <button type="submit" disabled={busy || reviews === null}>
-                      {busy ? 'Saving…' : 'Save pull request'} <ArrowUpRight size={15} />
-                    </button>
-                  </div>
-                </form>
-              </div>
+              </form>
               {error && <p role="alert">{error}</p>}
               <p className="notice" role="status">
                 {notice}
@@ -427,10 +435,11 @@ export function Workspace({
                             {new URL(item.url).pathname.split('/').slice(1, 3).join('/')}
                           </strong>{' '}
                           <code>#{item.url.split('/').at(-1)}</code>
+                          <time dateTime={item.savedAt}>
+                            {new Date(item.savedAt).toLocaleDateString()}
+                          </time>
+                          <ChevronRight size={15} aria-hidden />
                         </button>
-                        <time dateTime={item.savedAt}>
-                          {new Date(item.savedAt).toLocaleDateString()}
-                        </time>
                       </li>
                     ))}
                   </ul>

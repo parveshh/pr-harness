@@ -1,0 +1,54 @@
+.check-failure {
+  overflow-wrap: anywhere;
+}
+.check-diagnostics {
+  padding-left: 1.5rem;
+}
+.check-diagnostics > li {
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--line);
+}
+.check-diagnostics small,
+.check-diagnostics strong {
+  display: block;
+}
+.check-diagnostics p {
+  white-space: pre-wrap;
+}
+.diagnostic-code {
+  margin-block: 0.7rem;
+  padding: 0.7rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.diagnostic-code small {
+  margin: 0.25rem 0 0.5rem;
+  color: var(--muted);
+}
+.diagnostic-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-family: monospace;
+}
+.diagnostic-row > span:first-child {
+  min-width: 3ch;
+  color: var(--muted);
+}
+.diagnostic-row code {
+  white-space: pre-wrap;
+}
+.diagnostic-row[data-annotated] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.diagnostic-marker {
+  color: var(--accent);
+}
+.attempt-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.6rem 0;
+}

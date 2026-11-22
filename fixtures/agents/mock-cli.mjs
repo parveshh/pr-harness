@@ -9,7 +9,7 @@ if (args.includes('--version')) {
 } else {
   let stdin = '';
   for await (const chunk of process.stdin) stdin += chunk;
-  const { evidence, question, selected, lookups } = JSON.parse(stdin);
+  const { task, evidence, question, selected, lookups } = JSON.parse(stdin);
   const emit = (data) => console.log(JSON.stringify(data));
   async function respond(answer) {
     if (args.includes('exec')) {
@@ -23,9 +23,33 @@ if (args.includes('--version')) {
   if (args.includes('invalid-model')) {
     console.error('model not available');
     process.exitCode = 1;
+  } else if (task === 'compare-pull-requests') {
+    const producer = evidence.left.find((row) => row.text.includes('customerId: account.id'));
+    const consumer = evidence.right.find((row) => row.text.includes('event.accountId'));
+    await respond(
+      JSON.stringify({
+        findings:
+          producer && consumer
+            ? [
+                {
+                  left: producer.id,
+                  right: consumer.id,
+                  consequence: 'The consumer reads a field the producer no longer emits.',
+                },
+              ]
+            : [],
+        gaps: [],
+      }),
+    );
   } else if (lookups?.length === 0) {
     const query = selected.path === 'src/reader.ts' ? 'Review workspace' : 'first change';
-    await respond(JSON.stringify({ prLookup: [{ op: 'search_diff', query }, { op: 'files' }] }));
+    const prLookup = [{ op: 'search_diff', query }, { op: 'files' }];
+    if (question === 'Compare with the caller')
+      prLookup.push(
+        { op: 'read_source', path: 'callers.txt', start: 500 },
+        { op: 'read_source', path: 'partial.ts', side: 'before', start: 850 },
+      );
+    await respond(JSON.stringify({ prLookup }));
   } else if (question === 'Wait for cancellation') {
     emit({ type: 'stream_event', event: { delta: { text: 'Waiting for cancellation' } } });
     await new Promise((resolve) => setTimeout(resolve, 60000));
@@ -54,7 +78,29 @@ if (args.includes('--version')) {
       : evidence.find((e) => e.path !== selected.path);
     const answer = [
       '### Review notes',
+      'The reader saves its place as you move through the diff. Reopening the pull request restores the selected file and hunk, so you can continue reviewing where you left off. [[' +
+        first.id +
+        ']][[' +
+        other.id +
+        ']]',
+      '',
+      'When a new revision arrives, check the lines that changed before submitting your comments. The saved position and the comment anchor serve different purposes. [[' +
+        first.id +
+        ']]',
+      '',
       ...(lookups ? ['Read from the local PR copy.', ''] : []),
+      ...(question === 'Compare with the caller' && lookups?.[3]
+        ? [
+            'Caller [[' + lookups[2].result.lines[0].id + ']]',
+            '',
+            'Compare both versions [[' +
+              lookups[2].result.lines[0].id +
+              ']][[' +
+              lookups[3].result.lines[0].id +
+              ']]',
+            '',
+          ]
+        : []),
       '- **Selected change** [[' + first.id + ']]',
       '- Related caller [[' + other.id + ']]',
       '',

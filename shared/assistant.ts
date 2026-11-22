@@ -55,6 +55,7 @@ export const anchor = z.object({
   side: z.enum(['old', 'new']),
   line: z.number().int().positive(),
 });
+export const lineRange = anchor.extend({ startLine: z.number().int().positive().optional() });
 export const citation = anchor.extend({ id: z.number().int().positive(), excerpt: z.string() });
 export const contextMode = z.enum(['focused', 'full-pr']);
 export type ContextMode = z.infer<typeof contextMode>;
@@ -66,6 +67,12 @@ export const sourceCitation = z.object({
   line: z.number().int().positive(),
   url: z.string(),
 });
+export const citedSourceKey = z.object({
+  url: pullRequestUrl,
+  run: z.uuid(),
+  id: z.number().int().positive(),
+});
+export type CitedSourceKey = z.infer<typeof citedSourceKey>;
 export type SourceCitation = z.infer<typeof sourceCitation>;
 export const chatRequest = z.object({
   contextMode: contextMode.optional(),
@@ -74,7 +81,7 @@ export const chatRequest = z.object({
   revision: z.string(),
   path: z.string(),
   hunk: z.number().int().nonnegative(),
-  selection: anchor.nullable(),
+  selection: lineRange.refine((range) => (range.startLine ?? range.line) <= range.line).nullable(),
   extra: z.string().nullable(),
   question: z.string().trim().min(1).max(8000),
 });
@@ -143,7 +150,7 @@ export interface AssistantBridge {
 }
 export function repoOf(url: string) {
   return repoName.parse(
-    pullRequestUrl.parse(url).slice('https://github.com/'.length).split('/pull/')[0],
+    new URL(pullRequestUrl.parse(url)).pathname.split('/').slice(1, 3).join('/'),
   );
 }
 export function readableError(e: unknown) {

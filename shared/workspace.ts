@@ -1,3 +1,4 @@
+import type { ReviewLesson, SaveLesson, LessonKey } from './lessons.js';
 import type {
   DiscussionMessage,
   DiscussionReply,
@@ -37,6 +38,9 @@ export const inbox = z.object({
 export type Inbox = z.infer<typeof inbox>;
 export const webLink = z.url({ protocol: /^https?$/, normalize: true });
 export interface WorkspaceBridge {
+  reviewLessons(url: string): Promise<ReviewLesson[]>;
+  saveReviewLesson(input: SaveLesson): Promise<ReviewLesson[]>;
+  forgetReviewLesson(url: string, key: LessonKey): Promise<ReviewLesson[]>;
   discussions(url: string): Promise<Discussions>;
   replyToDiscussion(request: DiscussionReply): Promise<DiscussionMessage>;
   resolveDiscussion(request: ResolveRequest): Promise<{ resolved: boolean }>;

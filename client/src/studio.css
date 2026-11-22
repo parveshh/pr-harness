@@ -156,7 +156,6 @@
   width: 50px;
   padding: 22px 8px;
 }
-.sidebar-brand,
 .sidebar-title,
 .repo-group-name,
 .dialog-head,
@@ -168,25 +167,6 @@
   justify-content: space-between;
   gap: 8px;
 }
-.sidebar-brand {
-  min-height: 34px;
-  margin: 0 2px 28px;
-}
-.sidebar-brand strong {
-  font-size: 1rem;
-  letter-spacing: -0.04em;
-  flex: 1;
-}
-.sidebar-brand .mark {
-  background: linear-gradient(150deg, #e3eae7, #a2b2b1);
-  color: var(--control-ink);
-  box-shadow:
-    inset 0 1px 1px #ffffff80,
-    0 2px 5px #0c161840;
-  border-radius: 8px;
-  width: 31px;
-  height: 31px;
-}
 .repo-sidebar button {
   background: transparent;
   color: var(--muted);
@@ -196,28 +176,18 @@
   background: var(--hover);
   color: var(--ink-bright);
 }
-.repo-sidebar .rail-toggle,
 .sidebar-title button,
 .repo-group-name button,
 .icon-control {
   display: grid;
   place-items: center;
 }
-.repo-sidebar .nav-home {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  font-weight: 550;
-  padding: 10px 12px;
-  margin-bottom: 26px;
-}
-.repo-sidebar .nav-home[aria-current='page'] {
-  background: var(--selection);
-  color: var(--ink-bright);
-}
 .sidebar-title {
-  margin: 0 3px 6px 8px;
+  flex-wrap: wrap;
+  margin: 0 0 6px;
+}
+.sidebar-title button {
+  flex: none;
 }
 .sidebar-title h2 {
   border: 0;
@@ -299,24 +269,24 @@
   background: var(--toolbar);
 }
 .shell main {
-  max-width: 950px;
-  padding: clamp(36px, 7vh, 76px) clamp(20px, 5vw, 70px);
+  max-width: none;
+  margin: 0;
+  padding: 6px 17px 24px;
 }
-.home-intro h1 {
-  font-size: clamp(2.25rem, 4vw, 3.375rem);
-  margin: 0 0 12px;
+.shell main > h1 {
+  margin: 0 0 20px;
   color: var(--ink-bright);
-  font-weight: 580;
 }
-.home-intro p {
-  color: var(--muted);
-  font-size: 1rem;
-  margin: 0 0 34px;
+.shell .pr-entry {
+  max-width: 52rem;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
 }
-.pr-entry {
-  border-radius: 14px;
-  box-shadow: inset 0 1px 0 #ffffff0a;
-  padding: 22px;
+.shell main > section {
+  margin-top: 24px;
+  max-width: 72rem;
 }
 .pr-entry label,
 .entry button,
@@ -718,9 +688,6 @@
   .repo-sidebar {
     width: 170px;
   }
-  .sidebar-brand {
-    gap: 4px;
-  }
 }
 .draft-tools {
   display: flex;
@@ -837,7 +804,7 @@
   padding-top: 52px;
   overflow: hidden;
 }
-.integrated-titlebar .sidebar-contents {
+.sidebar-contents {
   overflow-y: auto;
   min-height: 0;
 }
@@ -847,33 +814,6 @@
   position: absolute;
   inset: 0 0 auto;
   app-region: drag;
-}
-.integrated-titlebar .rail-toggle {
-  position: fixed;
-  left: 83px;
-  top: 12px;
-  app-region: no-drag;
-}
-.integrated-titlebar .repo-sidebar {
-  z-index: 5;
-}
-.integrated-titlebar .repo-sidebar.collapsed {
-  width: 0;
-  border-right: 0;
-  padding: 0;
-  overflow: visible;
-}
-.integrated-titlebar .collapsed .rail-toggle {
-  color: var(--control);
-}
-.integrated-titlebar .collapsed .rail-toggle:hover {
-  background: var(--hover);
-}
-.integrated-titlebar .repo-sidebar.collapsed + .studio-page header {
-  padding-left: 130px;
-}
-.integrated-titlebar .sidebar-brand {
-  margin-bottom: 18px;
 }
 .integrated-titlebar .reader header,
 .integrated-titlebar .home-bar {
@@ -1135,15 +1075,13 @@
   font-weight: 600;
 }
 .sidebar-title h2 {
-  font-size: 0.625rem;
-  letter-spacing: 0.1em;
+  font-size: 1rem;
+  color: var(--ink);
+  letter-spacing: -0.015em;
+  text-transform: none;
 }
 .sidebar-foot {
   font-size: 0.6875rem;
-}
-.sidebar-brand strong {
-  color: var(--ink-bright);
-  font-weight: 650;
 }
 .review-drafts,
 .entry button,
@@ -1228,30 +1166,6 @@
   border: 1px solid var(--line);
   border-radius: 4px;
 }
-.shell main {
-  max-width: 940px;
-}
-.workspace-hero {
-  padding: clamp(20px, 4vw, 38px);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: linear-gradient(120deg, var(--toolbar), var(--panel) 75%);
-  box-shadow: inset 0 1px 0 #ffffff0d;
-}
-.home-intro h1 {
-  font-size: clamp(2rem, 4vw, 2.9375rem);
-  letter-spacing: -0.055em;
-}
-.home-intro p {
-  margin-bottom: 25px;
-  font-size: 0.9375rem;
-}
-.workspace-hero .pr-entry {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
 .shell .empty-state {
   background: var(--panel);
   border-radius: 12px;
@@ -1308,7 +1222,8 @@
 .reader header .agent-trigger,
 .home-bar .agent-trigger {
   margin-left: auto;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 300px;
 }
 .agent-trigger[data-disabled] {
@@ -1604,7 +1519,7 @@ body,
   .chat-log,
   .repo-dialog,
   .draft-list,
-  .description,
+  .pr-detail,
   .author-list,
   .shell main,
   textarea
@@ -1628,7 +1543,7 @@ body,
     .chat-log,
     .repo-dialog,
     .draft-list,
-    .description,
+    .pr-detail,
     .author-list,
     .shell main,
     textarea
@@ -1681,9 +1596,6 @@ body,
   }
   .reader .pr-meta {
     margin-top: 4px;
-  }
-  .reader .description {
-    max-height: 45px;
   }
   .review-chat :is(.chat-heading, fieldset, form) {
     padding: 6px 10px;
@@ -1839,15 +1751,22 @@ body,
   max-height: 26vh;
 }
 
-/* Keep workspace-wide tools reachable alongside the repository list. */
+/* Workspace navigation keeps its own column in both sidebar states. */
+.studio {
+  --workspace-rail-width: 50px;
+  --window-control-height: 0px;
+}
+.integrated-titlebar .studio {
+  --workspace-rail-width: 92px;
+  --window-control-height: 48px;
+}
 .repo-sidebar:not(.collapsed) {
-  width: 250px;
-  padding-left: 57px;
+  padding-left: calc(var(--workspace-rail-width) + 10px);
 }
 .workspace-rail {
   position: absolute;
-  inset: 52px auto 0 0;
-  width: 44px;
+  inset: var(--window-control-height) auto 0 0;
+  width: var(--workspace-rail-width);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1867,6 +1786,11 @@ body,
   border-radius: 8px;
   background: transparent;
 }
+.repo-sidebar .workspace-rail button[aria-current='page'],
+.repo-sidebar .workspace-rail button[aria-expanded='true'] {
+  background: var(--selection);
+  color: var(--ink-bright);
+}
 .repo-sidebar .workspace-rail button:hover {
   color: var(--ink-bright);
   background: var(--hover);
@@ -1885,18 +1809,6 @@ body,
   border-radius: 10px;
   font-size: 0.625rem;
   line-height: 1.3;
-}
-.integrated-titlebar .repo-sidebar.collapsed {
-  width: 44px;
-}
-.integrated-titlebar .repo-sidebar.collapsed + .studio-page header {
-  padding-left: 85px;
-}
-@media (max-width: 850px) {
-  .repo-sidebar:not(.collapsed) {
-    width: 188px;
-    padding-left: 51px;
-  }
 }
 .settings-group {
   margin-top: 20px;
@@ -2210,10 +2122,7 @@ body,
   width: 100%;
 }
 .studio[data-sidebar-collapsed='true'] > #workspace-sidebar {
-  flex: 0 0 50px !important;
-}
-.integrated-titlebar .studio[data-sidebar-collapsed='true'] > #workspace-sidebar {
-  flex-basis: 44px !important;
+  flex: 0 0 var(--workspace-rail-width) !important;
 }
 .studio[data-sidebar-collapsed='true'] > .pane-divider {
   display: none;

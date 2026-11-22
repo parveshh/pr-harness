@@ -104,7 +104,7 @@ await test('new-file context sends ordered source, reports coverage and keeps ci
     revision: view.revision,
     path: file.path,
     hunk: 0,
-    selection: { path: file.path, hunk: 0, side: 'new' as const, line: 90 },
+    selection: { path: file.path, hunk: 0, side: 'new' as const, startLine: 82, line: 90 },
     extra: null,
     question: 'Explain this new file.',
   };
@@ -126,6 +126,7 @@ await test('new-file context sends ordered source, reports coverage and keeps ci
   );
   assert.equal(context.selected.hunk, undefined);
   assert.equal(context.selected.line?.line, 90);
+  assert.equal(context.selected.line?.startLine, 82);
   assert.equal(context.pullRequest.totalChangedFiles, 2);
   assert.equal(
     context.evidence.every((s) => s.path === 'caller.ts'),
@@ -135,7 +136,7 @@ await test('new-file context sends ordered source, reports coverage and keeps ci
     ...req,
     path: 'caller.ts',
     hunk: 1,
-    selection: { path: 'caller.ts', hunk: 1, side: 'new', line: 10 },
+    selection: { path: 'caller.ts', hunk: 1, side: 'new', startLine: 10, line: 10 },
   });
   const caller = modified.context.evidence.find((s) => s.path === 'caller.ts' && s.line === 10);
   assert.equal(caller?.hunk, 2);

@@ -53,12 +53,6 @@
   margin: 10px 0;
   font-size: 0.875rem;
 }
-.description {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 10rem;
-  overflow: auto;
-}
 .reading-grid {
   display: grid;
   grid-template-columns: minmax(180px, 26%) minmax(0, 1fr);
@@ -550,4 +544,43 @@
   .reader .file-actions {
     justify-content: flex-start;
   }
+}
+
+.review-lessons {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.8rem;
+  border-inline-start: 2px solid var(--accent);
+  overflow-wrap: anywhere;
+}
+.review-lessons h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  margin: 0;
+}
+.review-lessons ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.review-lessons li p {
+  white-space: pre-wrap;
+  margin: 0.5rem 0 0.2rem;
+}
+.review-lessons small,
+.lesson-editor small {
+  color: var(--muted);
+}
+.review-lessons button {
+  margin-inline-start: 0.35rem;
+}
+.lesson-editor,
+.lesson-editor label {
+  display: grid;
+  gap: 0.5rem;
+}
+.lesson-editor {
+  padding: 1rem;
+  overflow-wrap: anywhere;
 }

@@ -1,3 +1,4 @@
+import { lessonMigration, lessonStore } from './lessons.js';
 import type { Bundle } from '../shared/publish.js';
 import { typography } from '../shared/workspace.js';
 import { replyStore, settingsMigration, replyTargetsMigration } from './replies.js';
@@ -20,7 +21,7 @@ export function openStore(filename: string) {
   try {
     db.exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version < 0 || version > 13)
+    if (typeof version !== 'number' || version < 0 || version > 14)
       throw new Error('This workspace requires a newer Local Reviewer.');
     if (version === 0) {
       db.exec(`CREATE TABLE saved_reviews (url TEXT PRIMARY KEY, saved_at TEXT NOT NULL) STRICT;
@@ -44,6 +45,9 @@ export function openStore(filename: string) {
       db.exec(
         "ALTER TABLE workspace ADD COLUMN accent TEXT NOT NULL DEFAULT 'neutral'; PRAGMA user_version=13;",
       );
+    if (version < 14) db.exec(lessonMigration);
+    if (version === 0)
+      db.prepare('UPDATE workspace SET appearance=?, accent=? WHERE id=1').run('ink', 'green');
     db.exec('COMMIT');
   } catch (error) {
     db.close();
@@ -59,6 +63,7 @@ export function openStore(filename: string) {
   const reader = readerStore(db);
   return {
     replies: replyStore(db),
+    lessons: lessonStore(db),
     typography: () =>
       typography.parse(db.prepare('SELECT font,font_size AS size FROM workspace WHERE id=1').get()),
     saveTypography(input: unknown) {

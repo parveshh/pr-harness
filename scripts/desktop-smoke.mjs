@@ -16,6 +16,9 @@ async function capture(page, name) {
   await page.screenshot({ path: join(preview, name + '.png') });
 }
 const posted = join(directory, 'posted.jsonl');
+const pairFixtures = join(directory, 'comparison-pulls.json');
+const pairPush = join(directory, 'comparison-push');
+const slowList = join(directory, 'slow-comparison-list');
 const profile = join(directory, 'profile');
 const repliesFile = join(directory, 'replies.json');
 const loginRelease = join(directory, 'login-release');
@@ -50,6 +53,7 @@ if (!live) {
   await writeFile(join(repository, 'src/reader.ts'), 'old line\n' + context);
   const longLines = Array.from({ length: 860 }, (_, i) => 'fixture row ' + (i + 1));
   await writeFile(join(repository, 'partial.ts'), longLines.join('\n') + '\n');
+  await writeFile(join(repository, 'callers.txt'), longLines.join('\n') + '\n');
   git('add', '.');
   git('commit', '-qm', 'before');
   review.meta.base.sha = git('rev-parse', 'HEAD');
@@ -74,6 +78,40 @@ if (!live) {
   review.meta.changed_files = review.files.length;
   git('commit', '-qam', 'after');
   review.meta.head.sha = git('rev-parse', 'HEAD');
+  // Three real branch heads share a merge base. Their files merge cleanly.
+  await writeFile(join(repository, 'emit.ts'), 'send({ accountId: account.id });\n');
+  git('add', 'emit.ts');
+  git('commit', '-qm', 'event contract');
+  const pairBase = git('rev-parse', 'HEAD');
+  const pairPulls = [];
+  for (const [number, title, path, body] of [
+    [21, 'Rename event field', 'emit.ts', 'send({ customerId: account.id });'],
+    [22, 'Consume emitted event', 'consume.ts', 'record(event.accountId);'],
+    [23, 'Adjust margin', 'layout.css', 'main { margin: 1em; }'],
+  ]) {
+    git('switch', '--quiet', '-c', 'pair-' + number, pairBase);
+    await writeFile(join(repository, path), body + '\n');
+    git('add', path);
+    git('commit', '-qm', title);
+    const head = git('rev-parse', 'HEAD');
+    const patch = git('diff', '--no-color', pairBase, head, '--', path).split('\n').slice(4);
+    const header = patch.findIndex((line) => line.startsWith('@@ '));
+    pairPulls.push({
+      number,
+      title,
+      base: { ref: 'main', sha: pairBase },
+      head: { ref: 'pair-' + number, sha: head },
+      file: {
+        filename: path,
+        status: number === 21 ? 'modified' : 'added',
+        sha: git('rev-parse', 'HEAD:' + path),
+        additions: 1,
+        deletions: Number(number === 21),
+        patch: patch.slice(header).join('\n'),
+      },
+    });
+  }
+  await writeFile(pairFixtures, JSON.stringify(pairPulls));
   const cache = join(profile, 'pr-source');
   await mkdir(cache, { recursive: true });
   git(
@@ -95,17 +133,29 @@ if (!live) {
       'const updatePath = ' + JSON.stringify(revisionFixture) + ';',
       "const update = fs.existsSync(updatePath) ? JSON.parse(fs.readFileSync(updatePath,'utf8')) : null;",
       "if(update){ response.meta.head.sha=update.head; response.meta.base.sha=update.base; response.files[1].patch=response.files[1].patch.replace('+new line 1\\n','+'+update.line+'\\n'); response.files[1].sha=update.line; }",
+      'const pairPulls = JSON.parse(fs.readFileSync(' + JSON.stringify(pairFixtures) + '));',
+      "const endpoint = process.argv.find(a=>a.startsWith('repos/')) ?? '';",
+      'const slowList = ' + JSON.stringify(slowList) + ';',
+      "if(endpoint.includes('/pulls?state=open') && fs.existsSync(slowList)){fs.writeFileSync(slowList+'.pid',String(process.pid));setTimeout(()=>console.log('[]'),29000);return;}",
+      "if(endpoint.includes('/pulls?state=open')) { console.log(JSON.stringify(pairPulls)); return; }",
+      "const pair = pairPulls.find(p => endpoint.split('/')[4] === String(p.number));",
+      "if(pair && endpoint.includes('/pulls/')) { if(pair.number===22 && fs.existsSync(" +
+        JSON.stringify(pairPush) +
+        ")) pair.head.sha='d'.repeat(40);console.log(JSON.stringify(endpoint.includes('/files?') ? [pair.file] : {...response.meta,...pair,state:'open',changed_files:1}));return; }",
       // The reviewer counts as having approved once the grouped review has been posted.
       "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('latestOpinionatedReviews'))){const query=process.argv.find(a=>a.startsWith('query='));const state=fs.existsSync(" +
         JSON.stringify(posted) +
         ")?[{author:{login:'fixture-reviewer'},state:'APPROVED'}]:[];console.log(JSON.stringify({data:{viewer:{login:'fixture-reviewer'},repository:Object.fromEntries([...query.matchAll(/(p\\d+):pullRequest/g)].map(m=>[m[1],{latestOpinionatedReviews:{nodes:m[1]==='p12'?state:[]}}]))}}));return;}",
-      // One workflow run that is building until the test marks it finished.
-      'const pipelineDone = fs.existsSync(' +
-        JSON.stringify(join(directory, 'pipeline-done')) +
+      'const {actionsFixture} = require(' +
+        JSON.stringify(resolve('fixtures/github/actions.mjs')) +
         ');',
-      "const pipelineStep=(number,name,done)=>({number,name,status:done?'completed':'in_progress',conclusion:done?'success':null,started_at:'2025-01-01T00:00:00Z',completed_at:done?'2025-01-01T00:00:42Z':null});",
-      "if(process.argv.some(a=>a.includes('/actions/runs?'))){console.log(JSON.stringify({total_count:1,workflow_runs:[{id:900,name:'Check scaffold',display_title:'Preserve review progress',event:'pull_request',status:pipelineDone?'completed':'in_progress',conclusion:pipelineDone?'success':null,run_attempt:1,run_number:7,workflow_id:70,run_started_at:'2025-01-01T00:00:00Z',html_url:'https://github.com/example/project/actions/runs/900',created_at:'2025-01-01T00:00:00Z',updated_at:'2025-01-01T00:01:05Z'}]}));return;}",
-      "if(process.argv.some(a=>a.includes('/actions/runs/900/jobs'))){console.log(JSON.stringify({jobs:[{id:901,name:'check',status:pipelineDone?'completed':'in_progress',conclusion:pipelineDone?'success':null,started_at:'2025-01-01T00:00:00Z',completed_at:pipelineDone?'2025-01-01T00:01:05Z':null,html_url:'https://github.com/example/project/actions/runs/900/job/901',steps:[pipelineStep(1,'Set up job',true),pipelineStep(2,'Run npm test',pipelineDone)]}]}));return;}",
+      'const pipelineStage = fs.existsSync(' +
+        JSON.stringify(join(directory, 'pipeline-done')) +
+        ') ? "passed" : fs.existsSync(' +
+        JSON.stringify(join(directory, 'pipeline-failed')) +
+        ') ? "failed" : "running";',
+      'const ci = actionsFixture(endpoint,response.meta.head.sha,pipelineStage,!!update);',
+      "if(ci !== undefined) { if(process.argv.includes('--method') || process.argv.includes('-X')) throw Error('Unexpected CI write'); console.log(JSON.stringify(ci)); return; }",
       // Review threads and whether each is resolved.
       'const resolvedFile = ' + JSON.stringify(join(directory, 'resolved')) + ';',
       "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('ReviewThread('))){const on=process.argv.some(a=>a.includes('mutation($thread:ID!){resolveReviewThread'));if(on)fs.writeFileSync(resolvedFile,'');else if(fs.existsSync(resolvedFile))fs.unlinkSync(resolvedFile);console.log(JSON.stringify({data:{[on?'resolveReviewThread':'unresolveReviewThread']:{thread:{isResolved:on}}}}));return;}",
@@ -193,6 +243,7 @@ try {
   const app = await launch();
   try {
     const page = await app.firstWindow();
+    page.setDefaultTimeout(15000);
     await resize(app, page, 1380, 720);
     await page.getByText('Your first review starts here').waitFor();
     await capture(page, 'workspace');
@@ -265,10 +316,21 @@ try {
         '#b8a8f5',
       );
       await capture(page, 'accent');
+      await settingsPane.getByText('Green', { exact: true }).click();
       await settingsPane.getByText('Default', { exact: true }).click();
       await settingsPane.getByRole('button', { name: 'Close' }).click();
       assert.equal(await page.getByRole('button', { name: /^Appearance/ }).count(), 0);
     }
+    const toolsRail = page.getByRole('navigation', { name: 'Workspace tools' });
+    const workspaceButton = toolsRail.getByRole('button', { name: 'Workspace', exact: true });
+    const railBounds = await toolsRail.boundingBox();
+    const collapsedSidebarWidth = await page
+      .locator('#workspace-sidebar')
+      .evaluate((el) => el.clientWidth);
+    await toolsRail.getByRole('button', { name: 'Expand sidebar' }).click();
+    const expandedSidebarWidth = await page
+      .locator('#workspace-sidebar')
+      .evaluate((el) => el.clientWidth);
     if (process.platform === 'darwin') {
       const pos = await app.evaluate(({ BrowserWindow }) =>
         BrowserWindow.getAllWindows()[0].getWindowButtonPosition(),
@@ -276,7 +338,7 @@ try {
       assert.deepEqual(pos, { x: 14, y: 19 });
       const collapse = page.getByRole('button', { name: 'Collapse sidebar' });
       const pinned = await collapse.boundingBox();
-      assert.ok(pinned && pinned.y < 25);
+      assert.ok(pinned && pinned.y >= pos.y + 16);
       await collapse.click();
       const expand = page.getByRole('button', { name: 'Expand sidebar' });
       assert.deepEqual(await expand.boundingBox(), pinned);
@@ -307,6 +369,62 @@ try {
     await region.waitFor({ timeout: 45000 });
     assert.equal(await page.evaluate(() => typeof globalThis.require), 'undefined');
     if (!live) {
+      await page.getByRole('button', { name: 'Overview', exact: true }).click();
+      const description = page.getByRole('region', { name: 'PR description' });
+      await description.getByRole('heading', { level: 2, name: 'What changes' }).waitFor();
+      assert.equal(
+        await description.getByRole('listitem').locator('strong').innerText(),
+        'Review progress:',
+      );
+      await page.getByRole('button', { name: 'Changes', exact: true }).click();
+      assert.equal(
+        await page.locator('#workspace-sidebar').evaluate((el) => el.clientWidth),
+        expandedSidebarWidth,
+      );
+      assert.deepEqual(await toolsRail.boundingBox(), railBounds);
+      await toolsRail.getByRole('button', { name: 'Collapse sidebar' }).click();
+      await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
+      await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
+      assert.equal(await workspaceButton.getAttribute('aria-current'), 'page');
+      assert.equal(
+        await page.locator('#workspace-sidebar').evaluate((el) => el.clientWidth),
+        collapsedSidebarWidth,
+      );
+      assert.deepEqual(await toolsRail.boundingBox(), railBounds);
+      await resize(app, page, 570, 720);
+      await toolsRail.getByRole('button', { name: 'Expand sidebar' }).click();
+      const previousTextSize = await page.evaluate(() => {
+        const root = globalThis.document.documentElement;
+        const previous = root.dataset.textSize;
+        root.dataset.textSize = 'larger';
+        return previous;
+      });
+      const repoList = page.locator('.sidebar-contents');
+      const addButton = await repoList
+        .getByRole('button', { name: 'Add repository', exact: true })
+        .boundingBox();
+      const repoBounds = await repoList.boundingBox();
+      assert.ok(
+        addButton &&
+          repoBounds &&
+          addButton.x >= repoBounds.x &&
+          addButton.x + addButton.width <= repoBounds.x + repoBounds.width + 1,
+      );
+      const home = page.locator('.shell');
+      assert.ok(await home.evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
+      const list = home.getByRole('region', { name: /Saved pull requests/ });
+      assert.ok(await list.evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
+      await page.evaluate((previous) => {
+        if (previous) globalThis.document.documentElement.dataset.textSize = previous;
+        else delete globalThis.document.documentElement.dataset.textSize;
+      }, previousTextSize);
+      await toolsRail.getByRole('button', { name: 'Collapse sidebar' }).click();
+      await resize(app, page, 1380, 720);
+      await page.getByRole('button', { name: /example\/project.*#12/ }).click();
+      await region.waitFor();
+      assert.equal(await workspaceButton.getAttribute('aria-current'), null);
+      assert.deepEqual(await toolsRail.boundingBox(), railBounds);
+      await toolsRail.getByRole('button', { name: 'Expand sidebar' }).click();
       await page.getByRole('button', { name: 'Add repository', exact: true }).click();
       await page.getByLabel('Repository', { exact: true }).fill('example/project');
       await capture(page, 'add-repository');
@@ -318,12 +436,73 @@ try {
       await dialog.getByRole('checkbox', { name: 'octo', exact: true }).check();
       await dialog.getByRole('button', { name: 'Close', exact: true }).click();
       const sidebar = page.getByRole('complementary', { name: 'Repository sidebar' });
+      const compareButton = sidebar.getByRole('button', {
+        name: 'Compare pull requests in example/project',
+      });
+      const pairDialog = page.getByRole('dialog', { name: 'Compare pull requests' });
+      await writeFile(slowList, '');
+      await compareButton.click();
+      // Close while gh is actually waiting on a page of results.
+      let scanPid;
+      for (let wait = 0; wait < 100 && !scanPid; wait++) {
+        scanPid = Number(await readFile(slowList + '.pid', 'utf8').catch(() => ''));
+        if (!scanPid) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.ok(scanPid, 'GitHub candidate scan started');
+      await pairDialog.getByRole('button', { name: 'Close', exact: true }).click();
+      await rm(slowList);
+      await compareButton.click();
+      await pairDialog.getByLabel('First pull request').selectOption('21');
+      await pairDialog.getByLabel('Second pull request').selectOption('22');
+      assert.throws(() => process.kill(scanPid, 0), { code: 'ESRCH' });
+      await pairDialog.getByRole('button', { name: 'Compare revisions' }).click();
+      await pairDialog.getByText('No shared paths in the available diffs.').waitFor();
+      await pairDialog.getByRole('button', { name: 'Investigate with selected agent' }).click();
+      await pairDialog
+        .getByText('The consumer reads a field the producer no longer emits.')
+        .waitFor();
+      await pairDialog.getByText('send({ customerId: account.id });', { exact: true }).waitFor();
+      await pairDialog.getByText('record(event.accountId);', { exact: true }).waitFor();
+      const pairCommits = JSON.parse(await readFile(pairFixtures, 'utf8'));
+      await app.evaluate(({ shell }) => {
+        globalThis.originalPairLink = shell.openExternal;
+        globalThis.pairLinks = [];
+        shell.openExternal = async (url) => {
+          globalThis.pairLinks.push(url);
+        };
+      });
+      await pairDialog.getByRole('button', { name: 'emit.ts:1', exact: true }).click();
+      await pairDialog.getByRole('button', { name: 'consume.ts:1', exact: true }).click();
+      assert.deepEqual(
+        await app.evaluate(({ shell }) => {
+          shell.openExternal = globalThis.originalPairLink;
+          return globalThis.pairLinks;
+        }),
+        pairCommits
+          .slice(0, 2)
+          .map(
+            (p) =>
+              'https://github.com/example/project/blob/' +
+              p.head.sha +
+              '/' +
+              p.file.filename +
+              '#L1',
+          ),
+      );
+      await writeFile(pairPush, '');
+      await pairDialog.getByRole('button', { name: 'Check for updates' }).click();
+      await pairDialog.getByText(/Comparison is stale.*#22/).waitFor();
+      await pairDialog.getByLabel('Second pull request').selectOption('23');
+      await pairDialog.getByRole('button', { name: 'Compare revisions' }).click();
+      await pairDialog.getByRole('button', { name: 'Investigate with selected agent' }).click();
+      await pairDialog.getByText('No interaction identified in the inspected evidence.').waitFor();
+      await pairDialog.getByRole('button', { name: 'Close', exact: true }).click();
       await sidebar.getByRole('button', { name: /Tracked PR/ }).click();
       assert.equal(await sidebar.getByRole('button', { name: /Other PR/ }).count(), 0);
       assert.equal(await page.getByRole('button', { name: 'PR discussions' }).count(), 0);
       await page.getByRole('button', { name: /^src\/reader\.ts, modified/ }).click();
-      const discussions = page.locator('details.pr-conversation');
-      await discussions.locator('summary').click();
+      const discussions = page.locator('.pr-conversation');
+      await page.getByRole('button', { name: 'Discussion', exact: true }).click();
       const discussionThread = page
         .locator('.diff-scroll .published-threads [role="article"]')
         .filter({ hasText: 'Where is the caller tested?' });
@@ -351,6 +530,25 @@ try {
         .click();
       await discussionThread.getByText('Resolved', { exact: true }).waitFor();
       assert.equal(await discussionThread.getAttribute('data-resolved'), 'true');
+      await discussionThread.getByRole('button', { name: 'Remember review lesson' }).click();
+      const lessonEditor = page.getByRole('dialog', { name: 'Remember review lesson' });
+      await lessonEditor
+        .getByLabel('Private reminder')
+        .fill('Check the callers before changing this behaviour.');
+      await lessonEditor.getByRole('button', { name: 'Save lesson' }).click();
+      await discussionThread.getByRole('button', { name: 'Edit review lesson' }).click();
+      assert.equal(
+        await page.getByRole('region', { name: 'Review lessons for this file' }).count(),
+        0,
+      );
+      const editLesson = page.getByRole('dialog', { name: 'Edit review lesson' });
+      await editLesson.getByLabel('Code fragment').fill('first change');
+      await editLesson.getByRole('button', { name: 'Save lesson' }).click();
+      await editLesson.waitFor({ state: 'detached' });
+      assert.equal(
+        await page.getByRole('region', { name: 'Review lessons for these changes' }).count(),
+        0,
+      );
       await discussionThread
         .getByRole('button', { name: 'Reopen conversation', exact: true })
         .click();
@@ -366,12 +564,93 @@ try {
       const testStep = pipelineRun.getByRole('listitem').filter({ hasText: 'Run npm test' });
       await testStep.getByText('Running', { exact: true }).waitFor();
       await capture(page, 'pipeline');
+      const readerBeforeFailure = await page.evaluate(
+        async (url) => globalThis.reviewer.cachedReview(url),
+        url,
+      );
+      await writeFile(join(directory, 'pipeline-failed'), '');
+      await pipelineView.getByRole('button', { name: 'Refresh' }).click();
+      const failedJob = (name) =>
+        pipelineView
+          .locator('.pipeline-job')
+          .filter({ has: page.locator('summary').getByText(name, { exact: true }) })
+          .getByRole('button', { name: 'Investigate failure' });
+      await failedJob('check').click();
+      const diagnostic = (message) =>
+        pipelineView.getByRole('listitem').filter({ hasText: message });
+      await diagnostic('Expected retries to stop.')
+        .getByRole('button', { name: 'Inspect code' })
+        .click();
+      await pipelineView.getByText('Changed hunk 2 · src/reader.ts:40').waitFor();
+      await pipelineView
+        .locator('[data-annotated=true]')
+        .getByText('+new line 1', { exact: true })
+        .waitFor();
+      // Hold a real source subprocess in flight and verify closing its excerpt releases it.
+      const gitShim = join(directory, 'git');
+      const sourcePid = join(directory, 'annotated-source.pid');
+      await writeFile(
+        gitShim,
+        [
+          '#!/usr/bin/env node',
+          'const args = process.argv.slice(2);',
+          "if(args.includes(':(literal)callers.txt')) {",
+          "require('node:fs').writeFileSync(" +
+            JSON.stringify(sourcePid) +
+            ', String(process.pid));setTimeout(() => {}, 29000);',
+          "} else {const result = require('node:child_process').spawnSync('git', args, {env:{...process.env,PATH:" +
+            JSON.stringify(process.env.PATH) +
+            "},stdio:'inherit'});process.exit(result.status ?? 1);}",
+        ].join('\n'),
+        { mode: 0o755 },
+      );
+      await diagnostic('Caller assertion differs.')
+        .getByRole('button', { name: 'Inspect code' })
+        .click();
+      let pid;
+      for (let i = 0; i < 100 && !pid; i++) {
+        pid = Number(await readFile(sourcePid, 'utf8').catch(() => ''));
+        if (!pid) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.ok(pid, 'The annotated source read reached Git');
+      await diagnostic('Caller assertion differs.')
+        .getByRole('button', { name: 'Close code' })
+        .click();
+      await rm(gitShim);
+      await diagnostic('Caller assertion differs.')
+        .getByRole('button', { name: 'Inspect code' })
+        .click();
+      await pipelineView.getByText('Pinned source · callers.txt:500').waitFor();
+      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+      await pipelineView
+        .locator('[data-annotated=true]')
+        .getByText('fixture row 500', { exact: true })
+        .waitFor();
+      await pipelineView.getByRole('button', { name: 'Back to pipeline' }).click();
+      await failedJob('runner setup').click();
+      await pipelineView.getByText('Failed steps · Set up job').waitFor();
+      await pipelineView.getByText(/This job reported no check annotations/).waitFor();
+      await pipelineView.getByRole('button', { name: 'Open original job on GitHub' }).waitFor();
+      await pipelineView.getByRole('button', { name: 'Back to pipeline' }).click();
+      await failedJob('checks access').click();
+      await pipelineView.getByText(/Check annotations are unavailable/).waitFor();
+      await pipelineView.getByRole('button', { name: 'Back to pipeline' }).click();
       await writeFile(join(directory, 'pipeline-done'), '');
       await pipelineView.getByRole('button', { name: 'Refresh' }).click();
       await pipelineRun
-        .getByText('Passed · pull_request · run #7 · 1m 5s', { exact: true })
+        .getByText('Passed · pull_request · run #7 · attempt 2 · 1m 5s', { exact: true })
         .waitFor();
+      await pipelineView.getByRole('button', { name: 'Previous attempt' }).click();
+      await failedJob('check').click();
+      await diagnostic('Expected retries to stop.').waitFor();
+      await pipelineView.getByText(/attempt 1 · job #901/).waitFor();
       await pipelineView.getByRole('button', { name: 'Close' }).click();
+      const readerAfterFailure = await page.evaluate(
+        async (url) => globalThis.reviewer.cachedReview(url),
+        url,
+      );
+      assert.equal(readerAfterFailure.selected, readerBeforeFailure.selected);
+      assert.deepEqual(readerAfterFailure.files, readerBeforeFailure.files);
       await page.getByRole('button', { name: 'Pipeline: Passed', exact: true }).waitFor();
       const general = discussions
         .getByRole('article')
@@ -442,6 +721,7 @@ try {
         0,
       );
       await partialRow.click();
+      await page.getByRole('button', { name: 'Discussion', exact: true }).click();
       const oldQuestion = page
         .locator('.published-threads [role="article"]')
         .filter({ hasText: 'Later visible line?' });
@@ -459,11 +739,52 @@ try {
       await page.getByRole('button', { name: 'Previous page' }).click();
       await discussions.getByText('Later visible line?').waitFor();
       await page.getByRole('button', { name: 'Diff only', exact: true }).click();
-      await discussions.locator('summary').click();
+      await page.getByRole('button', { name: 'Changes', exact: true }).click();
       await page.getByRole('button', { name: 'README.md, added', exact: true }).click();
       const chat = page.getByRole('region', { name: 'Review chat' });
       const files = page.getByRole('navigation', { name: 'Changed files' });
       const fileWidth = () => files.evaluate((el) => el.clientWidth);
+      const treeFolder = files.getByRole('button', { name: 'src', exact: true });
+      await treeFolder.click();
+      await files.getByRole('button', { name: /^src\/reader/ }).waitFor({ state: 'hidden' });
+      await files.getByLabel('Filter files').fill('reader');
+      await files.getByRole('button', { name: /^src\/reader/ }).waitFor();
+      await files.getByLabel('Filter files').fill('');
+      await treeFolder.click();
+      await page.getByRole('button', { name: 'Collapse file tree' }).click();
+      await page
+        .getByRole('button', { name: 'Expand file tree' })
+        .and(page.locator(':focus'))
+        .waitFor();
+      assert.equal(await files.count(), 0);
+      await page.getByRole('button', { name: 'Expand file tree' }).click();
+      await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
+      const chatText = chat.getByLabel('Ask about the diff');
+      await chatText.fill('Does this line wrap?');
+      await page.getByRole('button', { name: 'Collapse review chat' }).click();
+      await page
+        .getByRole('button', { name: 'Expand review chat' })
+        .and(page.locator(':focus'))
+        .waitFor();
+      assert.equal(await chat.count(), 0);
+      await region.getByRole('button', { name: 'Select new line 1', exact: true }).click();
+      await region.getByRole('button', { name: 'Ask assistant', exact: true }).click();
+      await chatText.and(page.locator(':focus')).waitFor();
+      assert.equal(await chatText.inputValue(), 'Does this line wrap?');
+      await chat.getByText(/line 1 \(new\)/).waitFor();
+      await chatText.fill('');
+      const fileBounds = await files.boundingBox(),
+        chatBounds = await chat.boundingBox();
+      assert.equal(fileBounds.y, chatBounds.y);
+      assert.equal(fileBounds.height, chatBounds.height);
+      await page.getByRole('button', { name: 'Review actions' }).click();
+      await page.getByRole('menuitem', { name: 'Approve PR' }).click();
+      const approval = page.getByRole('dialog', { name: 'Submit review to GitHub?' });
+      await approval.getByRole('heading', { name: 'Approve', exact: true }).waitFor();
+      await approval.getByRole('button', { name: 'Back to drafts' }).click();
+      await page.getByLabel('Review decision').selectOption('COMMENT');
+      await page.getByRole('button', { name: 'Save and close' }).click();
+      await page.getByRole('dialog').waitFor({ state: 'hidden' });
       const railDivider = page.getByRole('separator', { name: 'Resize repository sidebar' });
       const sidebarWidth = await sidebar.evaluate((el) => el.clientWidth);
       await railDivider.press('ArrowRight');
@@ -533,6 +854,64 @@ try {
         'https://example.com/docs',
       );
       assert.equal(await answer.locator('img, pre button').count(), 0);
+      const sourcePicker = answer.getByRole('button', { name: '2 sources', exact: true });
+      const centerOffsets = await sourcePicker.evaluate((button) => {
+        function center(element) {
+          const { top, height } = element.getBoundingClientRect();
+          return top + height / 2;
+        }
+        return Array.from(button.children, (child) => Math.abs(center(child) - center(button)));
+      });
+      assert.equal(centerOffsets.length, 3);
+      assert.ok(
+        centerOffsets.every((offset) => offset <= 1),
+        'Source icon, label and arrow align',
+      );
+      await sourcePicker.click();
+      const citedLines = page.getByRole('dialog', { name: 'Cited lines' });
+      await citedLines.getByRole('button', { name: /Open README\.md:1$/ }).waitFor();
+      // An asynchronous refresh may finish while someone is choosing a citation.
+      await page.evaluate(() =>
+        globalThis.document.querySelector('.review-center .refresh').click(),
+      );
+      await page.waitForFunction(
+        () => !globalThis.document.querySelector('.review-center .refresh').disabled,
+      );
+      await citedLines.getByRole('button', { name: /Open README\.md:1$/ }).waitFor();
+      await page.keyboard.press('Escape');
+      await sourcePicker.and(page.locator(':focus')).waitFor();
+      await sourcePicker.press('Enter');
+      const citedReaderLine = citedLines.getByRole('button', { name: /Open src\/reader\.ts:/ });
+      const lineLabel = await citedReaderLine.innerText();
+      await citedReaderLine.click();
+      await citedLines.waitFor({ state: 'hidden' });
+      await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
+      const side = lineLabel.includes('(original)') ? 'old' : 'new';
+      const line = Number(lineLabel.match(/:(\d+)/)[1]);
+      await region
+        .locator('.diff-line[data-selected=true][data-' + side + '-line="' + line + '"]')
+        .waitFor();
+      assert.equal(
+        await answer
+          .getByRole('button', { name: /^Open README\.md:1$/ })
+          .first()
+          .innerText(),
+        'README.md:1',
+      );
+      const sources = answer.locator('details.answer-sources');
+      await sources.getByText('Sources (2)', { exact: true }).click();
+      assert.equal(await sources.locator('li').count(), 2);
+      assert.match(await sources.locator('.source-location').first().innerText(), /README\.md:\d+/);
+      await sources.locator('summary').click();
+      if (preview) {
+        await resize(app, page, 850, 720);
+        await page.getByRole('button', { name: 'Chat', exact: true }).click();
+        await answer
+          .getByRole('heading', { name: 'Review notes' })
+          .evaluate((el) => el.scrollIntoView({ block: 'start' }));
+        await capture(page, 'reading-narrow');
+        await resize(app, page, 1380, 720);
+      }
       await chat.locator('.cite').last().click();
       await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
       await page.locator('.diff-line[data-selected="true"]').waitFor();
@@ -548,6 +927,36 @@ try {
         await chat.getByText('Read from the local PR copy.', { exact: true }).count(),
         2,
       );
+      const callerAnswer = chat
+        .locator('.exchange')
+        .filter({ hasText: 'Compare with the caller' })
+        .last();
+      await callerAnswer.getByRole('button', { name: 'Open callers.txt:500' }).click();
+      const citedSource = page.getByRole('region', { name: 'Cited source' });
+      await citedSource
+        .locator('[data-selected=true][data-new-line="500"]')
+        .getByText('fixture row 500')
+        .waitFor();
+      await citedSource.evaluate((el) => {
+        el.scrollTop = 0;
+      });
+      await page.locator('.review-center .refresh').click();
+      await page.waitForFunction(
+        () => !globalThis.document.querySelector('.review-center .refresh').disabled,
+      );
+      assert.equal(await citedSource.evaluate((el) => el.scrollTop), 0);
+      await callerAnswer.getByRole('button', { name: '2 sources' }).last().click();
+      await page
+        .getByRole('dialog', { name: 'Cited lines' })
+        .getByRole('button', { name: 'Open partial.ts:850 (original)' })
+        .click();
+      await citedSource
+        .locator('[data-selected=true][data-new-line="850"]')
+        .getByText('fixture row 850')
+        .waitFor();
+      await page.getByRole('button', { name: 'Back to changes' }).click();
+      await region.waitFor();
+      await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
       await chat.getByLabel('Context', { exact: true }).selectOption('focused');
       await chat.getByLabel('Ask about the diff').fill('Half-typed question');
       await chat.getByRole('button', { name: 'Summarise PR', exact: true }).click();
@@ -593,9 +1002,10 @@ try {
         exact: true,
       });
       await working.waitFor();
-      await page.getByRole('button', { name: 'Workspace', exact: true }).click();
+      await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
       await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
       await working.waitFor();
+      await capture(page, 'workspace-saved-reviews');
       await trackedRow.getByRole('button', { name: /Tracked PR/ }).click();
       await chat.getByText('Waiting for cancellation', { exact: true }).waitFor();
       assert.equal(
@@ -613,7 +1023,7 @@ try {
       await chat.getByLabel('Ask about the diff').fill('Answer while away');
       await chat.getByRole('button', { name: 'Send', exact: true }).click();
       await chat.getByText('Still working', { exact: true }).waitFor();
-      await page.getByRole('button', { name: 'Workspace', exact: true }).click();
+      await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
       await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
       await working.waitFor();
       await writeFile(releaseAnswer + '-away', '');
@@ -648,7 +1058,7 @@ try {
       await page.getByRole('button', { name: 'Comment on line', exact: true }).click();
       await page.getByLabel('Comment', { exact: true }).fill('Discard this draft');
       await page.getByRole('button', { name: 'Save draft', exact: true }).click();
-      await page.getByRole('button', { name: /Review drafts 3/ }).click();
+      await page.getByRole('button', { name: /Finish review 3/ }).click();
       await page
         .locator('.draft-card')
         .filter({ hasText: 'Discard this draft' })
@@ -695,17 +1105,36 @@ try {
       await inline.getByLabel('Comment', { exact: true }).fill('Check this range together.');
       await inline.getByRole('button', { name: 'Save draft' }).click();
       await region.getByText('Check this range together.', { exact: true }).waitFor();
+      await region.getByRole('button', { name: 'Ask assistant', exact: true }).click();
+      await chat.getByText(/lines 40–42 \(new\)/).waitFor();
       await capture(page, 'inline-range');
-      await page.getByRole('button', { name: 'Pin question', exact: true }).click();
-      const composer = page.getByRole('dialog', { name: 'Pin a question' });
-      await composer
-        .getByLabel('Question', { exact: true })
-        .fill('Could concurrent retries bypass this guard?');
-      await composer.getByRole('button', { name: 'Save pinned question' }).click();
-      await page
-        .getByRole('button', { name: 'Could concurrent retries bypass this guard?', exact: true })
-        .waitFor();
-
+      if (preview) {
+        await page.getByRole('button', { name: 'Collapse sidebar' }).click();
+        await resize(app, page, 1731, 909);
+        await page.getByRole('button', { name: 'Review actions', exact: true }).click();
+        await page.getByRole('menuitem', { name: 'Approve PR' }).waitFor();
+        await chat
+          .locator('.chat-answer')
+          .last()
+          .getByRole('heading', { name: 'Review notes' })
+          .evaluate((el) => el.scrollIntoView({ block: 'start' }));
+        await capture(page, 'review-workspace');
+        await page.keyboard.press('Escape');
+        await resize(app, page, 1380, 720);
+        await page.getByRole('button', { name: 'Expand sidebar' }).click();
+      }
+      // A question saved with an older version still follows its hunk across a push.
+      await page.evaluate(async (pr) => {
+        const view = await globalThis.reviewer.cachedReview(pr);
+        await globalThis.reviewer.pinQuestion({
+          url: pr,
+          revision: view.revision,
+          path: 'src/reader.ts',
+          hunk: 1,
+          id: globalThis.crypto.randomUUID(),
+          question: 'Could concurrent retries bypass this guard?',
+        });
+      }, url);
       await region.evaluate((el) => {
         el.scrollTop = 160;
       });
@@ -732,9 +1161,11 @@ try {
   const reopened = await launch();
   try {
     const page = await reopened.firstWindow();
+    page.setDefaultTimeout(15000);
     await resize(reopened, page, 1380, 720);
     if (!live) {
       const files = page.getByRole('navigation', { name: 'Changed files' });
+      await page.getByRole('button', { name: 'Collapse sidebar' }).waitFor();
       await files.waitFor();
       assert.ok(Math.abs((await files.evaluate((el) => el.clientWidth)) - restoredFilesWidth) < 3);
       await page.getByRole('heading', { name: 'Review notes' }).first().waitFor();
@@ -756,7 +1187,7 @@ try {
           const { palette, accent, font } = globalThis.document.documentElement.dataset;
           return { palette, accent, font };
         }),
-        { palette: 'ink', accent: 'violet', font: 'humanist' },
+        { palette: 'ink', accent: 'green', font: 'humanist' },
       );
       await page
         .getByText(/claude · fixture-model.*Full PR/)
@@ -774,7 +1205,7 @@ try {
       await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
       await page.getByText(/Showing the saved revision/).waitFor();
       assert.equal(await region.evaluate((el) => el.scrollTop), 160);
-      await page.getByRole('button', { name: /Review drafts 3/ }).click();
+      await page.getByRole('button', { name: /Finish review 3/ }).click();
       await page.getByRole('dialog').getByText('Edited deletion note', { exact: true }).waitFor();
       assert.equal(await page.getByLabel('Review summary').inputValue(), 'Grouped review summary');
       await rm(join(directory, 'offline'));
@@ -820,7 +1251,7 @@ try {
       assert.equal(payload.comments[2].start_line, 40);
       assert.equal(payload.comments[2].start_side, 'RIGHT');
       assert.equal(payload.event, 'COMMENT');
-      await page.getByRole('button', { name: /Review drafts 0/ }).waitFor();
+      await page.getByRole('button', { name: 'Finish review', exact: true }).waitFor();
       const chat = page.getByRole('region', { name: 'Review chat' });
       await page.getByRole('button', { name: 'Draft on new line 40', exact: true }).click();
       await page.getByLabel('Comment', { exact: true }).fill('Check the original retry.');
@@ -835,16 +1266,87 @@ try {
       await page.getByRole('button', { name: 'Open update' }).waitFor();
       await page.getByRole('button', { name: 'Reviewed ✓' }).waitFor();
       await page.getByText('Hunk 2 of 2').waitFor();
+      const fullTree = page.getByRole('navigation', { name: 'Changed files' });
+      const fullChat = page.getByRole('region', { name: 'Review chat' });
+      const fullTreeWidth = await fullTree.evaluate((el) => el.clientWidth);
+      const fullChatWidth = await fullChat.evaluate((el) => el.clientWidth);
       await page.getByRole('button', { name: 'Open update' }).click();
       const delta = page.getByRole('region', { name: 'Changes since checkpoint' });
       await delta.getByText('+guard retries', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Pipeline: Failed' }).click();
+      const revisedPipeline = page.getByRole('dialog', { name: 'Pipeline' });
+      await revisedPipeline
+        .locator('.pipeline-job')
+        .filter({ has: page.locator('summary').getByText('check', { exact: true }) })
+        .getByRole('button', { name: 'Investigate failure' })
+        .click();
+      await revisedPipeline.getByText(/attempt 1 · job #911 · cccccccc/).waitFor();
+      await revisedPipeline
+        .getByRole('listitem')
+        .filter({ hasText: 'Guard still permits the second retry.' })
+        .getByRole('button', { name: 'Inspect code' })
+        .click();
+      await revisedPipeline
+        .locator('[data-annotated=true]')
+        .getByText('+guard retries', { exact: true })
+        .waitFor();
+      await revisedPipeline.getByRole('button', { name: 'Close', exact: true }).click();
       const queue = page.getByRole('navigation', { name: 'Re-review queue' });
-      const queueWidth = await queue.evaluate((el) => el.clientWidth);
-      await page
-        .getByRole('separator', { name: 'Resize re-review queue and diff' })
-        .press('ArrowRight');
-      assert.ok((await queue.evaluate((el) => el.clientWidth)) > queueWidth);
+      const folder = queue.getByRole('button', { name: 'src', exact: true });
+      const readerFile = queue.getByRole('button', { name: /src\/reader.ts.*Needs another look/ });
+      await readerFile.waitFor();
+      await folder.click();
+      await readerFile.waitFor({ state: 'hidden' });
+      await page.getByRole('button', { name: 'Full PR', exact: true }).click();
+      assert.equal(
+        await page
+          .getByRole('navigation', { name: 'Changed files' })
+          .getByRole('button', { name: 'src', exact: true })
+          .getAttribute('aria-expanded'),
+        'false',
+      );
+      await page.getByRole('button', { name: 'Since my last review' }).click();
+      await queue.getByLabel('Filter files').fill('reader');
+      await readerFile.waitFor();
+      await queue.getByLabel('Filter files').fill('');
+      await folder.click();
 
+      const collapseSidebar = page.getByRole('button', { name: 'Collapse sidebar' });
+      const startedExpanded = await collapseSidebar.isVisible();
+      if (startedExpanded) await collapseSidebar.click();
+      if (process.platform === 'darwin') {
+        const navBounds = await queue.boundingBox();
+        const backBounds = await page
+          .getByRole('button', { name: 'Back to workspace' })
+          .boundingBox();
+        const buttons = await reopened.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].getWindowButtonPosition(),
+        );
+        // Three native buttons occupy roughly 60 points from the first button's origin.
+        assert.ok(navBounds && navBounds.x >= buttons.x + 60 + 12);
+        assert.ok(backBounds && backBounds.x >= navBounds.x + navBounds.width);
+      }
+      await resize(reopened, page, 850, 720);
+      await page.getByRole('button', { name: 'Files', exact: true }).click();
+      await readerFile.click();
+      await delta.getByText('+guard retries', { exact: true }).waitFor();
+      await resize(reopened, page, 1380, 720);
+      if (startedExpanded) await page.getByRole('button', { name: 'Expand sidebar' }).click();
+      const queueWidth = await queue.evaluate((el) => el.clientWidth);
+      const separator = page.getByRole('separator', { name: 'Resize re-review queue and diff' });
+      const divider = await separator.boundingBox();
+      assert.ok(divider);
+      const x = divider.x + divider.width / 2;
+      const y = divider.y + divider.height / 2;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x + 48, y, { steps: 6 });
+      await page.mouse.up();
+      assert.ok(Math.abs((await queue.evaluate((el) => el.clientWidth)) - queueWidth - 48) <= 3);
+      await page.getByRole('button', { name: 'Full PR', exact: true }).click();
+      assert.ok(Math.abs((await fullTree.evaluate((el) => el.clientWidth)) - fullTreeWidth) < 3);
+      assert.ok(Math.abs((await fullChat.evaluate((el) => el.clientWidth)) - fullChatWidth) < 3);
+      await page.getByRole('button', { name: 'Since my last review' }).click();
       await page.getByText('1 outdated draft', { exact: true }).waitFor();
       await page
         .getByRole('navigation', { name: 'Re-review queue' })
@@ -871,15 +1373,43 @@ try {
 
       await writeFile(releaseAnswer, '');
       await page.getByRole('button', { name: 'Full PR', exact: true }).click();
+      // A saved citation still opens its original revision after a push and restart.
+      const savedAnswer = chat
+        .locator('.exchange')
+        .filter({ hasText: 'Compare with the caller' })
+        .last();
+      const savedCaller = savedAnswer.getByRole('button', { name: 'Open callers.txt:500' });
+      await savedCaller.click();
+      const snapshot = page.getByRole('region', { name: 'Cited source' });
+      await snapshot.locator('[data-selected=true]').getByText('fixture row 500').waitFor();
+      await page.getByRole('button', { name: 'Previous page' }).click();
+      await snapshot.getByText('fixture row 1', { exact: true }).waitFor();
+      await savedCaller.click();
+      await snapshot.locator('[data-selected=true]').getByText('fixture row 500').waitFor();
+      await page.getByRole('button', { name: 'Back to changes' }).click();
       const late = chat.locator('.exchange').filter({ hasText: 'Answer after the push' });
       await late.getByText(/Evidence needs another look/).waitFor();
-      await late.locator('.cite').first().click();
+      await late
+        .getByRole('button', { name: /^Open src\/reader\.ts:/ })
+        .first()
+        .click();
       await late.getByText('Original hunk', { exact: true }).click();
       await late
         .locator('blockquote details pre')
         .filter({ hasText: /new line 1/ })
         .waitFor();
-      await page.getByRole('button', { name: /Review drafts 1/ }).click();
+      const localPrompt = 'Read the caller before reviewing the update.';
+      await fullChat.getByRole('button', { name: 'Review instructions' }).click();
+      const instructions = page.getByRole('dialog', { name: 'Review instructions' });
+      await instructions.getByLabel('Review prompt').fill(localPrompt);
+      await instructions.getByRole('button', { name: 'Close' }).click();
+      await page.getByRole('button', { name: 'Since my last review' }).click();
+      await delta.waitFor();
+      await page.getByRole('button', { name: 'Full PR', exact: true }).click();
+      await fullChat.getByRole('button', { name: 'Review instructions' }).click();
+      assert.equal(await instructions.getByLabel('Review prompt').inputValue(), localPrompt);
+      await instructions.getByRole('button', { name: 'Close' }).click();
+      await page.getByRole('button', { name: /Finish review 1/ }).click();
       assert.equal(
         await page.getByRole('button', { name: 'Preview submission' }).isDisabled(),
         true,
@@ -894,6 +1424,12 @@ try {
       await page.getByRole('button', { name: 'Open update' }).click();
       await page.getByText('Rewritten history', { exact: true }).waitFor();
       await delta.getByText('+rewritten guard', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Summarise pull request #12', exact: true }).click();
+      await chat
+        .locator('.exchange')
+        .filter({ hasText: 'Summarise this whole pull request.' })
+        .getByText(/dddddddd · Full PR/)
+        .waitFor();
       await page.getByRole('button', { name: 'Save review checkpoint' }).click();
       await page
         .getByRole('button', { name: 'Save review checkpoint' })
@@ -946,13 +1482,23 @@ try {
       assert.equal(await inbox.getByText('Added coverage for concurrent retries.').count(), 0);
       await inbox.getByRole('button', { name: 'Close' }).click();
     }
-    await page.getByRole('button', { name: /Workspace/ }).click();
+    await page.getByRole('button', { name: 'Back to workspace' }).click();
     await page.getByLabel('GitHub pull request URL').waitFor();
     if (!live) {
       // Opening the new pull request clears its highlight and the count on the app icon.
       const freshRow = page.locator('.monitored-pr[data-new]');
       await freshRow.getByRole('button', { name: /Fresh PR/ }).click();
       await freshRow.waitFor({ state: 'detached' });
+      await page.getByRole('button', { name: /^src\/reader\.ts, modified/ }).click();
+      const reminder = page.getByRole('region', { name: 'Review lessons for these changes' });
+      await reminder.getByText('Check the callers before changing this behaviour.').waitFor();
+      await reminder.getByRole('button', { name: 'Source discussion · PR #12' }).waitFor();
+      await page.getByRole('button', { name: 'Next hunk' }).click();
+      assert.equal(await reminder.count(), 0);
+      await page.getByRole('button', { name: 'Overview', exact: true }).click();
+      const library = page.getByRole('region', { name: 'Repository review lessons' });
+      await library.getByRole('button', { name: 'Forget lesson' }).click();
+      await library.waitFor({ state: 'detached' });
       if (process.platform !== 'win32')
         assert.equal(await reopened.evaluate(({ app }) => app.getBadgeCount()), 0);
       assert.equal((await reopened.evaluate(() => globalThis.shownAlerts)).length, 1);

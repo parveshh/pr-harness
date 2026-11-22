@@ -19,7 +19,7 @@ The workspace also supports repository and author monitoring with new pull reque
 
 1. **Validate the two-push workflow with reviewers.** Record whether they find a partially addressed concern, return to the right hunk, and publish the intended comment. Include a fork PR, an outdated thread, and a cold source download in the release checks.
 2. **Measure large PRs.** Time first diff, full-file loading and scrolling, and cross-file answers. The current full-file reader pages long text. Git source reads have a 2 MiB limit per file. GitHub can return an incomplete file inventory or patch.
-3. **Try guided reading order and PR description checks.** These are proposed experiments. Pinning a question across pushes is already implemented.
+3. **Try guided reading order and PR description checks.** These are proposed experiments. The two-push trial can use a question saved in an earlier version.
 4. **Evaluate automatic explanations and batch re-analysis.** Today reviewers request an explanation or ask a chat question. Use trial feedback and model latency before choosing a default.
 5. **Prepare desktop distribution.** Local development and build scripts exist. Packaging, signing, and release testing on each intended delivery platform remain open.
 
@@ -77,7 +77,7 @@ GPUI is a candidate if the diff viewer becomes a native editor with custom GPU r
 
 ## Features worth trying with reviewers
 
-- **Pin a question across pushes.** Attach a question to a hunk and the evidence behind it. A later push can bring back that question with the relevant before-and-after lines. The implemented pinning flow is ready for the two-push usability trial.
+- **Revisit a previously pinned question.** Start the trial with a workspace containing a question saved against the first revision. After the second push, ask the reviewer to find the question under **Pinned questions** or beside its hunk in **Since my last review** and decide whether the change addresses it.
 - **Follow a behaviour across files.** Offer a reading order such as “request handler → retry policy → persistence → test.” Show why each file is next, with clickable references. Compare it with ordinary file-order navigation on the same PR.
 - **Check the PR description against the diff.** Pair an author's claim such as “existing clients keep the same response” with the implementation and tests that bear on it. When evidence is missing, offer a question the reviewer can investigate.
 
@@ -97,3 +97,5 @@ For the first usability trial, give reviewers a two-push PR with a concern that 
 ## Continuing in a new session
 
 Start with the implementation status and open work at the top of this plan. The [README](./README.md) explains how to run the desktop app, and [AGENTS.md](./AGENTS.md) defines the independent review loop. The reader lives in [Reader.tsx](./client/src/Reader.tsx), discussion placement and recovery in [PrDiscussions.tsx](./client/src/PrDiscussions.tsx), and pinned Git reads in [pr-source.ts](./desktop/pr-source.ts). The [desktop fixture](./scripts/desktop-smoke.mjs) exercises the workflow using an isolated Git repository, GitHub CLI, and agent adapters.
+
+[Implementation scope and acceptance fixtures for cross-PR comparisons and failed-check investigations](./future-review-features.md)

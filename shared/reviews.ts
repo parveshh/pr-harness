@@ -1,3 +1,4 @@
+import type { CrossPrBridge } from './cross-pr.js';
 import type { WorkspaceBridge } from './workspace.js';
 import type { PipelineBridge } from './pipelines.js';
 import type { PinnedQuestion, QuestionKey, PinQuestion, QuestionEvidence } from './questions.js';
@@ -5,7 +6,7 @@ import type { ChangeEvidence } from './rereview.js';
 import type { Accent, Appearance } from './appearance.js';
 import { z } from 'zod';
 import type { PublishBridge } from './publish.js';
-import type { AssistantBridge } from './assistant.js';
+import type { AssistantBridge, CitedSourceKey } from './assistant.js';
 import type { Checkpoint, FileKey, ReaderView } from './reader.js';
 
 // Store a single canonical URL even when a reviewer copies a link from the Files tab.
@@ -27,7 +28,7 @@ export const savedReview = z.object({ url: pullRequestUrl, savedAt: z.iso.dateti
 export const reviewList = z.array(savedReview);
 export type SavedReview = z.infer<typeof savedReview>;
 export interface ReviewerBridge
-  extends AssistantBridge, PublishBridge, WorkspaceBridge, PipelineBridge {
+  extends AssistantBridge, PublishBridge, WorkspaceBridge, PipelineBridge, CrossPrBridge {
   readonly integratedTitleBar: boolean;
   getAppearance(): Promise<Appearance>;
   saveAppearance(value: Appearance): Promise<void>;
@@ -51,6 +52,7 @@ export interface ReviewerBridge
   pinQuestion(request: PinQuestion): Promise<PinnedQuestion[]>;
   addressQuestion(key: QuestionKey, addressed: boolean): Promise<PinnedQuestion[]>;
   questionEvidence(key: QuestionKey): Promise<QuestionEvidence>;
+  citedSource(key: CitedSourceKey): Promise<string>;
   fullFile(key: FileKey): Promise<string>;
   filePatch(key: FileKey): Promise<string>;
   remember(checkpoint: Checkpoint): Promise<void>;

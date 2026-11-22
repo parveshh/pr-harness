@@ -130,16 +130,32 @@ code {
   padding: 0;
 }
 .shell main li {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 20px 0;
   border-bottom: 1px solid var(--line);
-  overflow-wrap: anywhere;
 }
-.shell main li code {
-  margin-left: 6px;
+.shell main .saved-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 8px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  text-align: start;
+}
+.shell main .saved-link:hover {
+  background: var(--hover);
+}
+.saved-link strong {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.saved-link svg {
+  flex: none;
+  color: var(--muted);
+}
+.saved-link time {
+  margin-inline-start: auto;
 }
 time {
   white-space: nowrap;

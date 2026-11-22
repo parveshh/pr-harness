@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ClipboardList, MessageSquarePlus } from 'lucide-react';
+import { Button, Menu, MenuItem, MenuTrigger, Popover } from 'react-aria-components';
+import { Check, ChevronDown, ClipboardList, MessageSquarePlus } from 'lucide-react';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 import { readableError } from '../../shared/assistant.js';
 import type { Bundle, Draft, Edit, CommentAnchor } from '../../shared/publish.js';
@@ -102,18 +103,48 @@ export function DraftReview({
     setPanel('closed');
     setError('');
   };
-  async function saveDetails() {
-    if (summary === bundle.summary && event === bundle.event) return bundle;
-    return edit({ action: 'details', summary, event });
+  async function saveDetails(body = summary, decision = event) {
+    if (body === bundle.summary && decision === bundle.event) return bundle;
+    return edit({ action: 'details', summary: body, event: decision });
+  }
+  function previewSubmission(body: string, decision: Bundle['event']) {
+    work(async () => {
+      const saved = await saveDetails(body, decision);
+      setActor(await window.reviewer.reviewIdentity());
+      setPreview({ version: saved.version, revision: view.revision });
+      setPanel('preview');
+    });
   }
   function receipt() {
     work(() => window.reviewer.openReceipt(url));
   }
   return (
     <section className="draft-tools" aria-label="Pull request review">
-      <button className="review-drafts" onClick={openReview}>
-        <ClipboardList size={15} /> Review drafts <span>{bundle.comments.length}</span>
-      </button>
+      <div className="review-split">
+        <button className="review-drafts" onClick={openReview}>
+          <Check size={15} /> Finish review{' '}
+          {bundle.comments.length > 0 && <span>{bundle.comments.length}</span>}
+        </button>
+        <MenuTrigger>
+          <Button className="review-options" aria-label="Review actions">
+            <ChevronDown size={16} />
+          </Button>
+          <Popover placement="bottom end" className="review-menu">
+            <Menu
+              aria-label="Review actions"
+              onAction={() => {
+                openReview();
+                setEvent('APPROVE');
+                if (!stale) previewSubmission(bundle.summary, 'APPROVE');
+              }}
+            >
+              <MenuItem id="approve" isDisabled={locked || busy}>
+                <Check size={15} /> Approve PR
+              </MenuItem>
+            </Menu>
+          </Popover>
+        </MenuTrigger>
+      </div>
       {stale > 0 && (
         <small>
           {stale} outdated {stale === 1 ? 'draft' : 'drafts'}
@@ -337,14 +368,7 @@ export function DraftReview({
                       </button>
                       <button
                         disabled={busy || stale > 0 || !valid}
-                        onClick={() =>
-                          work(async () => {
-                            const saved = await saveDetails();
-                            setActor(await window.reviewer.reviewIdentity());
-                            setPreview({ version: saved.version, revision: view.revision });
-                            setPanel('preview');
-                          })
-                        }
+                        onClick={() => previewSubmission(summary, event)}
                       >
                         Preview submission
                       </button>

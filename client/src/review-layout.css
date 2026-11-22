@@ -1,0 +1,518 @@
+.review-studio .workbench {
+  height: 100%;
+  border: 0;
+}
+.review-studio .review-center {
+  width: 100%;
+  height: 100%;
+  background: var(--paper);
+}
+.review-center > article {
+  flex: 1;
+}
+.review-studio .review-center > header,
+.shell > .home-bar {
+  min-height: 32px;
+  height: auto;
+  padding: 6px 12px;
+  gap: 6px;
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+}
+.integrated-titlebar .studio[data-sidebar-collapsed='true'] :is(.review-center, .shell) > header {
+  padding-left: 12px;
+}
+.review-studio .pr-heading {
+  padding: 6px 17px 10px;
+  gap: 12px;
+}
+.review-studio .overview h1,
+.shell main > h1 {
+  font-size: clamp(1.2rem, 1.58vw, 1.75rem);
+  letter-spacing: -0.018em;
+  line-height: 1.24;
+}
+.review-studio .pr-meta {
+  margin-top: 6px;
+}
+.review-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  gap: 8px;
+}
+.review-tabs > button,
+.review-tabs > .pipeline-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 0;
+  padding: 8px 6px;
+  font: inherit;
+  font-size: 0.8rem;
+}
+.review-tabs > button[aria-pressed='true'] {
+  border-color: var(--control);
+  color: var(--control);
+}
+.pr-detail {
+  max-height: 35%;
+  overflow: auto;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.review-split {
+  display: inline-flex;
+  align-items: stretch;
+  white-space: nowrap;
+}
+.review-split .review-drafts {
+  border-radius: 6px 0 0 6px;
+}
+.review-split .review-options {
+  display: grid;
+  place-items: center;
+  border-radius: 0 6px 6px 0;
+  padding: 5px 7px;
+  border-left: 1px solid color-mix(in srgb, var(--control-ink) 45%, transparent);
+}
+.review-menu {
+  min-width: 142px;
+  color: var(--ink);
+  background: var(--raised);
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  padding: 4px;
+  z-index: 110;
+  box-shadow: 0 4px 16px #0004;
+}
+.review-menu [role='menuitem'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  padding: 8px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.review-menu [data-focused] {
+  background: var(--hover);
+}
+.review-menu [data-disabled] {
+  opacity: 0.5;
+}
+.review-studio .changed-tree .nav-heading {
+  padding: 12px 12px 10px;
+  gap: 8px;
+}
+.pane-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+}
+.review-studio .pane-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  color: var(--muted);
+  background: transparent;
+}
+.review-studio .pane-toggle:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.changed-tree .file-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  margin: 4px 0 0;
+  background: var(--editor);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+}
+.file-filter input {
+  width: 100%;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-weight: 400;
+  border: 0;
+  padding: 2px;
+}
+.changed-tree .files-scroll {
+  padding: 8px 5px;
+}
+.changed-tree ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.changed-tree li {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: block;
+}
+.changed-tree li > ul {
+  padding-left: 10px;
+}
+.changed-tree .directory-row,
+.changed-tree .file-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+}
+.changed-tree .directory-row:disabled {
+  opacity: 1;
+}
+.changed-tree .tree-entry {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.changed-tree .tree-entry small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+.changed-tree .tree-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.changed-tree .file-row > svg,
+.changed-tree .directory-row > svg {
+  flex: none;
+}
+.changed-tree .file-row[aria-current='true'] {
+  background: color-mix(in srgb, var(--control) 25%, var(--panel));
+  box-shadow: none;
+}
+.changed-tree .directory-row:hover {
+  background: var(--hover);
+}
+.workbench .file-heading {
+  gap: 5px 10px;
+  padding: 7px 12px;
+}
+.workbench .file-view-toggle {
+  margin-left: auto;
+  border: 0;
+  padding: 0;
+}
+.review-center .file-heading > p {
+  font-size: 0.65rem;
+}
+.workbench .hunk-nav {
+  padding: 3px 12px;
+}
+.workbench .hunk-nav button {
+  padding: 3px 6px;
+  font-size: 0.68rem;
+}
+.workbench .chat-heading {
+  background: transparent;
+  padding: 10px 12px 3px;
+}
+.chat-model {
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.chat-model .agent-trigger {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  background: var(--toolbar);
+  padding: 5px 7px;
+}
+.review-studio .chat-question {
+  padding: 2px 0;
+  background: transparent;
+}
+.chat-speaker {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+}
+.assistant-speaker {
+  margin-top: 15px;
+}
+.review-studio .exchange > small {
+  margin-left: 0;
+}
+.review-studio .chat-log {
+  padding: 1rem clamp(12px, 1.1vw, 24px);
+}
+.review-studio .line-tools {
+  position: sticky;
+  right: 0;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  background: var(--panel);
+  border-radius: 4px;
+}
+.review-studio .line-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  font:
+    500 0.72rem/1.25 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+}
+.review-studio .inline-note {
+  margin: 5px 12px 5px clamp(10px, 8%, 85px);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--control);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.review-studio .inline-comments {
+  background: transparent;
+  border: 0;
+}
+.draft-byline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+@container (max-width:960px) {
+  .review-studio > .pane-switch {
+    padding-left: 12px;
+  }
+  .workbench .pane-toggle {
+    display: none;
+  }
+}
+.review-studio .pane-title h2,
+.review-studio .chat-heading h2 {
+  font-size: 1.15rem;
+  letter-spacing: -0.025em;
+}
+.review-studio .diff-content {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+}
+.changed-tree .file-row,
+.changed-tree .directory-row {
+  font-size: 0.9rem;
+}
+.review-studio .review-tabs > button {
+  font-size: 0.875rem;
+}
+.review-studio .chat-heading .agent-glyph {
+  display: none;
+}
+.review-studio .chat-speaker {
+  font-size: 0.9rem;
+}
+.review-studio .chat-speaker > svg,
+.draft-byline > svg {
+  box-sizing: content-box;
+  border-radius: 50%;
+  background: var(--control);
+  color: var(--control-ink);
+  padding: 4px;
+}
+.review-studio .assistant-speaker > svg {
+  background: var(--raised);
+  color: var(--ink);
+}
+.review-studio .review-split button {
+  background: var(--control);
+  font-size: 0.875rem;
+}
+.review-studio .review-split button:hover {
+  background: var(--control-hover);
+}
+.review-studio .workbench .file-heading {
+  border-bottom: 1px solid var(--line);
+}
+.review-studio .chat-model .agent-trigger {
+  margin: 2px 0;
+}
+
+/* A local reading measure lets the two panes resize without stretching paragraphs. */
+.review-chat .exchange,
+.review-chat .chat-progress {
+  max-inline-size: 64ch;
+  margin-inline: auto;
+}
+.review-studio .chat-answer,
+.review-studio .chat-question {
+  font-size: 1rem;
+  margin-inline: 0;
+  max-inline-size: 64ch;
+}
+.review-studio .chat-question {
+  margin-block: 0.45rem 1.15rem;
+}
+.review-studio .chat-answer {
+  margin-block: 0.65rem 1.25rem;
+}
+.review-chat .chat-markdown {
+  line-height: 1.72;
+  word-break: normal;
+  hyphens: manual;
+}
+.review-chat .chat-markdown > :is(p, ol, ul, pre, blockquote, .markdown-table) {
+  margin-block: 1em;
+}
+.review-chat .chat-markdown > :first-child {
+  margin-block-start: 0;
+}
+.review-chat .chat-markdown > :last-child {
+  margin-block-end: 0;
+}
+.review-chat .chat-markdown li + li {
+  margin-block-start: 0.6em;
+}
+.review-studio .chat-markdown :is(h1, h2, h3, h4) {
+  letter-spacing: -0.012em;
+  line-height: 1.4;
+}
+.review-studio .chat-markdown :is(a, button).cite {
+  display: inline-block;
+  min-inline-size: 1.35em;
+  margin-inline: 0.16em;
+  padding: 0.12em 0.32em;
+  background: color-mix(in srgb, var(--control) 12%, var(--panel));
+  border: 0;
+  border-radius: 4px;
+  color: var(--control);
+  font:
+    600 0.75em/1.3 system-ui,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  text-decoration: none;
+  vertical-align: baseline;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+.review-studio .chat-markdown .cite:hover {
+  text-decoration: underline;
+}
+.answer-sources {
+  margin-block: 1rem 0.2rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.review-chat .answer-sources summary {
+  cursor: pointer;
+  font-size: inherit;
+  font-weight: 550;
+}
+.review-chat .answer-sources ul {
+  margin: 0.5em 0;
+  padding-inline-start: 2em;
+}
+.review-chat .answer-sources li + li {
+  margin-block-start: 0.25em;
+}
+.review-chat .answer-sources .source-location {
+  display: inline;
+  padding: 0.15em 0;
+  font: inherit;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--control);
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.review-studio
+  :is(.inline-note p, .pr-detail > .chat-markdown, .discussion-message .chat-markdown) {
+  font-size: 1rem;
+  max-inline-size: 64ch;
+  line-height: 1.65;
+}
+.review-studio .inline-note p {
+  margin-block: 0.55em 0.7em;
+}
+.review-studio .tree-name {
+  line-height: 1.55;
+}
+.review-studio .diff-content {
+  font-variant-ligatures: none;
+}
+.review-studio .diff-content .gutter {
+  font-variant-numeric: tabular-nums;
+}
+
+.review-studio .chat-markdown button.source-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35em;
+  padding: 0.22em 0.45em;
+  line-height: 1.15;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.source-picker-trigger > svg {
+  display: block;
+  flex: none;
+  inline-size: 1em;
+  block-size: 1em;
+}
+.citation-popover {
+  max-width: min(28rem, calc(100vw - 2rem));
+  max-height: min(20rem, var(--available-height, 50vh));
+  overflow: auto;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 4px 16px #0004;
+  font-size: 0.875rem;
+  z-index: 110;
+}
+.citation-popover ul {
+  list-style: none;
+  margin: 0.4em 0 0;
+  padding: 0;
+}
+.citation-popover .source-location {
+  display: block;
+  width: 100%;
+  padding: 0.4em 0.55em;
+  border: 0;
+  border-radius: 0.25rem;
+  text-align: start;
+  font: inherit;
+  overflow-wrap: anywhere;
+  background: transparent;
+  color: var(--ink);
+}
+.citation-popover .source-location:is(:hover, :focus-visible) {
+  background: var(--hover);
+}

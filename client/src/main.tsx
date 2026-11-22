@@ -5,15 +5,16 @@ import { applyTypography } from './WorkspacePanels.js';
 import { defaultTypography } from '../../shared/workspace.js';
 import { Workspace } from './Workspace.js';
 import './studio.css';
+import './review-layout.css';
 if (window.reviewer.integratedTitleBar)
   document.documentElement.classList.add('integrated-titlebar');
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing workspace root.');
 const app = createRoot(root);
 void Promise.all([
-  window.reviewer.getAppearance().catch(() => 'petrol' as const),
+  window.reviewer.getAppearance().catch(() => 'ink' as const),
   window.reviewer.typography().catch(() => defaultTypography),
-  window.reviewer.getAccent().catch(() => 'neutral' as const),
+  window.reviewer.getAccent().catch(() => 'green' as const),
 ]).then(([theme, type, accent]) => {
   document.documentElement.dataset.palette = theme;
   document.documentElement.dataset.accent = accent;

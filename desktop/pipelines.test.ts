@@ -33,7 +33,7 @@ const run = (id: number, status: string, conclusion: string | null) => ({
 await test('runs, jobs and steps are read for the pinned commit, and only unfinished runs are read again', async () => {
   const requests: string[] = [];
   let building = true;
-  const read = pipelineReader((endpoint) => {
+  const { read } = pipelineReader((endpoint) => {
     requests.push(endpoint);
     if (endpoint.includes('/actions/runs?'))
       return Promise.resolve(
@@ -53,6 +53,8 @@ await test('runs, jobs and steps are read for the pinned commit, and only unfini
         jobs: [
           {
             id: 30,
+            head_sha: head,
+            run_id: Number(/runs\/(\d+)/.exec(endpoint)?.[1]),
             name: 'build',
             status: live ? 'in_progress' : 'completed',
             conclusion: live ? null : endpoint.includes('/runs/3/') ? 'failure' : 'success',
@@ -106,7 +108,7 @@ await test('runs, jobs and steps are read for the pinned commit, and only unfini
   assert.equal(overallOutcome(second.runs), 'failed');
   await assert.rejects(read(url, 'main', signal), /no pinned commit/);
   const unavailable = pipelineReader(() => Promise.reject(new Error('HTTP 404')));
-  await assert.rejects(unavailable(url, head, signal), /Could not read GitHub Actions runs/);
+  await assert.rejects(unavailable.read(url, head, signal), /Could not read GitHub Actions runs/);
 });
 
 await test('overall standing ranks failure over work in progress over a pass, counting only the newest run of each workflow', () => {

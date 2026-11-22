@@ -10,7 +10,7 @@ const pr = z.object({
   title: z.string(),
   user: author.nullable(),
 });
-async function pages<T>(
+export async function pages<T>(
   endpoint: string,
   schema: z.ZodType<T>,
   signal: AbortSignal,

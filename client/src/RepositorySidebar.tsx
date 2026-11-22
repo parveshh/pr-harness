@@ -1,10 +1,11 @@
+import { CrossPrComparison } from './CrossPrComparison.js';
 import { useEffect, useState, type FormEvent } from 'react';
 import { login, readableError, repoName, type Repository } from '../../shared/assistant.js';
 
 import {
   BookMarked,
   GitPullRequest,
-  Inbox,
+  GitCompareArrows,
   Layers2,
   MoreHorizontal,
   PanelLeftClose,
@@ -49,6 +50,7 @@ export function RepositorySidebar({
   const [repos, setRepos] = useState<Repository[]>([]),
     [adding, setAdding] = useState(false),
     [name, setName] = useState(''),
+    [comparison, setComparison] = useState<string | null>(null),
     [manage, setManage] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
@@ -145,6 +147,22 @@ export function RepositorySidebar({
     >
       <nav className="workspace-rail" aria-label="Workspace tools">
         <button
+          onClick={onHome}
+          aria-label="Workspace"
+          title="Workspace"
+          aria-current={!activeUrl ? 'page' : undefined}
+        >
+          <Layers2 size={21} />
+        </button>
+        <button
+          onClick={onToggle}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={collapsed ? 'Show repositories' : 'Hide repositories'}
+        >
+          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        </button>
+        <button
           title="Review replies"
           aria-label={'Review replies, ' + unread + ' unread'}
           onClick={openInbox}
@@ -161,32 +179,8 @@ export function RepositorySidebar({
           <Settings size={19} />
         </button>
       </nav>
-      <div className="sidebar-brand">
-        {!collapsed && (
-          <>
-            <span className="mark">
-              <Layers2 size={19} />
-            </span>
-            <strong>Local Reviewer</strong>
-          </>
-        )}
-        <button
-          className="rail-toggle"
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          onClick={onToggle}
-        >
-          {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-        </button>
-      </div>
       {!collapsed && (
         <div className="sidebar-contents">
-          <button
-            className="nav-home"
-            aria-current={!activeUrl ? 'page' : undefined}
-            onClick={onHome}
-          >
-            <Inbox size={17} /> All reviews
-          </button>
           <div className="sidebar-title">
             <h2>Repositories</h2>
             <button aria-label="Add repository" title="Add repository" onClick={openAdd}>
@@ -203,6 +197,13 @@ export function RepositorySidebar({
               <div className="repo-group-name">
                 <BookMarked size={14} />
                 <strong title={r.name}>{r.name}</strong>
+                <button
+                  title="Compare pull requests"
+                  aria-label={'Compare pull requests in ' + r.name}
+                  onClick={() => setComparison(r.name)}
+                >
+                  <GitCompareArrows size={15} />
+                </button>
                 <button
                   title="Manage authors"
                   aria-label={'Manage authors for ' + r.name}
@@ -308,6 +309,9 @@ export function RepositorySidebar({
             <HardDrive size={13} /> Local workspace
           </span>
         </div>
+      )}
+      {comparison && (
+        <CrossPrComparison key={comparison} repo={comparison} close={() => setComparison(null)} />
       )}
       {adding && (
         <WorkspaceDialog title="Add repository" busy={busy} onClose={() => setAdding(false)}>

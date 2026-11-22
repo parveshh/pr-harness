@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import type { ReaderView, ReviewMeta } from '../../shared/reader.js';
 import type { Discussions, DiscussionThread } from '../../shared/discussions.js';
@@ -36,6 +36,7 @@ export function usePrDiscussions(
   url: string,
   revision: string | undefined,
   accountEpoch: string | null,
+  lessonAction: (thread: DiscussionThread) => ReactNode,
 ) {
   const epoch = JSON.stringify([url, revision, accountEpoch]);
   const [loaded, setLoaded] = useState<{ epoch: string; value: Discussions } | null>(null);
@@ -404,6 +405,7 @@ export function usePrDiscussions(
                 {resolving === key ? 'Resolving…' : 'Resolve conversation'}
               </button>
             )}
+            {resolution?.resolved && thread.path && lessonAction(thread)}
             {resolution?.resolved && resolution.canUnresolve && (
               <button
                 type="button"
@@ -430,8 +432,8 @@ export function usePrDiscussions(
         );
       }) ?? [];
     return (
-      <details className="pr-conversation" aria-label="PR conversation">
-        <summary>PR conversation{threads.length ? ' · ' + threads.length : ''}</summary>
+      <div className="pr-conversation" aria-label="PR conversation">
+        <h2>PR conversation{threads.length ? ' · ' + threads.length : ''}</h2>
         <div className="discussions-toolbar">
           <span>{data ? '@' + data.account : 'GitHub'}</span>
           <button className="secondary" disabled={posting || loading} onClick={reload}>
@@ -464,7 +466,7 @@ export function usePrDiscussions(
         {loading && <p role="status">Loading discussions…</p>}
         {data && !loading && !threads.length && <p>No additional PR conversations.</p>}
         <div className="pr-discussions">{threads.map(renderThread)}</div>
-      </details>
+      </div>
     );
   }
   return { data, renderThread, overview, reload, posting, error };
