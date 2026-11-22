@@ -11,5 +11,7 @@ files:
 mac:
   category: public.app-category.developer-tools
   identity: '-'
+dmg:
+  format: UDBZ
 win:
   executableName: Local Reviewer
