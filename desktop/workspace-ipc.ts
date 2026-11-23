@@ -22,14 +22,20 @@ import { UnconfirmedReply } from './github.js';
 import { discussionReply, resolveRequest } from '../shared/discussions.js';
 import { listDiscussions, resolveDiscussion, sendDiscussionReply } from './discussions.js';
 import type { SourceCitation } from '../shared/assistant.js';
-import { fileKey, type ReaderView } from '../shared/reader.js';
+import { fileKey, revisionHead, type ReaderView } from '../shared/reader.js';
 import { join } from 'node:path';
-import { lookupInstructions, prLookups, runWithPrLookups } from './full-pr.js';
+import {
+  localLookupInstructions,
+  lookupInstructions,
+  prLookups,
+  runWithPrLookups,
+} from './full-pr.js';
+import { localReviewSource, pinnedRevision } from './local-branch.js';
 import { pinnedSource } from './pr-source.js';
 import { webLink } from '../shared/workspace.js';
 import { shell, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import { reviewPublisher } from './publish.js';
-import { bundleKey, editRequest, publishKey } from '../shared/publish.js';
+import { bundleKey, draftKey, editRequest, publishKey } from '../shared/publish.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -42,7 +48,7 @@ import {
   chatRequest,
   citedSourceKey,
 } from '../shared/assistant.js';
-import { pullRequestUrl } from '../shared/reviews.js';
+import { isLocalReview, pullRequestUrl, reviewKey } from '../shared/reviews.js';
 import { discover, runAgent } from './agents.js';
 import { buildAgentContext, citationInstruction, citedAnswer } from './evidence.js';
 import { replyMonitor } from './replies.js';
@@ -210,7 +216,18 @@ export function registerWorkspace(
     if (z.uuid().parse(input) === pair?.run) endPair();
   });
   const account = githubLogin();
-  const replies = replyMonitor(store.replies, shutdown.signal);
+  const replies = replyMonitor(
+    store.replies,
+    shutdown.signal,
+    undefined,
+    undefined,
+    undefined,
+    (changes, account) =>
+      alerts.reviewChanges(changes, async (events) => {
+        await replies.verify(account);
+        for (const event of events) store.replies.markChange(account, event.id);
+      }),
+  );
   handle('settings:type', () => store.typography());
   handle('settings:save-type', (_, value) => store.saveTypography(value));
   handle('account:start', () => {
@@ -228,6 +245,14 @@ export function registerWorkspace(
     const name = login.parse(value);
     await replies.verify(name);
     store.replies.mark(name);
+    store.replies.markChange(name);
+    return replies.state();
+  });
+  handle('replies:read-change', async (_, value, key) => {
+    const name = login.parse(value);
+    const id = z.number().int().positive().parse(key);
+    await replies.verify(name);
+    store.replies.markChange(name, id);
     return replies.state();
   });
   handle('replies:open', async (_, value, key) => {
@@ -243,6 +268,17 @@ export function registerWorkspace(
     if (store.reader.active() !== url) throw Error('Reopen this pull request to view its source.');
     const ref = data.citedSource(url, run, id);
     if (!ref) throw Error('This source is unavailable in the saved answer.');
+    if (isLocalReview(url)) {
+      const turn = data.history(url).find((t) => t.run === run);
+      if (!turn) throw Error('This source is unavailable in the saved answer.');
+      // Committed content is read from Git objects. Uncommitted content is served only while
+      // the working tree still matches the revision the answer was written for.
+      return localReviewSource(store.local, url, {
+        revision: turn.revision,
+        head: ref.commit,
+        mergeBase: ref.commit,
+      }).text(ref.commit, ref.path, shutdown.signal, ref.side);
+    }
     try {
       return await pinnedSource(join(userData, 'pr-source'), url).text(
         ref.commit,
@@ -265,6 +301,11 @@ export function registerWorkspace(
     if (file.kind === 'binary') throw Error('Binary files have no text view.');
     if (file.kind === 'text' && (file.status === 'added' || file.status === 'removed'))
       return store.reader.patch(key);
+    if (isLocalReview(key.url))
+      return localReviewSource(store.local, key.url, pinnedRevision(view)).fullFile(
+        file,
+        shutdown.signal,
+      );
     try {
       return await pinnedSource(join(userData, 'pr-source'), key.url).fullFile(
         view.meta.head,
@@ -462,9 +503,9 @@ export function registerWorkspace(
     if (session === failure?.key.session) closeFailure();
   });
   const publisher = reviewPublisher(store, undefined, undefined, shutdown.signal);
-  handle('drafts:list', (_, url) => store.drafts.get(pullRequestUrl.parse(url)));
+  handle('drafts:list', (_, url) => store.drafts.get(reviewKey.parse(url)));
   handle('drafts:edit', (_, input, request) => {
-    const { url, version } = bundleKey.parse(input);
+    const { url, version } = draftKey.parse(input);
     return publisher.edit(url, version, editRequest.parse(request));
   });
   handle('publish:identity', () => publisher.identity());
@@ -504,7 +545,7 @@ export function registerWorkspace(
     badge();
     return data.repositories();
   });
-  handle('agent:config', (_, url) => config(pullRequestUrl.parse(url)));
+  handle('agent:config', (_, url) => config(reviewKey.parse(url)));
   async function chosen() {
     const installed = await agents();
     return { agents: installed, selection: data.selection(installed[0]?.id ?? 'codex') };
@@ -515,7 +556,7 @@ export function registerWorkspace(
     return chosen();
   });
   handle('agent:save-prompt', async (_, value, target, text, purpose) => {
-    const url = pullRequestUrl.parse(value);
+    const url = reviewKey.parse(value);
     data.savePrompt(
       url,
       scope.parse(target),
@@ -525,7 +566,7 @@ export function registerWorkspace(
     return config(url);
   });
   handle('agent:clear-prompt', async (_, value, target, purpose) => {
-    const url = pullRequestUrl.parse(value);
+    const url = reviewKey.parse(value);
     data.clearPrompt(url, scope.parse(target), promptPurpose.parse(purpose));
     return config(url);
   });
@@ -552,14 +593,22 @@ export function registerWorkspace(
     const changedEvidence = new Set(
       paths.filter((path) => store.reader.revisions.citationChanged(url, msg.revision, path)),
     );
+    const local = isLocalReview(url);
     for (const ref of msg.sourceCitations ?? []) {
       if (ref.commit !== (ref.side === 'head' ? current?.meta.head : current?.meta.mergeBase))
+        changedEvidence.add(ref.path);
+      // A local head can stay on one commit while its uncommitted files change.
+      else if (
+        local &&
+        ref.side === 'head' &&
+        (!current || revisionHead(msg.revision) !== revisionHead(current.revision))
+      )
         changedEvidence.add(ref.path);
     }
     return { ...msg, changedEvidence: [...changedEvidence] };
   }
   handle('chat:history', (_, value) => {
-    const url = pullRequestUrl.parse(value);
+    const url = reviewKey.parse(value);
     const snapshot = store.reader.read(url);
     return data.history(url).map((msg) => annotated(url, msg, snapshot));
   });
@@ -586,11 +635,13 @@ export function registerWorkspace(
         store.reader.patch({ url: req.url, path, revision: req.revision });
       const { sources, context } = buildAgentContext(view, req, data.history(req.url), patch);
       const full = req.kind === 'review' || req.kind === 'summary' || req.contextMode === 'full-pr';
+      const local = isLocalReview(req.url);
       const sourceLines: SourceCitation[] = [];
       const instructions = [
         settings.prompt,
         citationInstruction,
         ...(full ? [lookupInstructions] : []),
+        ...(full && local ? [localLookupInstructions] : []),
         ...(req.kind === 'review' ? [findingsInstructions] : []),
       ].join('\n\n');
       const progress = (text: string) => {
@@ -621,9 +672,11 @@ export function registerWorkspace(
               view,
               patch,
               sources,
-              pinnedSource(join(userData, 'pr-source'), req.url),
+              local
+                ? localReviewSource(store.local, req.url, pinnedRevision(view))
+                : pinnedSource(join(userData, 'pr-source'), req.url),
               sourceLines,
-              { url: req.url, load: (signal) => listDiscussions(req.url, signal) },
+              local ? null : { url: req.url, load: (signal) => listDiscussions(req.url, signal) },
             ),
             signal,
             progress,

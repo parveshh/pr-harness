@@ -4,7 +4,7 @@ import {
   defaultPrompt,
   defaultSummaryPrompt,
   type PromptPurpose,
-  repoOf,
+  githubRepoOf,
   reviewPrompt,
   selection,
   repository,
@@ -72,14 +72,22 @@ export function assistantStore(db: DatabaseSync) {
       selection.safeParse(row).data ?? { agent: first, model: '', provider: 'default' as const }
     );
   }
-  const key = (url: string, scope: Scope, purpose: PromptPurpose) =>
-    (purpose === 'summary' ? 'summary:' : '') +
-    (scope === 'review' ? url : scope === 'repository' ? repoOf(url) : 'default');
+  // A local branch review has no GitHub repository, so it has no repository scope.
+  function key(url: string, scope: Scope, purpose: PromptPurpose) {
+    const target =
+      scope === 'review' ? url : scope === 'repository' ? githubRepoOf(url) : 'default';
+    return target === null ? null : (purpose === 'summary' ? 'summary:' : '') + target;
+  }
+  function scopeKey(url: string, scope: Scope, purpose: PromptPurpose) {
+    const value = key(url, scope, purpose);
+    if (value === null) throw Error('Save instructions for this review or as the app default.');
+    return value;
+  }
   function preferences(url: string, purpose: PromptPurpose) {
     for (const scope of ['review', 'repository', 'default'] as const) {
-      const row = db
-        .prepare('SELECT settings FROM agent_preferences WHERE scope=?')
-        .get(key(url, scope, purpose));
+      const scoped = key(url, scope, purpose);
+      if (scoped === null) continue;
+      const row = db.prepare('SELECT settings FROM agent_preferences WHERE scope=?').get(scoped);
       if (row) return { scope, ...scopedPrompt.parse(JSON.parse(String(row.settings))) };
     }
     return {
@@ -111,8 +119,9 @@ export function assistantStore(db: DatabaseSync) {
     },
     // Opening a PR clears its new mark. Returns whether anything changed.
     seen(url: string) {
-      const name = repoOf(url),
-        number = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
+      const name = githubRepoOf(url);
+      if (name === null) return false;
+      const number = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
       const repo = repositories().find((r) => r.name === name);
       if (!repo?.pulls.some((p) => p.number === number && p.unseen)) return false;
       db.prepare('UPDATE repositories SET pulls=? WHERE name=?').run(
@@ -149,12 +158,12 @@ export function assistantStore(db: DatabaseSync) {
     },
     savePrompt(url: string, scope: Scope, prompt: string, purpose: PromptPurpose = 'review') {
       db.prepare('INSERT OR REPLACE INTO agent_preferences VALUES(?,?)').run(
-        key(url, scope, purpose),
+        scopeKey(url, scope, purpose),
         JSON.stringify({ prompt }),
       );
     },
     clearPrompt(url: string, scope: Scope, purpose: PromptPurpose = 'review') {
-      db.prepare('DELETE FROM agent_preferences WHERE scope=?').run(key(url, scope, purpose));
+      db.prepare('DELETE FROM agent_preferences WHERE scope=?').run(scopeKey(url, scope, purpose));
     },
     executable(agent: AgentId) {
       const value = db.prepare('SELECT path FROM agent_paths WHERE agent=?').get(agent)?.path;

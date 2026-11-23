@@ -29,9 +29,21 @@ export const reply = z.object({
   created: z.string(),
   unread: z.boolean(),
 });
+export const reviewChange = z.object({
+  id: z.number().int().positive(),
+  kind: z.enum(['dismissed', 'push']),
+  url: pullRequestUrl,
+  head: z.string(),
+  created: z.iso.datetime(),
+  unread: z.boolean(),
+});
+export type ReviewChange = z.infer<typeof reviewChange>;
+export const reviewChangeTitle = (kind: ReviewChange['kind']) =>
+  kind === 'push' ? 'New push after your review' : 'Your review was dismissed';
 export const inbox = z.object({
   account: z.string().nullable(),
   items: reply.array(),
+  changes: reviewChange.array(),
   error: z.string().nullable(),
   added: z.number().int().nonnegative(),
 });
@@ -49,6 +61,7 @@ export interface WorkspaceBridge {
   saveTypography(value: Typography): Promise<Typography>;
   syncReplies(): Promise<Inbox>;
   readReplies(account: string): Promise<Inbox>;
+  readReviewChange(account: string, id: number): Promise<Inbox>;
   openReply(account: string, id: number): Promise<Inbox>;
   startLogin(): Promise<SignIn>;
   loginProgress(): Promise<SignIn>;

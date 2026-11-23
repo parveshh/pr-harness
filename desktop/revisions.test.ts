@@ -276,6 +276,7 @@ await test('an unchanged probe is recognised when gh exits non-zero for 304; oth
   );
   const body = JSON.stringify({
     title: 'Guard retries',
+    draft: true,
     body: null,
     user: { login: 'octo' },
     base: { sha: 'base', ref: 'main' },
@@ -286,6 +287,6 @@ await test('an unchanged probe is recognised when gh exits non-zero for 304; oth
     await probeRevision(url, signal, undefined, () =>
       Promise.resolve({ stdout: 'HTTP/2.0 200 OK\r\nEtag: "next"\r\n\r\n' + body }),
     ),
-    { baseBranch: 'main', revision: 'base...two', etag: '"next"' },
+    { isDraft: true, baseBranch: 'main', revision: 'base...two', etag: '"next"' },
   );
 });

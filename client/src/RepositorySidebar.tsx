@@ -38,7 +38,8 @@ export function RepositorySidebar({
   repliesButton,
   repliesPane,
   settingsOpen,
-  fileToolSlot,
+  onReturn,
+  returnTo,
   openSettings,
   unread,
 }: {
@@ -56,7 +57,9 @@ export function RepositorySidebar({
   repliesButton: RefObject<HTMLButtonElement | null>;
   repliesPane: ReactNode;
   settingsOpen: boolean;
-  fileToolSlot: (node: HTMLSpanElement | null) => void;
+  // Shows the open review again, or reopens the one the reviewer left for the workspace.
+  onReturn: () => void;
+  returnTo: string | null;
   openSettings: () => void;
   unread: number;
 }) {
@@ -169,6 +172,24 @@ export function RepositorySidebar({
           <Layers2 size={21} />
         </button>
         <button
+          onClick={activeUrl || returnTo ? onReturn : undefined}
+          aria-disabled={!activeUrl && !returnTo ? true : undefined}
+          aria-label={
+            activeUrl || returnTo ? 'Review' : 'Review, open one from the workspace first'
+          }
+          title={
+            activeUrl
+              ? 'Review'
+              : returnTo
+                ? 'Return to your last review'
+                : 'Open a review from the workspace first'
+          }
+          aria-current={activeUrl ? 'page' : undefined}
+        >
+          <GitPullRequest size={19} />
+        </button>
+        <span className="rail-divider" aria-hidden="true" />
+        <button
           onClick={onToggle}
           aria-expanded={repositoriesOpen}
           aria-controls={repositoriesOpen ? 'repository-list' : undefined}
@@ -177,13 +198,12 @@ export function RepositorySidebar({
         >
           <Folders size={19} />
         </button>
-        <span ref={fileToolSlot} className="file-tool-slot" />
         <button
           ref={repliesButton}
           aria-expanded={!!repliesPane}
           aria-controls={repliesPane ? 'review-replies' : undefined}
-          title="Review replies"
-          aria-label={'Review replies, ' + unread + ' unread'}
+          title="Review alerts"
+          aria-label={'Review alerts, ' + unread + ' unread'}
           onClick={openInbox}
         >
           <Bell size={19} />
@@ -275,6 +295,7 @@ export function RepositorySidebar({
                           >
                             <span>
                               <GitPullRequest size={12} /> #{p.number} · {p.author}
+                              {p.isDraft && ' · Draft'}
                             </span>
                             {isNew && <b className="monitored-new">New</b>}
                             {p.title}

@@ -1,3 +1,4 @@
+import { reviewActivityMigration } from './review-activity.js';
 import { findingStore } from './finding-store.js';
 import { lessonMigration, lessonStore } from './lessons.js';
 import type { Bundle } from '../shared/publish.js';
@@ -17,13 +18,14 @@ import {
 } from './assistant-store.js';
 import { readerMigration, readerStore } from './reader-store.js';
 import { pullRequestUrl, reviewList } from '../shared/reviews.js';
+import { ensureLocalReviewSchema, localReviewMigration, localStore } from './local-store.js';
 
 export function openStore(filename: string) {
   const db = new DatabaseSync(filename);
   try {
     db.exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version < 0 || version > 15)
+    if (typeof version !== 'number' || version < 0 || version > 17)
       throw new Error('This workspace requires a newer Local Reviewer.');
     if (version === 0) {
       db.exec(`CREATE TABLE saved_reviews (url TEXT PRIMARY KEY, saved_at TEXT NOT NULL) STRICT;
@@ -49,6 +51,9 @@ export function openStore(filename: string) {
       );
     if (version < 14) db.exec(lessonMigration);
     if (version < 15) migrateDetailedReviewPrompt(db);
+    if (version < 16) db.exec(localReviewMigration);
+    if (version < 17) db.exec(reviewActivityMigration);
+    ensureLocalReviewSchema(db);
     if (version === 0)
       db.prepare('UPDATE workspace SET appearance=?, accent=? WHERE id=1').run('ink', 'green');
     db.exec('COMMIT');
@@ -57,8 +62,18 @@ export function openStore(filename: string) {
     throw error;
   }
   const list = db.prepare(
-    'SELECT url, saved_at AS savedAt FROM saved_reviews ORDER BY saved_at DESC, url',
+    `SELECT url, saved_at AS savedAt, draft, repository, branch, base_name AS baseBranch, repo_path AS path
+     FROM saved_reviews LEFT JOIN local_reviews USING(url) LEFT JOIN pull_draft_status USING(url) ORDER BY saved_at DESC, url`,
   );
+  const listReviews = () =>
+    reviewList.parse(
+      list.all().map(({ url, savedAt, draft, repository, ...local }) => ({
+        url,
+        savedAt,
+        ...(draft === null ? {} : { isDraft: draft === 1 }),
+        ...(repository === null ? {} : { local: { repository, ...local } }),
+      })),
+    );
   const insert = db.prepare(
     'INSERT INTO saved_reviews (url, saved_at) VALUES (?, ?) ON CONFLICT(url) DO NOTHING',
   );
@@ -105,11 +120,12 @@ export function openStore(filename: string) {
     drafts,
     assistant: assistantStore(db),
     reader,
-    list: () => reviewList.parse(list.all()),
+    local: localStore(db),
+    list: listReviews,
     save(input: unknown) {
       const url = pullRequestUrl.parse(input);
       insert.run(url, new Date().toISOString());
-      return reviewList.parse(list.all());
+      return listReviews();
     },
     close: () => db.close(),
   };

@@ -1,3 +1,4 @@
+import { reviewChangeTitle } from '../../shared/workspace.js';
 import { useEffect, useState } from 'react';
 import {
   Bell,
@@ -255,6 +256,7 @@ export function SettingsPane({
   );
 }
 export function RepliesPane({
+  openPr,
   inbox,
   busy,
   refresh,
@@ -263,6 +265,7 @@ export function RepliesPane({
   settings,
 }: {
   inbox: Inbox;
+  openPr: (url: string) => void;
   busy: boolean;
   refresh: () => void;
   close: () => void;
@@ -270,13 +273,24 @@ export function RepliesPane({
   settings: () => void;
 }) {
   const [error, setError] = useState('');
-  const unread = inbox.items.filter((i) => i.unread).length;
-  function act(task: Promise<Inbox>) {
+  const items = [...inbox.items, ...inbox.changes].sort(
+    (a, b) =>
+      Number(b.unread) - Number(a.unread) ||
+      Date.parse(b.created) - Date.parse(a.created) ||
+      b.id - a.id,
+  );
+  const unread = items.filter((item) => item.unread).length;
+  function act(task: Promise<Inbox>, done?: (next: Inbox) => void) {
     setError('');
-    task.then(update).catch((e) => {
-      setError(readableError(e));
-      refresh();
-    });
+    task
+      .then((next) => {
+        update(next);
+        done?.(next);
+      })
+      .catch((e) => {
+        setError(readableError(e));
+        refresh();
+      });
   }
   return (
     <section
@@ -285,8 +299,8 @@ export function RepliesPane({
       aria-labelledby="replies-heading"
     >
       <div className="sidebar-title">
-        <h2 id="replies-heading">Review replies</h2>
-        <button aria-label="Close review replies" title="Hide review replies" onClick={close}>
+        <h2 id="replies-heading">Review alerts</h2>
+        <button aria-label="Close review alerts" title="Hide review alerts" onClick={close}>
           <ChevronLeft size={16} />
         </button>
       </div>
@@ -296,7 +310,7 @@ export function RepliesPane({
             ? '@' + inbox.account + ' · ' + unread + ' unread'
             : 'GitHub review threads'}
         </small>
-        <button className="quiet" disabled={busy} aria-label="Refresh replies" onClick={refresh}>
+        <button className="quiet" disabled={busy} aria-label="Refresh alerts" onClick={refresh}>
           <RefreshCw size={15} />
         </button>
         {unread > 0 && inbox.account && (
@@ -312,28 +326,35 @@ export function RepliesPane({
       </div>
       {(error || inbox.error) && <p role="status">{error || inbox.error}</p>}
       {!inbox.account && !busy && <button onClick={settings}>GitHub account settings</button>}
-      {!inbox.items.length && (
+      {!inbox.items.length && !inbox.changes.length && (
         <div className="inbox-empty">
           <Bell size={24} />
-          <h3>{busy ? 'Checking for replies…' : 'No new replies'}</h3>
-          <p>New replies to review comments on saved and monitored pull requests appear here.</p>
+          <h3>{busy ? 'Checking for alerts…' : 'No review alerts'}</h3>
+          <p>
+            Replies, dismissed reviews and pushes after your review appear here for saved and
+            monitored pull requests.
+          </p>
         </div>
       )}
       <div className="inbox-list">
-        {inbox.items.map((item) => (
+        {items.map((item) => (
           <button
-            key={item.id}
+            key={('kind' in item ? 'change-' : 'reply-') + item.id}
             className="reply-item"
             data-unread={item.unread}
             onClick={() => {
-              if (inbox.account) act(window.reviewer.openReply(inbox.account, item.id));
+              if (!inbox.account) return;
+              if ('kind' in item) {
+                act(window.reviewer.readReviewChange(inbox.account, item.id), (next) => {
+                  const opened = next.changes.find((change) => change.id === item.id);
+                  if (opened) openPr(opened.url);
+                });
+              } else act(window.reviewer.openReply(inbox.account, item.id));
             }}
           >
-            <span className="visually-hidden">
-              {item.unread ? 'Unread reply. ' : 'Read reply. '}
-            </span>
+            <span className="visually-hidden">{item.unread ? 'Unread. ' : 'Read. '}</span>
             <span className="reply-by">
-              <strong>@{item.author}</strong>
+              <strong>{'kind' in item ? reviewChangeTitle(item.kind) : '@' + item.author}</strong>
               <time dateTime={item.created}>
                 {new Date(item.created).toLocaleString(undefined, {
                   month: 'short',
@@ -344,9 +365,12 @@ export function RepliesPane({
               </time>
             </span>
             <small>
-              {new URL(item.url).pathname.slice(1).replace('/pull/', ' #')} · {item.path}
+              {new URL(item.url).pathname.slice(1).replace('/pull/', ' #')} ·{' '}
+              {'kind' in item ? item.head.slice(0, 8) : item.path}
             </small>
-            <span className="reply-body">{item.body || 'Open review reply'}</span>
+            {'body' in item && (
+              <span className="reply-body">{item.body || 'Open review reply'}</span>
+            )}
           </button>
         ))}
       </div>

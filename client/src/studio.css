@@ -1891,8 +1891,30 @@ body,
   border-radius: 9px;
   background: transparent;
 }
-.file-tool-slot {
-  display: contents;
+.rail-divider {
+  width: 22px;
+  height: 1px;
+  margin: 2px 0;
+  background: var(--line);
+}
+.repo-sidebar .workspace-rail button[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
+}
+.repo-sidebar .workspace-rail button[aria-disabled='true']:hover {
+  color: color-mix(in srgb, var(--muted) 85%, var(--rail));
+  background: none;
+}
+/* The page you are on carries a marker; an open side panel is only filled. */
+.repo-sidebar .workspace-rail button[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--control);
 }
 .repo-sidebar .workspace-rail button:hover {
   color: var(--ink-bright);

@@ -34,7 +34,7 @@ import {
   SlidersHorizontal,
   ChevronRight,
 } from 'lucide-react';
-import { splitHunks } from '../../shared/reader.js';
+import { shortRevision, splitHunks } from '../../shared/reader.js';
 import type { ReaderView, ReaderFile } from '../../shared/reader.js';
 
 export function ReviewChat({
@@ -45,6 +45,7 @@ export function ReviewChat({
   onDrafts,
   onPrStarted,
   url,
+  local,
   view,
   file,
   selection,
@@ -61,6 +62,8 @@ export function ReviewChat({
   onDrafts: (bundle: Bundle) => void;
   onPrStarted: () => void;
   url: string;
+  // A local branch review has no repository scope for instructions.
+  local: boolean;
   view: ReaderView;
   file: ReaderFile;
   selection: ChatRequest['selection'];
@@ -301,10 +304,14 @@ export function ReviewChat({
                         <option value="default" disabled={effectiveScope !== 'default'}>
                           App default
                         </option>
-                        <option value="repository" disabled={effectiveScope === 'review'}>
-                          This repository
+                        {!local && (
+                          <option value="repository" disabled={effectiveScope === 'review'}>
+                            This repository
+                          </option>
+                        )}
+                        <option value="review">
+                          {local ? 'This local review' : 'This pull request'}
                         </option>
-                        <option value="review">This pull request</option>
                       </select>
                     </label>
                     {effectiveScope !== 'default' && (
@@ -393,7 +400,7 @@ export function ReviewChat({
             </strong>
             <small>
               {m.settings.agent} · {m.reportedModel || m.settings.model || 'agent default'} ·{' '}
-              {m.revision.split('...').at(-1)?.slice(0, 8)}
+              {shortRevision(m.revision)}
               {m.contextMode === 'full-pr' && ' · Full PR'}
             </small>
             {!!m.changedEvidence?.length && (
@@ -492,7 +499,9 @@ export function ReviewChat({
               aria-label="Context"
               title={
                 contextMode === 'full-pr'
-                  ? 'Searches saved diffs and reads requested source from the pinned repository. The first source lookup downloads that revision.'
+                  ? local
+                    ? 'Searches saved diffs and reads requested source from the local repository at the reviewed revision.'
+                    : 'Searches saved diffs and reads requested source from the pinned repository. The first source lookup downloads that revision.'
                   : 'Answers from the selected file and hunk.'
               }
               value={contextMode}

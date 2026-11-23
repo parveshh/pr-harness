@@ -184,6 +184,7 @@ await test('repository monitoring filters issues and other authors, pages result
           viewer: { login: 'Reviewer' },
           repository: {
             ['p' + nextPr]: {
+              isDraft: nextPr === 4,
               latestOpinionatedReviews: { nodes: [...nodes, { author: null, state: 'APPROVED' }] },
             },
           },
@@ -229,9 +230,10 @@ await test('repository monitoring filters issues and other authors, pages result
   );
   assert.equal(data.unseen(), 0);
   assert.deepEqual(queries.at(-1), [
-    'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){p4:pullRequest(number:4){latestOpinionatedReviews(first:100){nodes{author{login} state}}}}}',
+    'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){p4:pullRequest(number:4){isDraft latestOpinionatedReviews(first:100){nodes{author{login} state}}}}}',
     { owner: 'example', name: 'project' },
   ]);
+  assert.equal(data.repositories()[0]?.pulls[0]?.isDraft, true);
   nextPr = 10;
   const approved = () => data.repositories()[0]?.pulls.map((p) => [p.number, p.approved]);
   for (const [state, expected] of [

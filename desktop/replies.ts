@@ -1,3 +1,5 @@
+import { readReviewStatus, reviewActivityStore } from './review-activity.js';
+import type { ReviewChange } from '../shared/workspace.js';
 import { z } from 'zod';
 import type { DatabaseSync } from 'node:sqlite';
 import { login, readableError } from '../shared/assistant.js';
@@ -38,11 +40,14 @@ const remote = z.object({
 });
 export function replyStore(db: DatabaseSync) {
   return {
+    ...reviewActivityStore(db),
     targets() {
       return z
         .object({ url: pullRequestUrl, registered: z.string() })
         .array()
-        .parse(db.prepare('SELECT * FROM reply_targets').all());
+        .parse(
+          db.prepare("SELECT * FROM reply_targets WHERE url LIKE 'https://github.com/%'").all(),
+        );
     },
     watch(account: string, url: string, registered: string, now: string) {
       db.prepare(
@@ -139,11 +144,12 @@ export function replyMonitor(
   session: (
     signal: AbortSignal,
   ) => Promise<
-    Pick<Awaited<ReturnType<typeof replySession>>, 'actor' | 'serverTime' | 'api'>
+    Pick<Awaited<ReturnType<typeof replySession>>, 'actor' | 'serverTime' | 'api' | 'graphql'>
   > = replySession,
   identity = async (signal: AbortSignal) =>
     z.object({ login }).parse(JSON.parse(await githubApi('user', signal))).login,
   now = Date.now,
+  notify: (changes: ReviewChange[], account: string) => void = () => {},
 ) {
   let actor: string | null = null,
     failure: string | null = null,
@@ -157,10 +163,17 @@ export function replyMonitor(
     failure = null;
   }
   function state(added = 0): Inbox {
-    return { account: actor, items: actor ? store.items(actor) : [], error: failure, added };
+    return {
+      account: actor,
+      items: actor ? store.items(actor) : [],
+      changes: actor ? store.changes(actor) : [],
+      error: failure,
+      added,
+    };
   }
   async function check(signal: AbortSignal) {
     let added = 0;
+    const changes: ReviewChange[] = [];
     try {
       const remoteSession = await session(signal);
       signal.throwIfAborted();
@@ -175,6 +188,28 @@ export function replyMonitor(
         ).toISOString();
         const watch = store.watch(remoteSession.actor, url, registered, start);
         if (!watch) continue;
+        try {
+          const status = await readReviewStatus(
+            url,
+            remoteSession.actor,
+            remoteSession.graphql,
+            signal,
+          );
+          signal.throwIfAborted();
+          changes.push(
+            ...store.observe(
+              remoteSession.actor,
+              url,
+              registered,
+              status,
+              new Date(remoteSession.serverTime).toISOString(),
+            ),
+          );
+        } catch (error) {
+          signal.throwIfAborted();
+          failure = readableError(error);
+          if (/rate limit/i.test(failure)) break;
+        }
         const since = new Date(Date.parse(watch.cursor) - 60000).toISOString();
         const path = new URL(url).pathname.slice(1).replace('/pull/', '/pulls/');
         const endpoint =
@@ -209,6 +244,8 @@ export function replyMonitor(
       if ((await identity(signal)) !== remoteSession.actor)
         throw Error('GitHub account changed. Refresh the reply inbox.');
       signal.throwIfAborted();
+      added += changes.length;
+      notify(changes, remoteSession.actor);
     } catch (e) {
       signal.throwIfAborted();
       actor = null;

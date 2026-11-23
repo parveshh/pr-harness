@@ -39,6 +39,7 @@ const reviewStates = z.object({
       z.string(),
       z
         .object({
+          isDraft: z.boolean(),
           latestOpinionatedReviews: z.object({
             nodes: z.array(
               z.object({ author: z.object({ login: z.string() }).nullable(), state: z.string() }),
@@ -52,13 +53,13 @@ const reviewStates = z.object({
 // One request answers, for up to fifty PRs, whether the signed-in reviewer approved each.
 // GitHub's "opinionated" reviews are each person's latest approval, change request or
 // dismissal, so a later plain comment or thread reply does not hide an approval.
-async function approvedPulls(
+async function pullStatuses(
   name: string,
   numbers: number[],
   signal: AbortSignal,
   graphql: typeof githubGraphql,
 ) {
-  const approved = new Set<number>();
+  const statuses = new Map<number, { approved: boolean; isDraft: boolean }>();
   const [owner = '', repo = ''] = name.split('/');
   for (let at = 0; at < numbers.length; at += 50) {
     const fields = numbers
@@ -69,7 +70,7 @@ async function approvedPulls(
           n +
           ':pullRequest(number:' +
           n +
-          '){latestOpinionatedReviews(first:100){nodes{author{login} state}}}',
+          '){isDraft latestOpinionatedReviews(first:100){nodes{author{login} state}}}',
       );
     const query =
       'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){' +
@@ -79,15 +80,17 @@ async function approvedPulls(
       JSON.parse(await graphql(query, { owner, name: repo }, signal)),
     ).data;
     const me = viewer.login.toLowerCase();
-    for (const [alias, pull] of Object.entries(repository))
-      if (
-        pull?.latestOpinionatedReviews.nodes.some(
-          (review) => review.author?.login.toLowerCase() === me && review.state === 'APPROVED',
-        )
-      )
-        approved.add(Number(alias.slice(1)));
+    for (const [alias, pull] of Object.entries(repository)) {
+      if (pull)
+        statuses.set(Number(alias.slice(1)), {
+          isDraft: pull.isDraft,
+          approved: pull.latestOpinionatedReviews.nodes.some(
+            (review) => review.author?.login.toLowerCase() === me && review.state === 'APPROVED',
+          ),
+        });
+    }
   }
-  return approved;
+  return statuses;
 }
 export function monitor(
   store: AssistantStore,
@@ -123,23 +126,24 @@ export function monitor(
               number: item.number,
               title: item.title,
               author: creator,
-              approved: false,
+              approved: known.get(item.number)?.approved ?? false,
+              isDraft: known.get(item.number)?.isDraft,
               unseen: known.get(item.number)?.unseen ?? fresh,
             });
       }
       pulls.sort((a, b) => b.number - a.number);
       if (pulls.length) {
         // The PR list is still worth saving when the review states cannot be read.
-        const approved = await approvedPulls(
+        const statuses = await pullStatuses(
           name,
           pulls.map((p) => p.number),
           signal,
           graphql,
         ).catch(() => {
           signal.throwIfAborted();
-          return new Set(repo.pulls.filter((p) => p.approved).map((p) => p.number));
+          return null;
         });
-        for (const pull of pulls) pull.approved = approved.has(pull.number);
+        for (const pull of pulls) Object.assign(pull, statuses?.get(pull.number));
       }
       if (discover || !repo.checked) {
         const contributors = await pages(prefix + '/contributors', author, signal, api);

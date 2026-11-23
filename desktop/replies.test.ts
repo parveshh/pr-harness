@@ -7,6 +7,22 @@ import { openStore } from './store.js';
 import { replyMonitor } from './replies.js';
 
 const url = 'https://github.com/example/project/pull/12';
+const graphql = () =>
+  Promise.resolve(
+    JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            state: 'OPEN',
+            headRefOid: 'head',
+            isDraft: false,
+            latest: { nodes: [] },
+            dismissed: { totalCount: 0 },
+          },
+        },
+      },
+    }),
+  );
 const signal = new AbortController().signal;
 const comment = (id: number, author: string, date: string, parent: number | null) => ({
   id,
@@ -35,6 +51,7 @@ await test('removing a later watch during polling skips that PR and its alerts',
     signal,
     async () =>
       Promise.resolve({
+        graphql,
         actor: 'reader',
         serverTime: Date.now(),
         api: async (endpoint: string) => {
@@ -83,6 +100,7 @@ await test('first successful scan uses registration and server time, restarts an
   ];
   const session = async () =>
     Promise.resolve({
+      graphql,
       actor: 'reader',
       serverTime,
       api: async (endpoint: string) => {
@@ -128,6 +146,7 @@ await test('switching account during pagination binds all rows to the original s
   const session = async () => {
     const owner = actor;
     return Promise.resolve({
+      graphql,
       actor: owner,
       serverTime: time,
       api: async (endpoint: string) => {
@@ -158,4 +177,98 @@ await test('switching account during pagination binds all rows to the original s
   await monitor.verify('alice');
   monitor.invalidate();
   assert.equal(monitor.state().account, null);
+});
+
+await test('a push and dismissal on a reviewed PR survive restart and are announced once for the signed-in reviewer', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'review-changes-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'workspace.sqlite');
+  let store = openStore(file);
+  t.after(() => store.close());
+  store.save(url);
+  let account = 'reader',
+    head = 'first',
+    dismissed = 1,
+    reviewedHead: string | null = null,
+    isDraft = true,
+    fail = false;
+  const notifications: string[][] = [];
+  function start() {
+    return replyMonitor(
+      store.replies,
+      signal,
+      () =>
+        Promise.resolve({
+          actor: account,
+          serverTime: Date.now(),
+          api: () => Promise.resolve('[]'),
+          graphql: (query, variables) => {
+            assert.match(query, /pullRequest\(number:12\)/);
+            assert.match(query, /author:\$author/);
+            assert.deepEqual(variables, { owner: 'example', name: 'project', author: account });
+            if (fail) return Promise.reject(Error('Offline'));
+            return Promise.resolve(
+              JSON.stringify({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      state: 'OPEN',
+                      headRefOid: head,
+                      isDraft,
+                      latest: { nodes: reviewedHead ? [{ commit: { oid: reviewedHead } }] : [] },
+                      dismissed: { totalCount: dismissed },
+                    },
+                  },
+                },
+              }),
+            );
+          },
+        }),
+      () => Promise.resolve(account),
+      Date.now,
+      (changes) => {
+        if (changes.length) notifications.push(changes.map((change) => change.kind));
+      },
+    );
+  }
+  let monitor = start();
+  await monitor.sync();
+  assert.equal(store.list()[0]?.isDraft, true);
+  head = 'unreviewed';
+  assert.deepEqual((await monitor.sync()).changes, []);
+  reviewedHead = head;
+  isDraft = false;
+  await monitor.sync();
+  assert.equal(store.list()[0]?.isDraft, false);
+  store.close();
+  store = openStore(file);
+  monitor = start();
+  head = 'force-pushed';
+  dismissed++;
+  fail = true;
+  assert.match((await monitor.sync()).error ?? '', /Offline/);
+  fail = false;
+  const changed = await monitor.sync();
+  assert.deepEqual(
+    changed.changes.map((c) => [c.kind, c.url, c.unread, c.head]),
+    [
+      ['push', url, true, head],
+      ['dismissed', url, true, head],
+    ],
+  );
+  assert.equal(changed.added, 2);
+  store.replies.markChange(account, changed.changes[0]!.id);
+  assert.deepEqual(
+    (await monitor.sync()).changes.map((c) => c.unread),
+    [false, true],
+  );
+  assert.deepEqual(notifications, [['dismissed', 'push']]);
+  dismissed++;
+  assert.deepEqual(
+    (await monitor.sync()).changes.slice(0, 1).map((c) => c.kind),
+    ['dismissed'],
+  );
+  account = 'other';
+  assert.deepEqual((await monitor.sync()).changes, []);
+  assert.equal(notifications.length, 2);
 });

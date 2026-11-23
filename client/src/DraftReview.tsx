@@ -1,10 +1,18 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button, Menu, MenuItem, MenuTrigger, Popover } from 'react-aria-components';
-import { Check, ChevronDown, ClipboardList, MessageSquarePlus } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  ClipboardCopy,
+  ClipboardList,
+  FileDown,
+  MessageSquarePlus,
+} from 'lucide-react';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 import { readableError } from '../../shared/assistant.js';
 import type { Bundle, Draft, Edit, CommentAnchor } from '../../shared/publish.js';
 import type { ReaderView } from '../../shared/reader.js';
+import type { LocalBrief } from '../../shared/local.js';
 
 export type DraftEditor = {
   id: string | null;
@@ -24,6 +32,8 @@ export const locationLabel = (a: CommentAnchor) =>
 
 export function DraftReview({
   url,
+  local,
+  onCheckpoint,
   view,
   bundle,
   onChange,
@@ -31,6 +41,9 @@ export function DraftReview({
   approveRequest,
 }: {
   url: string;
+  // A local branch review ends with a brief for the coding agent instead of a GitHub review.
+  local: boolean;
+  onCheckpoint: () => Promise<void>;
   view: ReaderView;
   bundle: Bundle;
   onChange: (b: Bundle) => void;
@@ -46,6 +59,11 @@ export function DraftReview({
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [preview, setPreview] = useState<{ version: number; revision: string } | null>(null);
+  const [brief, setBrief] = useState<LocalBrief | null>(null);
+  // Set once the brief has been copied or saved, to offer a review checkpoint.
+  const [delivered, setDelivered] = useState(false);
+  // Focus moves here when the checkpoint button it replaces disappears.
+  const briefNotice = useRef<HTMLParagraphElement>(null);
   // Open the review with Approve chosen. The reviewer still previews and submits it.
   const [seenApprove, setSeenApprove] = useState<number | null>(null);
   if (approveRequest !== null && approveRequest !== seenApprove) {
@@ -115,35 +133,59 @@ export function DraftReview({
       setPanel('preview');
     });
   }
+  function previewBrief(body: string) {
+    work(async () => {
+      await saveDetails(body, event);
+      setBrief(await window.reviewer.localBrief(url));
+      setDelivered(false);
+      setPanel('preview');
+    });
+  }
+  const briefCurrent =
+    !!brief && brief.version === bundle.version && brief.revision === view.revision;
+  function deliver(action: 'copy' | 'save') {
+    work(async () => {
+      if (!brief) return;
+      if (action === 'copy') {
+        await window.reviewer.copyLocalBrief(url, brief.version, brief.revision);
+        setNotice('Copied. Paste it into your coding agent.');
+      } else if (await window.reviewer.saveLocalBrief(url, brief.version, brief.revision)) {
+        setNotice('Brief saved.');
+      } else return;
+      setDelivered(true);
+    });
+  }
   function receipt() {
     work(() => window.reviewer.openReceipt(url));
   }
   return (
-    <section className="draft-tools" aria-label="Pull request review">
-      <div className="review-split">
+    <section className="draft-tools" aria-label={local ? 'Local review' : 'Pull request review'}>
+      <div className="review-split" data-single={local || undefined}>
         <button className="review-drafts" onClick={openReview}>
           <Check size={15} /> Finish review{' '}
           {bundle.comments.length > 0 && <span>{bundle.comments.length}</span>}
         </button>
-        <MenuTrigger>
-          <Button className="review-options" aria-label="Review actions">
-            <ChevronDown size={16} />
-          </Button>
-          <Popover placement="bottom end" className="review-menu">
-            <Menu
-              aria-label="Review actions"
-              onAction={() => {
-                openReview();
-                setEvent('APPROVE');
-                if (!stale) previewSubmission(bundle.summary, 'APPROVE');
-              }}
-            >
-              <MenuItem id="approve" isDisabled={locked || busy}>
-                <Check size={15} /> Approve PR
-              </MenuItem>
-            </Menu>
-          </Popover>
-        </MenuTrigger>
+        {!local && (
+          <MenuTrigger>
+            <Button className="review-options" aria-label="Review actions">
+              <ChevronDown size={16} />
+            </Button>
+            <Popover placement="bottom end" className="review-menu">
+              <Menu
+                aria-label="Review actions"
+                onAction={() => {
+                  openReview();
+                  setEvent('APPROVE');
+                  if (!stale) previewSubmission(bundle.summary, 'APPROVE');
+                }}
+              >
+                <MenuItem id="approve" isDisabled={locked || busy}>
+                  <Check size={15} /> Approve PR
+                </MenuItem>
+              </Menu>
+            </Popover>
+          </MenuTrigger>
+        )}
       </div>
       {stale > 0 && (
         <small>
@@ -156,7 +198,8 @@ export function DraftReview({
           Open published review ↗
         </button>
       )}
-      {notice && <small role="status">{notice}</small>}
+      {/* A local brief dialog shows its own notice, so the outer one would repeat it. */}
+      {notice && !(local && panel !== 'closed') && <small role="status">{notice}</small>}
       {error && !editor && panel === 'closed' && <p role="alert">{error}</p>}
       {editor ? (
         <WorkspaceDialog
@@ -224,7 +267,9 @@ export function DraftReview({
                 ? 'Check review submission'
                 : reviewing
                   ? 'Review drafts'
-                  : 'Submit review to GitHub?'
+                  : local
+                    ? 'Brief for the coding agent'
+                    : 'Submit review to GitHub?'
             }
             icon={<ClipboardList size={21} />}
             onClose={closePanel}
@@ -265,6 +310,69 @@ export function DraftReview({
                   </button>
                 </div>
               </>
+            ) : local && !reviewing ? (
+              <>
+                <p>
+                  Hand this brief to the coding agent working on{' '}
+                  <strong>{view.meta.headBranch}</strong>. Nothing is sent to GitHub, and the
+                  repository is not changed.
+                </p>
+                <pre
+                  className="local-brief"
+                  tabIndex={0}
+                  role="region"
+                  aria-label="Brief for the coding agent"
+                >
+                  {brief?.text}
+                </pre>
+                {!briefCurrent && (
+                  <p role="status">
+                    The drafts or revision changed. Go back to the drafts and preview again.
+                  </p>
+                )}
+                {notice && (
+                  <p role="status" tabIndex={-1} ref={briefNotice}>
+                    {notice}
+                  </p>
+                )}
+                {delivered && (
+                  <div className="local-checkpoint">
+                    <p>
+                      Save a review checkpoint so the next refresh compares the agent’s changes with
+                      what you reviewed. Your drafts stay until you discard them.
+                    </p>
+                    <button
+                      className="secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        work(async () => {
+                          await onCheckpoint();
+                          setDelivered(false);
+                          setNotice('Review checkpoint saved.');
+                          requestAnimationFrame(() => briefNotice.current?.focus());
+                        })
+                      }
+                    >
+                      Save review checkpoint
+                    </button>
+                  </div>
+                )}
+                <div className="dialog-actions">
+                  <button className="quiet" disabled={busy} onClick={openReview}>
+                    Back to drafts
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={busy || !briefCurrent}
+                    onClick={() => deliver('save')}
+                  >
+                    <FileDown size={15} aria-hidden /> Save as file…
+                  </button>
+                  <button disabled={busy || !briefCurrent} onClick={() => deliver('copy')}>
+                    <ClipboardCopy size={15} aria-hidden /> Copy for agent
+                  </button>
+                </div>
+              </>
             ) : (
               <>
                 {!reviewing && (
@@ -282,8 +390,9 @@ export function DraftReview({
                       <div className="draft-body">{d.body}</div>
                       {d.revision !== view.revision && (
                         <p>
-                          Outdated draft. Select its current line in the full PR diff to reattach
-                          it.
+                          {local
+                            ? 'Outdated draft. Select its current line to reattach it, or keep it in the brief’s outdated section.'
+                            : 'Outdated draft. Select its current line in the full PR diff to reattach it.'}
                         </p>
                       )}
                       {reviewing && (
@@ -340,18 +449,22 @@ export function DraftReview({
                       value={summary}
                       onChange={(e) => setSummary(e.target.value)}
                     />
-                    <label htmlFor="review-decision">Review decision</label>
-                    <select
-                      id="review-decision"
-                      value={event}
-                      onChange={(e) => setEvent(e.target.value as Bundle['event'])}
-                    >
-                      {Object.entries(decisions).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
+                    {!local && (
+                      <>
+                        <label htmlFor="review-decision">Review decision</label>
+                        <select
+                          id="review-decision"
+                          value={event}
+                          onChange={(e) => setEvent(e.target.value as Bundle['event'])}
+                        >
+                          {Object.entries(decisions).map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
                     <div className="dialog-actions">
                       <button
                         className="quiet"
@@ -366,12 +479,21 @@ export function DraftReview({
                       >
                         Save and close
                       </button>
-                      <button
-                        disabled={busy || stale > 0 || !valid}
-                        onClick={() => previewSubmission(summary, event)}
-                      >
-                        Preview submission
-                      </button>
+                      {local ? (
+                        <button
+                          disabled={busy || (!summary.trim() && !bundle.comments.length)}
+                          onClick={() => previewBrief(summary)}
+                        >
+                          Preview brief
+                        </button>
+                      ) : (
+                        <button
+                          disabled={busy || stale > 0 || !valid}
+                          onClick={() => previewSubmission(summary, event)}
+                        >
+                          Preview submission
+                        </button>
+                      )}
                     </div>
                   </>
                 ) : (

@@ -160,10 +160,10 @@ await test('opening a newer schema preserves its version and contents', (t) => {
   const db = new DatabaseSync(path);
   t.after(() => db.close());
   db.exec(
-    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=16",
+    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=18",
   );
   assert.throws(() => openStore(path), /newer Local Reviewer/);
-  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 16);
+  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 18);
   assert.equal(db.prepare('SELECT value FROM future').get()?.value, 'preserve');
 });
 

@@ -1,3 +1,4 @@
+import { saveDraftStatus } from './review-activity.js';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   checkpoint,
@@ -7,7 +8,7 @@ import {
   splitHunks,
   type ReaderView,
 } from '../shared/reader.js';
-import { pullRequestUrl } from '../shared/reviews.js';
+import { reviewKey } from '../shared/reviews.js';
 import { questionStore } from './questions.js';
 import { revisionStore } from './revisions.js';
 import type { HeadComparison, Snapshot } from './github.js';
@@ -27,13 +28,13 @@ export function readerStore(db: DatabaseSync) {
   const questions = questionStore(db);
   const revisions = revisionStore(db);
   const active = () =>
-    pullRequestUrl
-      .nullable()
-      .parse(db.prepare('SELECT active FROM workspace WHERE id=1').get()?.active);
+    reviewKey.nullable().parse(db.prepare('SELECT active FROM workspace WHERE id=1').get()?.active);
   function read(input: unknown): ReaderView | null {
-    const url = pullRequestUrl.parse(input);
+    const url = reviewKey.parse(input);
     const snapshot = db
-      .prepare('SELECT meta,selected,revision FROM snapshots WHERE url=?')
+      .prepare(
+        'SELECT meta,selected,revision,draft FROM snapshots LEFT JOIN pull_draft_status USING(url) WHERE url=?',
+      )
       .get(url);
     if (!snapshot) return null;
     const files = db
@@ -44,7 +45,10 @@ export function readerStore(db: DatabaseSync) {
     return {
       ...revisions.info(url),
       questions: questions.list(url),
-      meta: metadata.parse(JSON.parse(String(snapshot.meta))),
+      meta: {
+        ...metadata.parse(JSON.parse(String(snapshot.meta))),
+        ...(snapshot.draft == null ? {} : { isDraft: snapshot.draft === 1 }),
+      },
       selected: typeof snapshot.selected === 'string' ? snapshot.selected : null,
       revision: String(snapshot.revision),
       files: files.map((row) => ({
@@ -58,8 +62,11 @@ export function readerStore(db: DatabaseSync) {
   }
   return {
     active,
+    setDraft(url: string, isDraft: boolean | undefined) {
+      saveDraftStatus(db, url, isDraft);
+    },
     select(input: unknown) {
-      const url = pullRequestUrl.nullable().parse(input);
+      const url = reviewKey.nullable().parse(input);
       db.prepare('UPDATE workspace SET active=? WHERE id=1').run(url);
     },
     read,
@@ -83,6 +90,7 @@ export function readerStore(db: DatabaseSync) {
           `INSERT INTO snapshots VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET
           revision=excluded.revision,meta=excluded.meta,selected=excluded.selected`,
         ).run(url, snapshot.revision, JSON.stringify(snapshot.meta), selected);
+        saveDraftStatus(db, url, snapshot.meta.isDraft);
         revisions.begin(url, snapshot.revision);
         const old = new Map(
           db

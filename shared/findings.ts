@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { pullRequestUrl } from './reviews.js';
+import { reviewKey } from './reviews.js';
 
 // Keep stored excerpts bounded even when model-supplied endpoints are far apart.
 export const maxFindingLines = 50;
@@ -24,7 +24,7 @@ export const finding = z.object({
   verdict,
   drafted: z.boolean(),
 });
-export const findingKey = z.object({ url: pullRequestUrl, run: z.uuid() });
+export const findingKey = z.object({ url: reviewKey, run: z.uuid() });
 export const assessFinding = findingKey.extend({ id: z.uuid(), verdict });
 export const draftFindings = findingKey.extend({
   version: z.number().int().nonnegative(),

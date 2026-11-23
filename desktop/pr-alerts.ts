@@ -1,3 +1,4 @@
+import { reviewChangeTitle, type ReviewChange } from '../shared/workspace.js';
 import type { Repository } from '../shared/assistant.js';
 
 type Pull = Repository['pulls'][number];
@@ -30,6 +31,28 @@ export function prAlerts(port: AlertPort, open: (url: string) => void) {
             .join('\n') + (pulls.length > 4 ? '\n…' : ''),
           () => open(link),
         );
+    },
+    reviewChanges(changes: ReviewChange[], acknowledge: (events: ReviewChange[]) => Promise<void>) {
+      const grouped = new Map<string, ReviewChange[]>();
+      for (const change of changes) {
+        const events = grouped.get(change.url) ?? [];
+        events.push(change);
+        grouped.set(change.url, events);
+      }
+      for (const [url, events] of grouped) {
+        const body = events.map((change) => reviewChangeTitle(change.kind)).join(' · ');
+        try {
+          port.notify(new URL(url).pathname.slice(1).replace('/pull/', ' #'), body, () => {
+            void acknowledge(events)
+              .then(() => open(url))
+              .catch(() => {
+                // The account may have changed since the notification was delivered.
+              });
+          });
+        } catch {
+          // The inbox already holds these alerts if the OS cannot show them.
+        }
+      }
     },
     badge: (count: number) => port.badge(count),
   };

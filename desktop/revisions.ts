@@ -213,6 +213,17 @@ export function revisionStore(db: DatabaseSync) {
         .run(revision, url, url, revision);
       if (!result.changes) throw Error('Open the latest update before saving a checkpoint.');
     },
+    // A local review hands its brief to an agent that keeps editing, so an update is often
+    // staged by the time the reviewer saves the checkpoint. The staged comparison does not
+    // depend on the baseline, so it stays staged and is compared with the new checkpoint.
+    checkpoint(url: string, revision: string) {
+      const result = db
+        .prepare(
+          "UPDATE revision_state SET baseline=?,comparison=NULL,since=0,change_path=NULL,staged=CASE WHEN staged IS NULL THEN NULL ELSE json_set(staged,'$.baseline',?) END WHERE url=? AND EXISTS(SELECT 1 FROM snapshots WHERE url=? AND revision=?)",
+        )
+        .run(revision, revision, url, url, revision);
+      if (!result.changes) throw Error('This revision is no longer current. Refresh the review.');
+    },
     published(url: string, revision: string) {
       db.prepare(
         'UPDATE revision_state SET baseline=?,comparison=NULL,since=0,change_path=NULL WHERE url=? AND EXISTS(SELECT 1 FROM snapshots WHERE url=? AND revision=?)',

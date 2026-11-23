@@ -24,7 +24,7 @@ Drag a divider, or focus it and use the arrow keys, to resize the sidebar, chang
 
 New workspaces start with the Ink palette and green accent. Change appearance in **Settings** on the navigation rail. Existing workspaces keep their saved choices.
 
-The changed-file tree groups files by folder. Filter by name or path. Collapse the tree or the full-height chat with its heading chevron. Use the files icon in the left rail to show or hide the tree. Reopen chat from the PR header. The rail highlights open panes.
+The changed-file tree groups files by folder. Filter by name or path. Collapse the tree or the full-height chat with its heading chevron. Use the panel button at the start of the PR header to show or hide the tree. Reopen chat from the PR header. The rail highlights open panes.
 
 ## Review with a local agent
 
@@ -53,6 +53,20 @@ Open **Finish review** to read, edit, or discard comments together. The split bu
 If GitHub receives a submission but its response is lost, **Check GitHub** locates the receipt using a hidden tracking ID in the review body. Drafts remain saved while the outcome is unknown. **Open published review** opens the receipt in your browser.
 
 Published line comments and their replies appear beneath the matching old or new diff line. Open **Discussion** for review summaries, general questions, and threads without a current line anchor. Choose **Reply** and then **Post reply to GitHub** to send from the displayed account. Line replies stay in their original thread. Replies to a conversation comment or review summary link back to it in the PR timeline. A line comment thread shows **Resolve conversation**, which marks it resolved on GitHub straight away, and a resolved thread shows **Reopen conversation**. Resolved threads stay in place, dimmed and labelled. The buttons appear only where your account is allowed to resolve the thread. **Refresh discussions** retrieves the latest messages. Full PR chat can also look up these discussions when a question refers to earlier feedback.
+
+## Review a local branch
+
+Use **Review local branch** on the Workspace page to review a coding agent's work before it becomes a pull request. Choose the top-level folder of a local Git clone. The dialog shows the repository, its current branch and a base branch. The remote default branch is selected when the clone has one, otherwise `main` or `master`. Choose **Start review**.
+
+The review compares the merge base of the base branch and HEAD with the working tree. Committed, staged, unstaged and untracked files all appear. Ignored files do not. The app only reads the repository. It never checks out, fetches, stages or writes there. Local reviews appear under **Saved reviews** with a **Local** label, the folder name and the branch.
+
+Reading progress, drafts, review chat, findings and pinned questions work as for a pull request. Focused and Full PR chat read the reviewed revision from the local clone, including uncommitted files. Agents see the folder name and branch, never the folder's path. The header shows the branch, its base and the revision. **Uncommitted changes** marks a revision that includes work in the working tree. If the working tree changes after you open a revision, full-file and source reads ask you to refresh rather than show code from a different state.
+
+**Refresh** and the regular update check reread the clone on focus and about once a minute. When the reviewed content changes, **Open update** loads it and **Since my last review** compares it with your checkpoint using the saved diffs. Reviewed marks carry over for unchanged files and drafts move to verified lines, as for a new push. The review keeps its branch. If the clone is on another branch, refresh asks you to switch back or start a new local review. The reader shows up to 3,000 files and 1 MiB of diff per file and labels anything it shortened.
+
+**Finish review** previews a Markdown brief for the coding agent instead of a GitHub submission. It names the branch, base and revision, then lists each comment with its file, line or range, side, code excerpt and text. Drafts from an earlier revision appear in a separate **Outdated comments** section. **Copy for agent** places the brief on the clipboard. **Save as file…** writes it to a location you choose outside the reviewed repository. Afterwards, **Save review checkpoint** makes the next refresh compare against what you reviewed. Drafts stay until you discard them.
+
+A local review has no Discussion tab, Checks, published comment counts, review decision, approval, repository lessons, monitoring or cross-PR comparison. Review instructions can be saved for the local review or as the app default.
 
 ## Follow the pipeline
 
@@ -98,7 +112,9 @@ The gear at the bottom of the left rail opens **Settings**. Choose a theme, incl
 
 **Connect account** starts GitHub CLI browser sign-in for github.com. Complete the authorization on GitHub. Settings displays the active CLI account, and **Switch account** starts another sign-in.
 
-The bell toggles the **Review replies** sidebar beside your workspace. Local Reviewer checks saved PRs and open PRs from monitored authors while the app is running, then catches up on reopen. A new threaded reply from someone else updates the unread badge on the bell. Open a reply to go to its GitHub discussion, or mark the inbox read. Each GitHub account has its own read state.
+Draft PRs show a **Draft** label in the repository sidebar, saved reviews and PR header.
+
+The **Review alerts** bell shows replies, dismissals of your GitHub reviews and new pushes to open PRs you have reviewed on GitHub. Local Reviewer checks saved PRs and open PRs from monitored authors while the workspace is open. The first check establishes the current state. Subsequent checks pick up changes, including after a restart. A push and a dismissal on the same PR appear together in one desktop notification. Open a push or dismissal alert to return to the PR, or open a reply to see its GitHub discussion. Each GitHub account has its own unread count.
 
 ## Remember review lessons
 

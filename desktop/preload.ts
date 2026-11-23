@@ -5,11 +5,12 @@ import { discussionMessage, discussions, resolveResult } from '../shared/discuss
 import { typography, signIn, inbox } from '../shared/workspace.js';
 import { accent, appearance } from '../shared/appearance.js';
 import { contextBridge, ipcRenderer } from 'electron';
-import { pullRequestUrl, reviewList, type ReviewerBridge } from '../shared/reviews.js';
+import { pullRequestUrl, reviewKey, reviewList, type ReviewerBridge } from '../shared/reviews.js';
+import { localBrief, localCandidate, localStarted } from '../shared/local.js';
 import { reviewBundle } from '../shared/publish.js';
 import { pinnedQuestion, questionEvidence } from '../shared/questions.js';
 import { changeEvidence } from '../shared/rereview.js';
-import { readerView } from '../shared/reader.js';
+import { readerView, reviewUpdate } from '../shared/reader.js';
 import { z } from 'zod';
 import { pipelines, pipelineJob } from '../shared/pipelines.js';
 import { repository, config, agentCatalog, turn, activity } from '../shared/assistant.js';
@@ -55,6 +56,8 @@ const reviewer: ReviewerBridge = {
   saveTypography: async (value) =>
     typography.parse(await ipcRenderer.invoke('settings:save-type', value)),
   syncReplies: async () => inbox.parse(await ipcRenderer.invoke('replies:sync')),
+  readReviewChange: async (account, id) =>
+    inbox.parse(await ipcRenderer.invoke('replies:read-change', account, id)),
   readReplies: async (account) => inbox.parse(await ipcRenderer.invoke('replies:read', account)),
   openReply: async (account, id) =>
     inbox.parse(await ipcRenderer.invoke('replies:open', account, id)),
@@ -134,8 +137,7 @@ const reviewer: ReviewerBridge = {
       ipcRenderer.removeListener('chat:activity', listener);
     };
   },
-  activeReview: async () =>
-    pullRequestUrl.nullable().parse(await ipcRenderer.invoke('reader:active')),
+  activeReview: async () => reviewKey.nullable().parse(await ipcRenderer.invoke('reader:active')),
   selectReview: async (url) => {
     await ipcRenderer.invoke('reader:select', url);
   },
@@ -146,11 +148,7 @@ const reviewer: ReviewerBridge = {
   comparisonPosition: async (url, revision, since, path) => {
     await ipcRenderer.invoke('reader:comparison-position', { url, revision, since, path });
   },
-  checkUpdate: async (url) =>
-    z
-      .string()
-      .nullable()
-      .parse(await ipcRenderer.invoke('reader:probe', url)),
+  checkUpdate: async (url) => reviewUpdate.parse(await ipcRenderer.invoke('reader:probe', url)),
   openUpdate: async (url, revision) =>
     readerView.parse(await ipcRenderer.invoke('reader:open-update', { url, revision })),
   finishRevision: async (url, revision) =>
@@ -173,6 +171,16 @@ const reviewer: ReviewerBridge = {
     await ipcRenderer.invoke('reader:remember', value);
   },
   listReviews: async () => reviewList.parse(await ipcRenderer.invoke('reviews:list')),
+  chooseLocalRepository: async () =>
+    localCandidate.nullable().parse(await ipcRenderer.invoke('local:choose')),
+  startLocalReview: async (id, base) =>
+    localStarted.parse(await ipcRenderer.invoke('local:start', { id, base })),
+  localBrief: async (url) => localBrief.parse(await ipcRenderer.invoke('local:brief', url)),
+  copyLocalBrief: async (url, version, revision) => {
+    await ipcRenderer.invoke('local:copy-brief', url, version, revision);
+  },
+  saveLocalBrief: async (url, version, revision) =>
+    z.boolean().parse(await ipcRenderer.invoke('local:save-brief', url, version, revision)),
   saveReview: async (url) => reviewList.parse(await ipcRenderer.invoke('reviews:save', url)),
 };
 contextBridge.exposeInMainWorld('reviewer', reviewer);

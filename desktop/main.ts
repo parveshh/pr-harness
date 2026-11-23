@@ -8,7 +8,9 @@ import { fileKey } from '../shared/reader.js';
 import { fetchSnapshot, compareHeads, probeRevision } from './github.js';
 import { registerWorkspace } from './workspace-ipc.js';
 import { prAlerts } from './pr-alerts.js';
-import { pullRequestUrl } from '../shared/reviews.js';
+import { isLocalReview, reviewKey } from '../shared/reviews.js';
+import { registerLocalReviews } from './local-ipc.js';
+import { localReviewRevision, localReviewSnapshot } from './local-branch.js';
 
 const html = join(import.meta.dirname, '../renderer/index.html');
 const appIcon = join(app.getAppPath(), 'resources', 'local-reviewer.png');
@@ -100,6 +102,14 @@ function startWorkspace() {
   );
   const assistant = registerWorkspace(store, verifySender, app.getPath('userData'), alerts);
   app.on('browser-window-created', (_, win) => win.on('closed', assistant.cancel));
+  const shutdown = new AbortController();
+  registerLocalReviews(
+    store,
+    verifySender,
+    () => window,
+    app.getPath('documents'),
+    shutdown.signal,
+  );
   let fetchController: AbortController | undefined;
   ipcMain.handle('reader:active', (event) => {
     verifySender(event);
@@ -136,14 +146,25 @@ function startWorkspace() {
     verifySender(event);
     reader.checkpoint(value);
   });
-  const target = z.object({ url: pullRequestUrl, revision: z.string() });
+  const target = z.object({ url: reviewKey, revision: z.string() });
   const etags = new Map<string, string>();
   function activeUrl(input: unknown) {
-    const url = pullRequestUrl.parse(input);
-    if (url !== reader.active()) throw Error('Select this saved PR before fetching.');
+    const url = reviewKey.parse(input);
+    if (url !== reader.active()) throw Error('Select this saved review before fetching.');
     return url;
   }
+  // A local branch has no head-to-head comparison, so an update compares the saved diffs.
+  const savedDiffs = { ancestry: 'unknown' as const, partial: false, files: [] };
+  async function refreshLocal(url: string, controller: AbortController) {
+    const snapshot = await localReviewSnapshot(store.local, url, controller.signal);
+    controller.signal.throwIfAborted();
+    const current = reader.read(url);
+    if (!current || snapshot.revision === current.revision) return reader.install(url, snapshot);
+    reader.revisions.stage(url, snapshot, savedDiffs, reader.revisions.baseline(url));
+    return reader.read(url);
+  }
   async function refresh(url: string, controller: AbortController) {
+    if (isLocalReview(url)) return refreshLocal(url, controller);
     const snapshot = await fetchSnapshot(url, controller.signal);
     controller.signal.throwIfAborted();
     snapshot.revision = reader.revisions.identify(url, snapshot.revision, snapshot.meta.baseBranch);
@@ -153,6 +174,7 @@ function startWorkspace() {
     const from = baseline.split('...').at(-1) ?? current.meta.head;
     const heads = await compareHeads(url, from, snapshot.meta.head, controller.signal);
     controller.signal.throwIfAborted();
+    reader.setDraft(url, snapshot.meta.isDraft);
     reader.revisions.stage(url, snapshot, heads, baseline);
     return reader.read(url);
   }
@@ -171,15 +193,24 @@ function startWorkspace() {
     verifySender(event);
     const url = activeUrl(input);
     const controller = nextFetch();
+    if (isLocalReview(url)) {
+      const revision = await localReviewRevision(store.local, url, controller.signal);
+      controller.signal.throwIfAborted();
+      const current = reader.read(url);
+      if (revision === current?.revision) reader.revisions.clearStage(url);
+      else if (revision !== current?.incoming) await refreshLocal(url, controller);
+      return { incoming: reader.revisions.info(url).incoming };
+    }
     const info = await probeRevision(url, controller.signal, etags.get(url));
     controller.signal.throwIfAborted();
     const current = reader.read(url);
-    if (!info) return current?.incoming ?? null;
+    if (!info) return { incoming: current?.incoming ?? null, isDraft: current?.meta.isDraft };
+    reader.setDraft(url, info.isDraft);
     info.revision = reader.revisions.identify(url, info.revision, info.baseBranch);
     if (info.revision === current?.revision) reader.revisions.clearStage(url);
     else if (info.revision !== current?.incoming) await refresh(url, controller);
     if (info.etag) etags.set(url, info.etag);
-    return reader.revisions.info(url).incoming;
+    return { incoming: reader.revisions.info(url).incoming, isDraft: info.isDraft };
   });
   ipcMain.handle('reader:open-update', (event, input: unknown) => {
     verifySender(event);
@@ -187,13 +218,17 @@ function startWorkspace() {
     activeUrl(url);
     const { snapshot, heads } = reader.revisions.pending(url, revision);
     fetchController?.abort();
+    // Draft status can change again while a new revision is staged.
+    if (!isLocalReview(url))
+      snapshot.meta.isDraft = reader.read(url)?.meta.isDraft ?? snapshot.meta.isDraft;
     return reader.install(url, snapshot, heads);
   });
   ipcMain.handle('reader:finish', (event, input: unknown) => {
     verifySender(event);
     const { url, revision } = target.parse(input);
     activeUrl(url);
-    reader.revisions.finish(url, revision);
+    if (isLocalReview(url)) reader.revisions.checkpoint(url, revision);
+    else reader.revisions.finish(url, revision);
     fetchController?.abort();
     return reader.read(url);
   });
@@ -242,6 +277,7 @@ function startWorkspace() {
   });
   app.once('will-quit', () => {
     assistant.close();
+    shutdown.abort();
     fetchController?.abort();
     store.close();
   });

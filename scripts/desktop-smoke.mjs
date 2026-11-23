@@ -56,6 +56,7 @@ if (!live) {
   await writeFile(join(repository, 'callers.txt'), longLines.join('\n') + '\n');
   git('add', '.');
   git('commit', '-qm', 'before');
+  review.meta.draft = true;
   review.meta.base.sha = git('rev-parse', 'HEAD');
   await writeFile(
     join(repository, 'src/reader.ts'),
@@ -142,10 +143,14 @@ if (!live) {
       "if(pair && endpoint.includes('/pulls/')) { if(pair.number===22 && fs.existsSync(" +
         JSON.stringify(pairPush) +
         ")) pair.head.sha='d'.repeat(40);console.log(JSON.stringify(endpoint.includes('/files?') ? [pair.file] : {...response.meta,...pair,state:'open',changed_files:1}));return; }",
+      'const changedReview = fs.existsSync(' +
+        JSON.stringify(repliesFile) +
+        ") && process.argv.some(a=>a.includes('pullRequest(number:12)'));",
+      "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('query ReviewStatus'))){console.log(JSON.stringify({data:{repository:{pullRequest:{state:'OPEN',headRefOid:changedReview?'f'.repeat(40):response.meta.head.sha,isDraft:!!response.meta.draft,latest:{nodes:changedReview?[{commit:{oid:response.meta.head.sha}}]:[]},dismissed:{totalCount:changedReview?1:0}}}}}));return;}",
       // The reviewer counts as having approved once the grouped review has been posted.
       "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('latestOpinionatedReviews'))){const query=process.argv.find(a=>a.startsWith('query='));const state=fs.existsSync(" +
         JSON.stringify(posted) +
-        ")?[{author:{login:'fixture-reviewer'},state:'APPROVED'}]:[];console.log(JSON.stringify({data:{viewer:{login:'fixture-reviewer'},repository:Object.fromEntries([...query.matchAll(/(p\\d+):pullRequest/g)].map(m=>[m[1],{latestOpinionatedReviews:{nodes:m[1]==='p12'?state:[]}}]))}}));return;}",
+        ")?[{author:{login:'fixture-reviewer'},state:'APPROVED'}]:[];console.log(JSON.stringify({data:{viewer:{login:'fixture-reviewer'},repository:Object.fromEntries([...query.matchAll(/(p\\d+):pullRequest/g)].map(m=>[m[1],{isDraft:m[1]==='p12',latestOpinionatedReviews:{nodes:m[1]==='p12'?state:[]}}]))}}));return;}",
       'const {actionsFixture} = require(' +
         JSON.stringify(resolve('fixtures/github/actions.mjs')) +
         ');',
@@ -332,6 +337,7 @@ try {
     }
     const toolsRail = page.getByRole('navigation', { name: 'Workspace tools' });
     const workspaceButton = toolsRail.getByRole('button', { name: 'Workspace', exact: true });
+    const reviewButton = toolsRail.getByRole('button', { name: 'Review', exact: true });
     const railBounds = await toolsRail.boundingBox();
     const collapsedSidebarWidth = await page
       .locator('#workspace-sidebar')
@@ -396,6 +402,7 @@ try {
       await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
       await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
       assert.equal(await workspaceButton.getAttribute('aria-current'), 'page');
+      assert.equal(await reviewButton.getAttribute('aria-current'), null);
       assert.equal(
         await page.locator('#workspace-sidebar').evaluate((el) => el.clientWidth),
         collapsedSidebarWidth,
@@ -422,7 +429,7 @@ try {
       );
       const home = page.locator('.shell');
       assert.ok(await home.evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
-      const list = home.getByRole('region', { name: /Saved pull requests/ });
+      const list = home.getByRole('region', { name: /Saved reviews/ });
       assert.ok(await list.evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
       await page.evaluate((previous) => {
         if (previous) globalThis.document.documentElement.dataset.textSize = previous;
@@ -433,6 +440,16 @@ try {
       await page.getByRole('button', { name: /example\/project.*#12/ }).click();
       await region.waitFor();
       assert.equal(await workspaceButton.getAttribute('aria-current'), null);
+      assert.equal(await reviewButton.getAttribute('aria-current'), 'page');
+      // Workspace and Review are the two destinations: leaving a review keeps a way back to it.
+      await workspaceButton.click();
+      await toolsRail
+        .getByRole('button', { name: 'Workspace', exact: true, current: 'page' })
+        .waitFor();
+      await reviewButton.click();
+      await toolsRail
+        .getByRole('button', { name: 'Review', exact: true, current: 'page' })
+        .waitFor();
       assert.deepEqual(await toolsRail.boundingBox(), railBounds);
       await toolsRail.getByRole('button', { name: 'Show repositories' }).click();
       await page.getByRole('button', { name: 'Add repository', exact: true }).click();
@@ -550,7 +567,8 @@ try {
       await pairDialog.getByRole('button', { name: 'Investigate with selected agent' }).click();
       await pairDialog.getByText('No interaction identified in the inspected evidence.').waitFor();
       await pairDialog.getByRole('button', { name: 'Close', exact: true }).click();
-      await sidebar.getByRole('button', { name: /Tracked PR/ }).click();
+      await sidebar.getByRole('button', { name: /Draft.*Tracked PR/ }).click();
+      await page.locator('.pr-heading').getByText('Draft', { exact: true }).waitFor();
       assert.equal(await sidebar.getByRole('button', { name: /Other PR/ }).count(), 0);
       assert.equal(await page.getByRole('button', { name: 'PR discussions' }).count(), 0);
       await page.getByRole('button', { name: /^src\/reader\.ts, modified/ }).click();
@@ -821,18 +839,18 @@ try {
       await files.getByLabel('Filter files').fill('');
       await treeFolder.click();
       await page.getByRole('button', { name: 'Collapse file tree' }).click();
-      await toolsRail
+      await page
         .getByRole('button', { name: 'Show changed files', expanded: false })
         .and(page.locator(':focus'))
         .waitFor();
       assert.equal(await files.count(), 0);
-      await toolsRail.getByRole('button', { name: 'Show changed files' }).click();
+      await page.getByRole('button', { name: 'Show changed files' }).click();
       await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
-      await toolsRail.getByRole('button', { name: 'Hide changed files', expanded: true }).click();
+      await page.getByRole('button', { name: 'Hide changed files', expanded: true }).click();
       await resize(app, page, 850, 720);
       await region.waitFor();
       await resize(app, page, 1380, 720);
-      await toolsRail.getByRole('button', { name: 'Show changed files', expanded: false }).click();
+      await page.getByRole('button', { name: 'Show changed files', expanded: false }).click();
       await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
       const chatText = chat.getByLabel('Ask about the diff');
       await chatText.fill('Does this line wrap?');
@@ -881,9 +899,10 @@ try {
       restoredFilesWidth = await fileWidth();
       await resize(app, page, 850, 720);
       await page.getByRole('button', { name: 'Diff', exact: true }).click();
-      await toolsRail.getByRole('button', { name: 'Show changed files', expanded: false }).click();
-      await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
-      await toolsRail.getByRole('button', { name: 'Hide changed files', expanded: true }).click();
+      // A narrow window swaps panes with the Files, Diff and Chat switch.
+      await page.getByRole('button', { name: 'Files', exact: true }).click();
+      await files.getByLabel('Filter files').waitFor();
+      await page.getByRole('button', { name: 'Diff', exact: true }).click();
       await region.waitFor();
       await page.getByRole('button', { name: 'Chat', exact: true }).click();
       await headerPicker.press('Enter');
@@ -1588,36 +1607,43 @@ try {
       await page.clock.fastForward(125000);
       // Account for timers created before the test clock was installed.
       await page.evaluate(() => globalThis.dispatchEvent(new globalThis.Event('focus')));
-      await page.getByRole('status').filter({ hasText: '1 new review reply' }).waitFor();
-      await page.getByRole('button', { name: 'Review replies, 1 unread', expanded: false }).click();
-      const inbox = page.getByRole('region', { name: 'Review replies' });
-      await page.getByRole('button', { name: /^Review replies,/, expanded: true }).waitFor();
+      await page.getByRole('status').filter({ hasText: '3 new review alerts' }).waitFor();
+      await page.getByRole('button', { name: 'Review alerts, 3 unread', expanded: false }).click();
+      const inbox = page.getByRole('region', { name: 'Review alerts' });
+      await page.getByRole('button', { name: /^Review alerts,/, expanded: true }).waitFor();
       assert.equal(await page.getByRole('dialog').count(), 0);
       await inbox.getByText('Added coverage for concurrent retries.', { exact: true }).waitFor();
+      await inbox.getByText('New push after your review', { exact: true }).waitFor();
+      await inbox.getByText('Your review was dismissed', { exact: true }).waitFor();
       await capture(page, 'reply-inbox');
       await inbox.getByRole('button', { name: 'Mark all read' }).click();
       await inbox.getByText('@fixture-reviewer · 0 unread', { exact: true }).waitFor();
-      await inbox.getByRole('button', { name: 'Close review replies' }).click();
+      await inbox.getByRole('button', { name: 'Close review alerts' }).click();
       await page
-        .getByRole('button', { name: /^Review replies,/, expanded: false })
+        .getByRole('button', { name: /^Review alerts,/, expanded: false })
         .and(page.locator(':focus'))
         .waitFor();
       await writeFile(repliesFile, '[]');
       await writeFile(switchedAccount, '');
-      await page.getByRole('button', { name: /^Review replies,/ }).click();
-      await inbox.getByText('Checking for replies…').waitFor();
+      await page.getByRole('button', { name: /^Review alerts,/ }).click();
+      await inbox.getByText('Checking for alerts…').waitFor();
       assert.equal(await inbox.getByText('Added coverage for concurrent retries.').count(), 0);
       await inbox.getByText('@second-reviewer · 0 unread', { exact: true }).waitFor();
       assert.equal(await inbox.getByText('Added coverage for concurrent retries.').count(), 0);
-      await inbox.getByRole('button', { name: 'Close review replies' }).click();
+      await inbox.getByRole('button', { name: 'Close review alerts' }).click();
       await page
-        .getByRole('button', { name: /^Review replies,/, expanded: false })
+        .getByRole('button', { name: /^Review alerts,/, expanded: false })
         .and(page.locator(':focus'))
         .waitFor();
     }
     await page.getByRole('button', { name: 'Back to workspace' }).click();
     await page.getByLabel('GitHub pull request URL').waitFor();
     if (!live) {
+      await page
+        .locator('.saved-link')
+        .filter({ hasText: '#12' })
+        .getByText('Draft', { exact: true })
+        .waitFor();
       // Opening the new pull request clears its highlight and the count on the app icon.
       const freshRow = page.locator('.monitored-pr[data-new]');
       await freshRow.getByRole('button', { name: /Fresh PR/ }).click();
@@ -1634,7 +1660,10 @@ try {
       await library.waitFor({ state: 'detached' });
       if (process.platform !== 'win32')
         assert.equal(await reopened.evaluate(({ app }) => app.getBadgeCount()), 0);
-      assert.equal((await reopened.evaluate(() => globalThis.shownAlerts)).length, 1);
+      assert.deepEqual(await reopened.evaluate(() => globalThis.shownAlerts), [
+        'New pull request in example/project|#14 Fresh PR\n@octo',
+        'example/project #12|Your review was dismissed · New push after your review',
+      ]);
     }
     console.info(
       live

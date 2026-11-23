@@ -13,11 +13,18 @@ import type { Accent, Appearance } from '../../shared/appearance.js';
 import { useCallback, useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import { pullRequestUrl, type SavedReview } from '../../shared/reviews.js';
 import { RepositorySidebar } from './RepositorySidebar.js';
-import { GitPullRequest, Layers2, ChevronRight, Link2 } from 'lucide-react';
+import { GitPullRequest, Layers2, ChevronRight, Link2, FolderGit2 } from 'lucide-react';
+import { LocalReviewStart } from './LocalReview.js';
 import { EmptyState } from './components/EmptyState.js';
 import { Reader, type PrCommand } from './Reader.js';
 
-const emptyInbox: ReplyInbox = { account: null, items: [], added: 0, error: null };
+const emptyInbox: ReplyInbox = {
+  account: null,
+  items: [],
+  changes: [],
+  added: 0,
+  error: null,
+};
 export function Workspace({
   initialTheme,
   initialAccent,
@@ -127,6 +134,9 @@ export function Workspace({
   );
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [reviews, setReviews] = useState<SavedReview[] | null>(null);
+  // The review the reviewer last had open, so the rail can return to it from the workspace.
+  const [lastUrl, setLastUrl] = useState<string | null>(null);
+  const returnTo = reviews?.some((item) => item.url === lastUrl) ? lastUrl : null;
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -138,6 +148,7 @@ export function Workspace({
         if (active) {
           setReviews(items);
           setActiveUrl(selected);
+          setLastUrl(selected);
         }
       })
       .catch(() => {
@@ -148,9 +159,20 @@ export function Workspace({
     };
   }, []);
 
+  function updateDraftLabels(saved: SavedReview[]) {
+    const byUrl = new Map(saved.map((item) => [item.url, item]));
+    setReviews((current) => {
+      if (
+        !current?.some(
+          (item) => byUrl.has(item.url) && byUrl.get(item.url)?.isDraft !== item.isDraft,
+        )
+      )
+        return current;
+      return current.map((item) => byUrl.get(item.url) ?? item);
+    });
+  }
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [repliesOpen, setRepliesOpen] = useState(false);
-  const [fileToolSlot, setFileToolSlot] = useState<HTMLSpanElement | null>(null);
   const railOnly = collapsed && !repliesOpen;
   const repliesButton = useRef<HTMLButtonElement>(null);
   const [type, setType] = useState(initialType);
@@ -174,6 +196,8 @@ export function Workspace({
             const next = await window.reviewer.syncReplies();
             if (generation !== job.generation) continue;
             setInbox(next);
+            const saved = await window.reviewer.listReviews();
+            if (generation === job.generation) updateDraftLabels(saved);
           } catch (e) {
             if (generation === job.generation) {
               setInbox({ ...emptyInbox, error: readableError(e) });
@@ -191,8 +215,9 @@ export function Workspace({
     poll.current.generation++;
     setInbox(emptyInbox);
   }, []);
+  const savedUrls = reviews?.map((item) => item.url).join(' ');
   useEffect(() => {
-    if (reviews === null) return;
+    if (savedUrls === undefined) return;
     refresh();
     let last = Date.now();
     const check = () => {
@@ -207,7 +232,7 @@ export function Workspace({
       window.clearInterval(timer);
       window.removeEventListener('focus', check);
     };
-  }, [reviews, refresh]);
+  }, [savedUrls, refresh]);
   const desiredType = useRef(initialType),
     typeQueue = useRef(Promise.resolve()),
     confirmedType = useRef(initialType);
@@ -247,6 +272,12 @@ export function Workspace({
       .selectReview(url)
       .then(() => {
         setActiveUrl(url);
+        if (url) setLastUrl(url);
+        else
+          window.reviewer
+            .listReviews()
+            .then(updateDraftLabels)
+            .catch((e) => setError(readableError(e)));
         setCommand(url && kind ? { id: ++commandId.current, url, kind } : null);
       })
       .catch(() => setError('Could not change the active review. Try again.'));
@@ -288,7 +319,10 @@ export function Workspace({
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not open the PR.'));
   }
   // A notification about a new pull request opens it when clicked.
-  const openFromAlert = useEffectEvent((pr: string) => openMonitored(pr));
+  const openFromAlert = useEffectEvent((pr: string) => {
+    openMonitored(pr);
+    refresh();
+  });
   useEffect(() => window.reviewer.onOpenPr((pr) => openFromAlert(pr)), []);
   return (
     <ResizablePanelGroup
@@ -312,11 +346,16 @@ export function Workspace({
           openInbox={() => (repliesOpen ? setRepliesOpen(false) : openInbox())}
           repliesButton={repliesButton}
           settingsOpen={settingsOpen}
-          fileToolSlot={setFileToolSlot}
+          onReturn={() => {
+            setSettingsOpen(false);
+            if (!activeUrl && returnTo) select(returnTo);
+          }}
+          returnTo={returnTo}
           repliesPane={
             repliesOpen && (
               <RepliesPane
                 inbox={inbox}
+                openPr={openMonitored}
                 busy={checking}
                 update={(i) => setInbox((current) => (current.account === i.account ? i : current))}
                 refresh={refreshInbox}
@@ -328,7 +367,7 @@ export function Workspace({
               />
             )
           }
-          unread={inbox.items.filter((i) => i.unread).length}
+          unread={[...inbox.items, ...inbox.changes].filter((i) => i.unread).length}
           collapsed={railOnly}
           onToggle={() => showRepositories(collapsed || repliesOpen)}
           activeUrl={activeUrl}
@@ -337,14 +376,17 @@ export function Workspace({
           onSummarise={(pr) => openMonitored(pr, 'summarise')}
           onApprove={(pr) => openMonitored(pr, 'approve')}
           refresh={reviewEpoch}
-          onHome={() => select(null)}
+          onHome={() => {
+            setSettingsOpen(false);
+            if (activeUrl) select(null);
+          }}
         />
       </ResizablePanel>
       <ResizableHandle label="Resize repository sidebar" disabled={railOnly} />
       <ResizablePanel id="workspace-page" className="studio-page">
         <span role="status" className="visually-hidden">
           {inbox.added > 0 &&
-            (inbox.added === 1 ? '1 new review reply' : inbox.added + ' new review replies')}
+            (inbox.added === 1 ? '1 new review alert' : inbox.added + ' new review alerts')}
         </span>
         {settingsOpen && (
           <SettingsPane
@@ -362,13 +404,14 @@ export function Workspace({
         )}
         {appearanceError && <p role="alert">{appearanceError}</p>}
         {agentError && <p role="alert">{agentError}</p>}
+        {activeUrl && error && <p role="alert">{error}</p>}
         {activeUrl ? (
           <Reader
-            fileToolSlot={fileToolSlot}
             accountEpoch={inbox.account}
             agentPicker={agentPicker}
             agents={agents}
             command={command?.url === activeUrl ? command : null}
+            local={reviews?.find((item) => item.url === activeUrl)?.local ?? null}
             onPublished={() => setReviewEpoch((n) => n + 1)}
             key={activeUrl}
             url={activeUrl}
@@ -403,30 +446,55 @@ export function Workspace({
                   </button>
                 </div>
               </form>
+              <LocalReviewStart
+                disabled={reviews === null}
+                onStarted={(started, items) => {
+                  setReviews(items);
+                  select(started);
+                }}
+              />
               {error && <p role="alert">{error}</p>}
               <p className="notice" role="status">
                 {notice}
               </p>
               <section aria-labelledby="saved">
-                <h2 id="saved">Saved pull requests {reviews && <span>{reviews.length}</span>}</h2>
+                <h2 id="saved">Saved reviews {reviews && <span>{reviews.length}</span>}</h2>
                 {reviews === null ? (
                   <p>{error ? 'Workspace unavailable.' : 'Loading workspace…'}</p>
                 ) : reviews.length === 0 ? (
                   <EmptyState
                     visual={<GitPullRequest size={24} />}
                     title="Your first review starts here"
-                    description="Save a pull request above to keep its diff, reading position, and conversation together."
+                    description="Save a pull request or review a local branch to keep its diff, reading position, and conversation together."
                   />
                 ) : (
                   <ul>
                     {reviews.map((item) => (
                       <li key={item.url}>
-                        <button className="saved-link" onClick={() => select(item.url)}>
-                          <GitPullRequest size={16} />
-                          <strong>
-                            {new URL(item.url).pathname.split('/').slice(1, 3).join('/')}
-                          </strong>{' '}
-                          <code>#{item.url.split('/').at(-1)}</code>
+                        <button
+                          className="saved-link"
+                          title={item.local?.path}
+                          onClick={() => select(item.url)}
+                        >
+                          {item.local ? (
+                            <>
+                              <FolderGit2 size={16} />
+                              <span className="review-tag">Local</span>
+                              <strong>{item.local.repository}</strong>{' '}
+                              <code>
+                                {item.local.branch ?? 'detached HEAD'} → {item.local.baseBranch}
+                              </code>
+                            </>
+                          ) : (
+                            <>
+                              <GitPullRequest size={16} />
+                              <strong>
+                                {new URL(item.url).pathname.split('/').slice(1, 3).join('/')}
+                              </strong>{' '}
+                              <code>#{item.url.split('/').at(-1)}</code>
+                              {item.isDraft && <span className="review-tag">Draft</span>}
+                            </>
+                          )}
                           <time dateTime={item.savedAt}>
                             {new Date(item.savedAt).toLocaleDateString()}
                           </time>

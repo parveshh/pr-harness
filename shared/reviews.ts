@@ -7,7 +7,8 @@ import type { Accent, Appearance } from './appearance.js';
 import { z } from 'zod';
 import type { PublishBridge } from './publish.js';
 import type { AssistantBridge, CitedSourceKey } from './assistant.js';
-import type { Checkpoint, FileKey, ReaderView } from './reader.js';
+import type { Checkpoint, FileKey, ReaderView, reviewUpdate } from './reader.js';
+import type { LocalBridge } from './local.js';
 
 // Store a single canonical URL even when a reviewer copies a link from the Files tab.
 export const pullRequestUrl = z
@@ -24,11 +25,45 @@ export const pullRequestUrl = z
       .replace(/\/(?:files|commits|checks)\/?$|\/$/i, '')
       .toLowerCase();
   });
-export const savedReview = z.object({ url: pullRequestUrl, savedAt: z.iso.datetime() });
+// A local branch review has an opaque key so that filesystem paths stay out of keys, logs and
+// agent prompts. The repository location is stored separately in local_reviews.
+export const localReviewKey = z
+  .string()
+  .trim()
+  .regex(
+    /^local:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    'Choose a saved local review.',
+  )
+  .transform((value) => value.toLowerCase());
+// Operations that make sense for both kinds of review accept either key. GitHub-only
+// operations keep `pullRequestUrl`, so a local key fails validation there.
+export const reviewKey = z.union([pullRequestUrl, localReviewKey]);
+export function isLocalReview(key: string) {
+  return key.startsWith('local://');
+}
+export const localReviewInfo = z.object({
+  repository: z.string(),
+  branch: z.string().nullable(),
+  baseBranch: z.string(),
+  path: z.string(),
+});
+export type LocalReviewInfo = z.infer<typeof localReviewInfo>;
+export const savedReview = z.object({
+  url: reviewKey,
+  savedAt: z.iso.datetime(),
+  isDraft: z.boolean().optional(),
+  local: localReviewInfo.optional(),
+});
 export const reviewList = z.array(savedReview);
 export type SavedReview = z.infer<typeof savedReview>;
 export interface ReviewerBridge
-  extends AssistantBridge, PublishBridge, WorkspaceBridge, PipelineBridge, CrossPrBridge {
+  extends
+    AssistantBridge,
+    PublishBridge,
+    WorkspaceBridge,
+    PipelineBridge,
+    CrossPrBridge,
+    LocalBridge {
   readonly integratedTitleBar: boolean;
   getAppearance(): Promise<Appearance>;
   saveAppearance(value: Appearance): Promise<void>;
@@ -44,7 +79,7 @@ export interface ReviewerBridge
     since: boolean,
     path: string | null,
   ): Promise<void>;
-  checkUpdate(url: string): Promise<string | null>;
+  checkUpdate(url: string): Promise<z.infer<typeof reviewUpdate>>;
   openUpdate(url: string, revision: string): Promise<ReaderView>;
   finishRevision(url: string, revision: string): Promise<ReaderView>;
   markComparisonFile(key: FileKey, reviewed: boolean): Promise<ReaderView>;

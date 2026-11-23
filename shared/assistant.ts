@@ -1,6 +1,6 @@
 import { finding, type AssessFinding } from './findings.js';
 import { z } from 'zod';
-import { pullRequestUrl } from './reviews.js';
+import { isLocalReview, pullRequestUrl, reviewKey } from './reviews.js';
 
 export const defaultPrompt = `Answer the reviewer’s question directly. Match the scope to the request. For a line or file explanation, start with what the selected code does. For a new file, explain its responsibility and where it is used. For a whole PR review, lead with the findings that would most affect the decision to merge.
 
@@ -92,7 +92,7 @@ export const sourceCitation = z.object({
   url: z.string(),
 });
 export const citedSourceKey = z.object({
-  url: pullRequestUrl,
+  url: reviewKey,
   run: z.uuid(),
   id: z.number().int().positive(),
 });
@@ -102,7 +102,7 @@ export const chatRequest = z.object({
   kind: z.enum(['question', 'summary', 'review']).optional(),
   contextMode: contextMode.optional(),
   run: z.uuid(),
-  url: pullRequestUrl,
+  url: reviewKey,
   revision: z.string(),
   path: z.string(),
   hunk: z.number().int().nonnegative(),
@@ -132,6 +132,7 @@ export const watchPr = z.object({
   author: login,
   // Whether the signed-in reviewer's latest review on GitHub approves the PR.
   approved: z.boolean().default(false),
+  isDraft: z.boolean().optional(),
   // Appeared since the last check and not opened yet.
   unseen: z.boolean().default(false),
 });
@@ -174,6 +175,10 @@ export interface AssistantBridge {
   ask(request: ChatRequest): Promise<Turn>;
   cancelAsk(run: string): Promise<void>;
   onActivity(callback: (event: z.infer<typeof activity>) => void): () => void;
+}
+// Local branch reviews have no GitHub repository, so repository-scoped settings do not apply.
+export function githubRepoOf(url: string) {
+  return isLocalReview(url) ? null : repoOf(url);
 }
 export function repoOf(url: string) {
   return repoName.parse(

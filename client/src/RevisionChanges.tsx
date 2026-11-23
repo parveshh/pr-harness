@@ -1,7 +1,8 @@
 import type { TreeFile } from './ChangedFiles.js';
 import { useEffect, useState } from 'react';
 import { QuestionLinks } from './PinnedQuestions.js';
-import { splitHunks } from '../../shared/reader.js';
+import { shortRevision, splitHunks } from '../../shared/reader.js';
+import { isLocalReview } from '../../shared/reviews.js';
 import type { ReaderFile, ReaderView } from '../../shared/reader.js';
 import type { ChangeEvidence, Comparison } from '../../shared/rereview.js';
 import { readableError } from '../../shared/assistant.js';
@@ -119,16 +120,21 @@ export function RevisionChanges({
     };
   }, [url, path, view.revision]);
   const data = evidence?.path === path ? evidence?.data : null;
-  const baseline = comparison.baseline.split('...').at(-1)?.slice(0, 8);
+  const baseline = shortRevision(comparison.baseline);
   return (
     <>
       <div className="revision-context">
         <code>
-          {baseline} → {view.meta.head.slice(0, 8)}
+          {baseline} → {shortRevision(view.revision)}
         </code>
         {comparison.baseChanged && <strong>Base changed</strong>}
         {comparison.ancestry === 'rewritten' && <strong>Rewritten history</strong>}
-        {comparison.ancestry === 'unknown' && <span>Commit ancestry unavailable</span>}
+        {comparison.ancestry === 'unknown' &&
+          (isLocalReview(url) ? (
+            <span>Compared using the saved diffs</span>
+          ) : (
+            <span>Commit ancestry unavailable</span>
+          ))}
         {comparison.partial && <span>Comparison has partial coverage</span>}
         <span>
           {needsReview} previously reviewed {needsReview === 1 ? 'file needs' : 'files need'}{' '}

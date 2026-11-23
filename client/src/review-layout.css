@@ -517,3 +517,74 @@
 .citation-popover .source-location:is(:hover, :focus-visible) {
   background: var(--hover);
 }
+
+/* Local branch reviews */
+.review-split[data-single] .review-drafts {
+  border-radius: 6px;
+}
+.review-tag {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+  font:
+    600 0.6875rem/1.5 system-ui,
+    sans-serif;
+}
+.local-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  max-width: 52rem;
+  margin-top: 14px;
+}
+.local-entry > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.local-entry small {
+  color: var(--muted);
+}
+.local-repo {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+}
+.local-repo dt {
+  color: var(--muted);
+}
+.local-repo dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.local-brief {
+  max-height: 42vh;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--raised);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    0.75rem/1.5 ui-monospace,
+    monospace;
+}
+.local-checkpoint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+}
+.local-checkpoint p {
+  margin: 0;
+  font-size: 0.8125rem;
+}

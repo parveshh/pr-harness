@@ -7,7 +7,6 @@ import { PinnedQuestions, QuestionLinks, type QuestionPanel } from './PinnedQues
 import { RevisionChanges, revisionQueue } from './RevisionChanges.js';
 import { InlineComments } from './InlineComments.js';
 import { Activity, Fragment } from 'react';
-import { createPortal } from 'react-dom';
 import { usePanelRef } from 'react-resizable-panels';
 import { ChangedFiles } from './ChangedFiles.js';
 import {
@@ -21,7 +20,8 @@ import {
   useState,
 } from 'react';
 import type { ReaderFile, ReaderView } from '../../shared/reader.js';
-import { splitHunks } from '../../shared/reader.js';
+import { shortRevision, splitHunks, uncommittedDigest } from '../../shared/reader.js';
+import { isLocalReview, type LocalReviewInfo } from '../../shared/reviews.js';
 import { diffLines } from '../../shared/diff.js';
 import { highlightRows, languageFor } from '../../shared/highlight.js';
 import { ChatMarkdown } from './components/ChatMarkdown.js';
@@ -37,12 +37,14 @@ import {
   UserRound,
   RotateCw,
   FileCode2,
-  Files,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightOpen,
   Sparkles,
   Pin,
   MessageSquarePlus,
   MessageSquare,
+  FolderGit2,
 } from 'lucide-react';
 import { FullFile, type FileFocus } from './FullFile.js';
 import { usePrDiscussions, discussionsByLine } from './PrDiscussions.js';
@@ -61,7 +63,6 @@ function message(error: unknown) {
 export type PrCommand = { id: number; url: string; kind: 'summarise' | 'review' | 'approve' };
 
 export function Reader({
-  fileToolSlot,
   url,
   onBack,
   agentPicker,
@@ -69,11 +70,13 @@ export function Reader({
   command,
   onPublished,
   accountEpoch,
+  local: localInfo,
 }: {
   url: string;
+  // Present for a local branch review, which has no GitHub discussion, checks or publishing.
+  local: LocalReviewInfo | null;
   onBack: () => void;
   agentPicker: ReactNode;
-  fileToolSlot: HTMLSpanElement | null;
   agents: AgentCatalog | null;
   command: PrCommand | null;
   onPublished: () => void;
@@ -100,19 +103,25 @@ export function Reader({
     });
   }, []);
   const [view, setView] = useState<ReaderView | null>(null);
-  const lessons = useReviewLessons(url, !!view);
+  const local = isLocalReview(url);
+  const lessons = useReviewLessons(url, !!view && !local);
   const [lessonThread, setLessonThread] = useState<DiscussionThread | null>(null);
-  const discussions = usePrDiscussions(url, view?.revision, accountEpoch, (thread) => {
-    if (!lessons.items) return null;
-    const saved = lessons.items.some(
-      (item) => item.sourceUrl === url && item.threadId === thread.id,
-    );
-    return (
-      <button type="button" className="secondary" onClick={() => setLessonThread(thread)}>
-        {saved ? 'Edit review lesson' : 'Remember review lesson'}
-      </button>
-    );
-  });
+  const discussions = usePrDiscussions(
+    url,
+    local ? undefined : view?.revision,
+    accountEpoch,
+    (thread) => {
+      if (!lessons.items) return null;
+      const saved = lessons.items.some(
+        (item) => item.sourceUrl === url && item.threadId === thread.id,
+      );
+      return (
+        <button type="button" className="secondary" onClick={() => setLessonThread(thread)}>
+          {saved ? 'Edit review lesson' : 'Remember review lesson'}
+        </button>
+      );
+    },
+  );
   const earlierLessons = useMemo(
     () => (lessons.items ?? []).filter((item) => item.sourceUrl !== url),
     [lessons.items, url],
@@ -275,8 +284,12 @@ export function Reader({
       if (checking || document.hidden || !document.hasFocus() || Date.now() < nextCheck) return;
       checking = true;
       try {
-        const incoming = await window.reviewer.checkUpdate(url);
-        if (live) setView((v) => (v && v.incoming !== incoming ? { ...v, incoming } : v));
+        const { incoming, isDraft } = await window.reviewer.checkUpdate(url);
+        if (live)
+          setView((v) => {
+            if (!v || (v.incoming === incoming && v.meta.isDraft === isDraft)) return v;
+            return { ...v, incoming, meta: { ...v.meta, isDraft } };
+          });
         delay = 60000;
       } catch {
         delay = Math.min(delay * 2, 15 * 60000);
@@ -466,21 +479,6 @@ export function Reader({
           }}
         />
       )}
-      {view &&
-        fileToolSlot &&
-        createPortal(
-          <button
-            ref={fileToolButton}
-            aria-expanded={filesVisible}
-            aria-controls="review-files"
-            aria-label={filesVisible ? 'Hide changed files' : 'Show changed files'}
-            title={filesVisible ? 'Hide changed files' : 'Show changed files'}
-            onClick={filesVisible ? hideFiles : showFiles}
-          >
-            <Files size={19} />
-          </button>,
-          fileToolSlot,
-        )}
       {view && (
         <div ref={paneSwitch} className="pane-switch" aria-label="Review panes">
           {(['files', 'diff', 'chat'] as const)
@@ -546,6 +544,19 @@ export function Reader({
         <ResizablePanel id="review-diff" minSize="300px">
           <main className="review-center">
             <header>
+              {view && (
+                <button
+                  className="pane-toggle"
+                  ref={fileToolButton}
+                  aria-expanded={filesVisible}
+                  aria-controls="review-files"
+                  aria-label={filesVisible ? 'Hide changed files' : 'Show changed files'}
+                  title={filesVisible ? 'Hide changed files' : 'Show changed files'}
+                  onClick={filesVisible ? hideFiles : showFiles}
+                >
+                  {filesVisible ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+                </button>
+              )}
               <button
                 aria-label="Back to workspace"
                 title="Back to workspace"
@@ -554,11 +565,19 @@ export function Reader({
               >
                 <ArrowLeft size={15} />
               </button>
-              <span className="repo">
-                <GitPullRequest size={15} />
-                {new URL(url).pathname.split('/').slice(1, 3).join('/')}{' '}
-                <b>#{new URL(url).pathname.split('/').at(-1)}</b>
-              </span>
+              {local ? (
+                <span className="repo" title={localInfo?.path}>
+                  <FolderGit2 size={15} />
+                  <span className="review-tag">Local</span>
+                  {localInfo?.repository ?? 'Local branch'}
+                </span>
+              ) : (
+                <span className="repo">
+                  <GitPullRequest size={15} />
+                  {new URL(url).pathname.split('/').slice(1, 3).join('/')}{' '}
+                  <b>#{new URL(url).pathname.split('/').at(-1)}</b>
+                </span>
+              )}
               <button
                 className="refresh"
                 disabled={loading}
@@ -595,9 +614,10 @@ export function Reader({
             </header>
             <div className="pr-heading">
               <div className="overview">
-                <h1>{view?.meta.title ?? 'Pull request'}</h1>
+                <h1>{view?.meta.title ?? (local ? 'Local branch' : 'Pull request')}</h1>
                 {view && (
                   <div className="pr-meta">
+                    {!local && view.meta.isDraft && <span className="review-tag">Draft</span>}
                     <span>
                       <UserRound size={13} />
                       {view.meta.author}
@@ -610,14 +630,28 @@ export function Reader({
                     </span>
                     <span title={view.meta.head}>
                       <GitCommitHorizontal size={14} />
-                      <code>{view.meta.head.slice(0, 8)}</code>
+                      <code>
+                        {local ? shortRevision(view.revision) : view.meta.head.slice(0, 8)}
+                      </code>
                     </span>
+                    {local && uncommittedDigest(view.revision) && (
+                      <span
+                        className="review-tag"
+                        title="Includes staged, unstaged and untracked files"
+                      >
+                        Uncommitted changes
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
               {view && bundle && (
                 <DraftReview
                   url={url}
+                  local={local}
+                  onCheckpoint={async () => {
+                    setView(await window.reviewer.finishRevision(url, view.revision));
+                  }}
                   view={view}
                   bundle={bundle}
                   approveRequest={approveRequest}
@@ -638,8 +672,14 @@ export function Reader({
             </div>
             {view && (
               <>
-                <div className="review-tabs" aria-label="Pull request views">
-                  {(['Overview', 'Changes', 'Discussion'] as const).map((item) => (
+                <div
+                  className="review-tabs"
+                  aria-label={local ? 'Local review views' : 'Pull request views'}
+                >
+                  {(local
+                    ? (['Overview', 'Changes'] as const)
+                    : (['Overview', 'Changes', 'Discussion'] as const)
+                  ).map((item) => (
                     <button
                       key={item}
                       aria-pressed={section === item}
@@ -648,31 +688,37 @@ export function Reader({
                       {item}
                     </button>
                   ))}
-                  <PipelineStatus
-                    key={view.revision}
-                    url={url}
-                    head={view.meta.head}
-                    revision={view.revision}
-                  />
+                  {!local && (
+                    <PipelineStatus
+                      key={view.revision}
+                      url={url}
+                      head={view.meta.head}
+                      revision={view.revision}
+                    />
+                  )}
                 </div>
                 {section === 'Overview' && (
                   <section className="pr-detail" aria-labelledby="pr-description-heading">
-                    <h2 id="pr-description-heading">PR description</h2>
+                    <h2 id="pr-description-heading">
+                      {local ? 'Branch description' : 'PR description'}
+                    </h2>
                     {view.meta.description.trim() ? (
                       <ChatMarkdown text={view.meta.description} />
                     ) : (
                       <p>No description provided.</p>
                     )}
-                    <LessonList
-                      title="Repository review lessons"
-                      items={lessons.items ?? []}
-                      forget={async (lesson) =>
-                        lessons.setItems(await window.reviewer.forgetReviewLesson(url, lesson))
-                      }
-                    />
+                    {!local && (
+                      <LessonList
+                        title="Repository review lessons"
+                        items={lessons.items ?? []}
+                        forget={async (lesson) =>
+                          lessons.setItems(await window.reviewer.forgetReviewLesson(url, lesson))
+                        }
+                      />
+                    )}
                   </section>
                 )}
-                {section === 'Discussion' && (
+                {section === 'Discussion' && !local && (
                   <section className="pr-detail">{discussions.overview(view, inlineIds)}</section>
                 )}
               </>
@@ -685,7 +731,13 @@ export function Reader({
             )}
             {loading && (
               <p role="status">
-                {view ? 'Checking GitHub for updates…' : 'Fetching pull request from GitHub…'}
+                {local
+                  ? view
+                    ? 'Checking the local repository for changes…'
+                    : 'Reading the local repository…'
+                  : view
+                    ? 'Checking GitHub for updates…'
+                    : 'Fetching pull request from GitHub…'}
               </p>
             )}
             {error && (
@@ -696,14 +748,16 @@ export function Reader({
             {saveError && <p role="alert">{saveError}</p>}
             {view && files.length < view.meta.totalFiles && (
               <p role="status">
-                Showing {files.length} of {view.meta.totalFiles} changed files. GitHub returned a
-                partial file list.
+                Showing {files.length} of {view.meta.totalFiles} changed files.{' '}
+                {local
+                  ? 'The local review shows up to 3,000 files.'
+                  : 'GitHub returned a partial file list.'}
               </p>
             )}
             {view?.incoming && (
               <div className="revision-toolbar" role="status">
-                <strong>PR update available</strong>
-                <code>{view.incoming.split('...').at(-1)?.slice(0, 8)}</code>
+                <strong>{local ? 'Local changes available' : 'PR update available'}</strong>
+                <code>{shortRevision(view.incoming)}</code>
                 <button
                   disabled={transition || loading || !!editor}
                   title={editor ? 'Save or close your inline draft first' : undefined}
@@ -851,6 +905,7 @@ export function Reader({
                   ) : (
                     <Patch
                       key={JSON.stringify([generation, view.revision, selected.path])}
+                      local={local}
                       url={url}
                       revision={view.revision}
                       file={selected}
@@ -987,6 +1042,7 @@ export function Reader({
                   chatPanel.current?.expand();
                 }}
                 url={url}
+                local={local}
                 view={view}
                 file={selected}
                 selection={selection}
@@ -1044,6 +1100,7 @@ type Notes = (oldLine: number | null, newLine: number | null, comments: Draft[])
 type Compose = ((anchor: CommentAnchor, excerpt: string, draft?: Draft) => void) | undefined;
 type Move = (file: ReaderFile, change: Partial<Position>) => void;
 function Patch({
+  local,
   codeLessons,
   ask,
   pinnedLinks,
@@ -1058,6 +1115,7 @@ function Patch({
   onLine,
   move,
 }: {
+  local: boolean;
   url: string;
   revision: string;
   file: ReaderFile;
@@ -1103,14 +1161,22 @@ function Patch({
           ? 'Binary file. A line diff is unavailable.'
           : file.kind === 'metadata'
             ? 'File metadata changed. There are no changed text lines.'
-            : 'GitHub did not provide a diff for this file.'}
+            : local
+              ? 'No diff is available for this file. It may be unreadable or beyond the local size limit.'
+              : 'GitHub did not provide a diff for this file.'}
       </p>
     );
   if (error) return <p role="alert">Could not read this saved diff. Refresh to try again.</p>;
   if (hunk === undefined) return <p role="status">Loading diff…</p>;
   return (
     <>
-      {file.kind === 'partial' && <p role="status">GitHub supplied only part of this diff.</p>}
+      {file.kind === 'partial' && (
+        <p role="status">
+          {local
+            ? 'This diff exceeds the local size limit. Only part of it is shown.'
+            : 'GitHub supplied only part of this diff.'}
+        </p>
+      )}
       <div className="hunk-nav">
         <span>
           Hunk {file.hunk + 1} of {hunks.length}

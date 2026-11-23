@@ -8,6 +8,15 @@ Use **Overview** for the PR description, **Changes** to navigate the diff, and *
 
 Select a line or range to ask a question in **Review chat**. **Focused** context uses the selected evidence. Choose **Full PR** when a question depends on another file, such as a caller or test. Follow a filename and line in the answer to inspect its evidence. When several citations sit together, open **sources** and choose the one you want. **Back to changes** returns from a cited source file.
 
+## Review a local branch before it is a pull request
+
+1. Choose **Review local branch** on the Workspace page and pick the top-level folder of a local clone where a coding agent has been working. Check the repository and current branch, pick a base branch, and choose **Start review**.
+2. Read the changes as you would a pull request. The diff runs from the merge base with the base branch to the working tree, so committed, staged, unstaged and untracked files all appear. **Uncommitted changes** in the header marks work that is not committed yet.
+3. Draft comments and ask questions in **Review chat**. When the agent changes the clone, **Open update** loads the new revision and **Since my last review** shows what changed.
+4. Open **Finish review** and choose **Preview brief**. **Copy for agent** or **Save as file…** hands the comments back to the agent as Markdown, with each file, line, excerpt and comment. Then choose **Save review checkpoint** so the next update compares against what you reviewed.
+
+The app only reads the clone. It has no GitHub discussions, checks, approvals or lessons for a local review.
+
 ## Remember a lesson from a resolved discussion
 
 Suppose a reviewer discovers that an export must use the account’s timezone. Once the inline discussion is resolved, choose **Remember review lesson** and enter a reminder such as “Check midnight in the account’s timezone.”

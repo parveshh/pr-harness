@@ -9,6 +9,7 @@ const run = promisify(execFile);
 const ref = z.object({ sha: z.string(), ref: z.string() });
 const pr = z.object({
   title: z.string(),
+  draft: z.boolean().optional(),
   body: z.string().nullable(),
   user: z.object({ login: z.string() }).nullable(),
   base: ref,
@@ -181,7 +182,7 @@ function completePatch(patch: string, file: Entry) {
 }
 
 // Git surrounds non-ASCII and control bytes with C-style quotes in raw diff headers.
-function gitPath(path: string) {
+export function gitPath(path: string) {
   const escapes: Record<number, string> = {
     7: 'a',
     8: 'b',
@@ -295,6 +296,7 @@ export async function fetchSnapshot(
   return {
     meta: {
       title: end.title,
+      isDraft: end.draft,
       author: end.user?.login ?? 'Unknown author',
       description: end.body ?? '',
       base: end.base.sha,
@@ -400,6 +402,7 @@ export async function probeRevision(
   const body = boundary ? stdout.slice(boundary.index + boundary[0].length) : stdout;
   const result = pr.parse(JSON.parse(body));
   return {
+    isDraft: result.draft,
     baseBranch: result.base.ref,
     revision: result.base.sha + '...' + result.head.sha,
     etag: /^etag:\s*(.+)$/im.exec(headers)?.[1]?.trim(),
