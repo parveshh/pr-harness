@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { PublishBridge } from './publish.js';
 import type { AssistantBridge, CitedSourceKey } from './assistant.js';
 import type { Checkpoint, FileKey, ReaderView, reviewUpdate } from './reader.js';
+import type { MatchingHunk, SearchRequest } from './diff-search.js';
 import type { LocalBridge } from './local.js';
 
 // Store a single canonical URL even when a reviewer copies a link from the Files tab.
@@ -48,9 +49,27 @@ export const localReviewInfo = z.object({
   path: z.string(),
 });
 export type LocalReviewInfo = z.infer<typeof localReviewInfo>;
+export const approvalStage = z.enum([
+  'none',
+  'approval-recorded',
+  'partial',
+  'approved',
+  'changes-requested',
+  'mixed',
+]);
+export type ApprovalStage = z.infer<typeof approvalStage>;
+export const pullSidebarFields = {
+  openedAt: z.iso.datetime().optional(),
+  head: z.string().min(1).optional(),
+  commitCount: z.number().int().nonnegative().optional(),
+  approvalStage: approvalStage.optional(),
+};
 export const savedReview = z.object({
   url: reviewKey,
   savedAt: z.iso.datetime(),
+  ...pullSidebarFields,
+  author: z.string().optional(),
+  title: z.string().optional(),
   isDraft: z.boolean().optional(),
   local: localReviewInfo.optional(),
 });
@@ -65,6 +84,8 @@ export interface ReviewerBridge
     CrossPrBridge,
     LocalBridge {
   readonly integratedTitleBar: boolean;
+  getSidebarVibrancy(): Promise<boolean>;
+  saveSidebarVibrancy(enabled: boolean): Promise<void>;
   getAppearance(): Promise<Appearance>;
   saveAppearance(value: Appearance): Promise<void>;
   getAccent(): Promise<Accent>;
@@ -89,6 +110,7 @@ export interface ReviewerBridge
   questionEvidence(key: QuestionKey): Promise<QuestionEvidence>;
   citedSource(key: CitedSourceKey): Promise<string>;
   fullFile(key: FileKey): Promise<string>;
+  searchDiff(request: SearchRequest): Promise<MatchingHunk[]>;
   filePatch(key: FileKey): Promise<string>;
   remember(checkpoint: Checkpoint): Promise<void>;
   listReviews(): Promise<SavedReview[]>;

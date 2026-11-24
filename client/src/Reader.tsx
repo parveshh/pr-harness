@@ -7,8 +7,15 @@ import { PinnedQuestions, QuestionLinks, type QuestionPanel } from './PinnedQues
 import { RevisionChanges, revisionQueue } from './RevisionChanges.js';
 import { InlineComments } from './InlineComments.js';
 import { Activity, Fragment } from 'react';
-import { usePanelRef } from 'react-resizable-panels';
-import { ChangedFiles } from './ChangedFiles.js';
+import { DiffSearch } from './DiffSearch.js';
+import {
+  scanHunk,
+  searchTimeSlice,
+  literalPattern,
+  type MatchSpan,
+  type SearchHit,
+} from '../../shared/diff-search.js';
+import { FilePicker } from './ChangedFiles.js';
 import {
   type ReactNode,
   type RefObject,
@@ -25,21 +32,19 @@ import { isLocalReview, type LocalReviewInfo } from '../../shared/reviews.js';
 import { diffLines } from '../../shared/diff.js';
 import { highlightRows, languageFor } from '../../shared/highlight.js';
 import { ChatMarkdown } from './components/ChatMarkdown.js';
+import { CommitLink, PrNumberLink, formatPrDate } from './components/PrMetadata.js';
 import { CodeLine } from './components/CodeLine.js';
 import './reader.css';
 import { DraftReview, type DraftEditor } from './DraftReview.js';
 import type { Bundle, Draft, CommentAnchor } from '../../shared/publish.js';
 import {
-  ArrowLeft,
-  GitPullRequest,
+  Search,
   GitBranch,
+  CalendarDays,
   GitCommitHorizontal,
   UserRound,
   RotateCw,
   FileCode2,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightOpen,
   Sparkles,
   Pin,
   MessageSquarePlus,
@@ -69,6 +74,7 @@ export function Reader({
   agents,
   command,
   onPublished,
+  onSnapshotSaved,
   accountEpoch,
   local: localInfo,
 }: {
@@ -80,6 +86,7 @@ export function Reader({
   agents: AgentCatalog | null;
   command: PrCommand | null;
   onPublished: () => void;
+  onSnapshotSaved: () => void;
   accountEpoch: string | null;
 }) {
   const [fullFile, setFullFile] = useState(false);
@@ -140,56 +147,31 @@ export function Reader({
   const [line, setLine] = useState<(CommentAnchor & { revision: string }) | null>(null);
   const [bundle, setBundle] = useState<Bundle | null>(null);
   const [editor, setEditor] = useState<DraftEditor | null>(null);
-  const filePanel = usePanelRef();
-  const chatPanel = usePanelRef();
-  const fileToolButton = useRef<HTMLButtonElement>(null);
   const expandChatButton = useRef<HTMLButtonElement>(null);
-  const paneSwitch = useRef<HTMLDivElement>(null);
-  const [compact, setCompact] = useState(false);
-  const hasView = !!view;
-  useLayoutEffect(() => {
-    const tabs = paneSwitch.current;
-    if (!tabs) return;
-    // The reader's container query exposes these controls when only one pane fits.
-    const measure = () => setCompact(tabs.getClientRects().length > 0);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(tabs);
-    return () => observer.disconnect();
-  }, [hasView]);
-  const fileFilter = useRef<HTMLInputElement>(null);
+  const closeChatButton = useRef<HTMLButtonElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
-  const [filesClosed, setFilesClosed] = useState(false);
-  const [chatClosed, setChatClosed] = useState(false);
+  const [chatOpen, setChatOpen] = useState(!local);
+  const hasView = !!view;
   const [section, setSection] = useState<'Overview' | 'Changes' | 'Discussion'>('Changes');
   const pendingFocus = useRef<RefObject<HTMLElement | null> | null>(null);
   function focusPanelControl() {
-    const control = pendingFocus.current?.current;
+    const target = pendingFocus.current;
+    const control =
+      target === composer && (!composer.current || composer.current.disabled)
+        ? closeChatButton.current
+        : target?.current;
     if (!control || !control.getClientRects().length || control.closest('[inert]')) return;
     control.focus();
     if (document.activeElement === control) pendingFocus.current = null;
   }
   function openChat() {
     pendingFocus.current = composer;
-    chatPanel.current?.expand();
+    setChatOpen(true);
     setPaneName('chat');
     focusPanelControl();
   }
-  const [paneName, setPaneName] = useState<'files' | 'diff' | 'chat'>('diff');
-  useLayoutEffect(focusPanelControl, [filesClosed, chatClosed, paneName]);
-  const filesVisible = compact ? paneName === 'files' : !filesClosed;
-  function hideFiles() {
-    pendingFocus.current = fileToolButton;
-    setPaneName('diff');
-    if (!compact) filePanel.current?.collapse();
-    fileToolButton.current?.focus();
-  }
-  function showFiles() {
-    pendingFocus.current = fileFilter;
-    filePanel.current?.expand();
-    setPaneName('files');
-    focusPanelControl();
-  }
+  const [paneName, setPaneName] = useState<'diff' | 'chat'>('diff');
+  useLayoutEffect(focusPanelControl, [chatOpen, paneName]);
   // Each sidebar command becomes a one-shot request for the pane that carries it out.
   const [seenCommand, setSeenCommand] = useState<number | null>(null);
   const [prRequest, setPrRequest] = useState<{ id: number; kind: 'review' | 'summary' } | null>(
@@ -199,6 +181,7 @@ export function Reader({
   if (command && command.id !== seenCommand) {
     setSeenCommand(command.id);
     if (command.kind !== 'approve') {
+      setChatOpen(true);
       setPrRequest({ id: command.id, kind: command.kind === 'review' ? 'review' : 'summary' });
       setPaneName('chat');
     } else setApproveRequest(command.id);
@@ -236,6 +219,49 @@ export function Reader({
   }
   const [transition, setTransition] = useState(false);
   const [generation, setGeneration] = useState(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchHit, setSearchHit] = useState<
+    (SearchHit & { revision: string; generation: number }) | null
+  >(null);
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const searchRegion = useRef<HTMLDivElement>(null);
+  function closeSearch() {
+    setSearchOpen(false);
+    setSearchHit(null);
+    searchButton.current?.focus();
+  }
+  useLayoutEffect(() => {
+    if (paneName === 'diff' && searchOpen) searchRegion.current?.querySelector('input')?.focus();
+  }, [paneName, searchOpen]);
+  useEffect(() => {
+    if (!hasView || local) return;
+    function find(event: KeyboardEvent) {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        event.shiftKey ||
+        !(event.ctrlKey || event.metaKey) ||
+        event.key.toLowerCase() !== 'f' ||
+        document.querySelector('[role="dialog"], dialog[open]')
+      )
+        return;
+      const input = searchRegion.current?.querySelector('input');
+      if (
+        event.target instanceof HTMLElement &&
+        event.target !== input &&
+        event.target.closest('input, textarea, select, [contenteditable="true"]')
+      )
+        return;
+      event.preventDefault();
+      setPaneName('diff');
+      setSearchOpen(true);
+      input?.focus();
+      input?.select();
+    }
+    window.addEventListener('keydown', find);
+    return () => window.removeEventListener('keydown', find);
+  }, [hasView, local]);
   useEffect(() => {
     let live = true;
     window.reviewer
@@ -259,6 +285,7 @@ export function Reader({
       const fresh = await window.reviewer.refreshReview(url);
       if (live && fresh) {
         setView(fresh);
+        if (!local) onSnapshotSaved();
         if (!fresh.incoming) setGeneration((n) => n + 1);
       }
     }
@@ -272,7 +299,7 @@ export function Reader({
     return () => {
       live = false;
     };
-  }, [url, attempt]);
+  }, [url, attempt, local, onSnapshotSaved]);
 
   useEffect(() => {
     if (loading || transition || !hasView) return;
@@ -320,6 +347,7 @@ export function Reader({
       setView(next);
 
       if (open) {
+        if (!local) onSnapshotSaved();
         setSection('Changes');
         setPaneName('diff');
         setSource(null);
@@ -412,7 +440,26 @@ export function Reader({
   const nextUnread = [...files.slice(index + 1), ...files.slice(0, index)].find(
     (file) => !file.reviewed,
   );
-  const visiblePane = paneName === 'chat' && (!selected || since) ? 'diff' : paneName;
+  const chatFile = queue ? files.find((file) => file.path === queue.path) : selected;
+  const filePicker = view && (
+    <FilePicker
+      files={queue?.files ?? files}
+      selected={queue ? queue.path : selected?.path}
+      counts={commentCounts}
+      changedSinceCheckpoint={queue ? view.comparison?.files.length : undefined}
+      choose={(path) => {
+        if (queue) showComparison(true, path);
+        else {
+          const file = files.find((f) => f.path === path);
+          if (!file) return;
+          setSource(null);
+          move(file);
+        }
+        setSection('Changes');
+        setPaneName('diff');
+      }}
+    />
+  );
   function selectLine(anchor: Anchor, extend: boolean) {
     if (!view) return;
     const origin = rangeOrigin.current;
@@ -479,92 +526,18 @@ export function Reader({
           }}
         />
       )}
-      {view && (
-        <div ref={paneSwitch} className="pane-switch" aria-label="Review panes">
-          {(['files', 'diff', 'chat'] as const)
-            .filter((name) => !since || name !== 'chat')
-            .map((name) => (
-              <button
-                key={name}
-                disabled={name === 'chat' && !selected}
-                aria-pressed={visiblePane === name}
-                onClick={() => {
-                  if (name === 'chat') chatPanel.current?.expand();
-                  if (name === 'files') filePanel.current?.expand();
-                  setPaneName(name);
-                }}
-              >
-                {name === 'files' ? 'Files' : name === 'diff' ? 'Diff' : 'Chat'}
-              </button>
-            ))}
-        </div>
-      )}
       <ResizablePanelGroup
-        id={since ? 'review-update-layout' : selected ? 'review-layout' : 'empty-review-layout'}
+        id={chatOpen ? 'review-with-chat' : 'review-reading'}
         className="reading-grid workbench"
-        data-pane={visiblePane}
+        data-pane={paneName}
       >
-        {view && (
-          <>
-            <ResizablePanel
-              id="review-files"
-              defaultSize="17%"
-              minSize="165px"
-              collapsible
-              panelRef={filePanel}
-              inert={!filesVisible}
-              aria-hidden={!filesVisible || undefined}
-              onResize={(size) => setFilesClosed(size.asPercentage === 0)}
-            >
-              <ChangedFiles
-                files={queue?.files ?? view.files}
-                changedSinceCheckpoint={queue ? view.comparison?.files.length : undefined}
-                selected={queue ? queue.path : selected?.path}
-                counts={commentCounts}
-                filterRef={fileFilter}
-                collapse={hideFiles}
-                choose={(path) => {
-                  if (queue) showComparison(true, path);
-                  else {
-                    const file = view.files.find((f) => f.path === path);
-                    if (!file) return;
-                    setSource(null);
-                    move(file);
-                  }
-                  setSection('Changes');
-                  setPaneName('diff');
-                }}
-              />
-            </ResizablePanel>
-            <ResizableHandle
-              label={since ? 'Resize re-review queue and diff' : 'Resize files and diff'}
-            />
-          </>
-        )}
         <ResizablePanel id="review-diff" minSize="300px">
           <main className="review-center">
             <header>
-              {view && (
-                <button
-                  className="pane-toggle"
-                  ref={fileToolButton}
-                  aria-expanded={filesVisible}
-                  aria-controls="review-files"
-                  aria-label={filesVisible ? 'Hide changed files' : 'Show changed files'}
-                  title={filesVisible ? 'Hide changed files' : 'Show changed files'}
-                  onClick={filesVisible ? hideFiles : showFiles}
-                >
-                  {filesVisible ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-                </button>
-              )}
-              <button
-                aria-label="Back to workspace"
-                title="Back to workspace"
-                className="back"
-                onClick={onBack}
-              >
-                <ArrowLeft size={15} />
+              <button className="queue-breadcrumb" onClick={onBack}>
+                {local ? 'Local reviews' : 'Pull requests'}
               </button>
+              <span aria-hidden>/</span>
               {local ? (
                 <span className="repo" title={localInfo?.path}>
                   <FolderGit2 size={15} />
@@ -572,10 +545,11 @@ export function Reader({
                   {localInfo?.repository ?? 'Local branch'}
                 </span>
               ) : (
-                <span className="repo">
-                  <GitPullRequest size={15} />
-                  {new URL(url).pathname.split('/').slice(1, 3).join('/')}{' '}
-                  <b>#{new URL(url).pathname.split('/').at(-1)}</b>
+                <span
+                  className="repo"
+                  title={new URL(url).pathname.split('/').slice(1, 3).join('/')}
+                >
+                  <PrNumberLink url={url} onError={setSaveError} />
                 </span>
               )}
               <button
@@ -600,17 +574,6 @@ export function Reader({
                   <span>Pinned questions</span> {questions.filter((q) => !q.addressed).length}
                 </button>
               )}
-              {chatClosed && !since && (
-                <button
-                  className="pane-toggle"
-                  ref={expandChatButton}
-                  aria-label="Expand review chat"
-                  title="Expand review chat"
-                  onClick={openChat}
-                >
-                  <PanelRightOpen size={16} />
-                </button>
-              )}
             </header>
             <div className="pr-heading">
               <div className="overview">
@@ -622,6 +585,14 @@ export function Reader({
                       <UserRound size={13} />
                       {view.meta.author}
                     </span>
+                    {!local && view.meta.openedAt && (
+                      <span>
+                        <CalendarDays size={13} />
+                        <time dateTime={view.meta.openedAt}>
+                          Opened {formatPrDate(view.meta.openedAt)}
+                        </time>
+                      </span>
+                    )}
                     <span>
                       <GitBranch size={13} />
                       <code>
@@ -630,9 +601,11 @@ export function Reader({
                     </span>
                     <span title={view.meta.head}>
                       <GitCommitHorizontal size={14} />
-                      <code>
-                        {local ? shortRevision(view.revision) : view.meta.head.slice(0, 8)}
-                      </code>
+                      {local ? (
+                        <code>{shortRevision(view.revision)}</code>
+                      ) : (
+                        <CommitLink url={url} head={view.meta.head} onError={setSaveError} />
+                      )}
                     </span>
                     {local && uncommittedDigest(view.revision) && (
                       <span
@@ -645,6 +618,16 @@ export function Reader({
                   </div>
                 )}
               </div>
+              {(view || !local) && (
+                <button
+                  className="ask-review"
+                  ref={expandChatButton}
+                  onClick={openChat}
+                  aria-expanded={chatOpen}
+                >
+                  <MessageSquare size={16} /> {local ? 'Ask about branch' : 'Ask about PR'}
+                </button>
+              )}
               {view && bundle && (
                 <DraftReview
                   url={url}
@@ -696,7 +679,44 @@ export function Reader({
                       revision={view.revision}
                     />
                   )}
+                  {!local && (
+                    <button
+                      ref={searchButton}
+                      aria-expanded={searchOpen}
+                      title="Search the PR diff (Ctrl+F or ⌘F)"
+                      onClick={() => {
+                        if (searchOpen) closeSearch();
+                        else setSearchOpen(true);
+                      }}
+                    >
+                      <Search size={14} /> Search diff
+                    </button>
+                  )}
                 </div>
+                {!local && searchOpen && (
+                  <div ref={searchRegion}>
+                    <DiffSearch
+                      key={view.revision}
+                      url={url}
+                      view={view}
+                      generation={generation}
+                      close={closeSearch}
+                      jump={(hit) => {
+                        setSearchHit(hit && { ...hit, revision: view.revision, generation });
+                        if (!hit) return;
+                        const file = files.find((entry) => entry.path === hit.path);
+                        if (!file) return;
+                        setPaneName('diff');
+                        setSection('Changes');
+                        setSource(null);
+                        setFullFile(false);
+                        if (since) showComparison(false);
+                        if (selected?.path !== hit.path || selected.hunk !== hit.hunk)
+                          move(file, { hunk: hit.hunk, scroll: 0 });
+                      }}
+                    />
+                  </div>
+                )}
                 {section === 'Overview' && (
                   <section className="pr-detail" aria-labelledby="pr-description-heading">
                     <h2 id="pr-description-heading">
@@ -784,6 +804,7 @@ export function Reader({
                 </button>
               </div>
             )}
+            {view && since && <div className="file-heading">{filePicker}</div>}
             {view && since && view.comparison && (
               <RevisionChanges
                 key={view.revision}
@@ -836,10 +857,7 @@ export function Reader({
               ) : selected ? (
                 <article ref={diffPanel}>
                   <div className="file-heading">
-                    <h2>
-                      <FileCode2 size={16} />
-                      {selected.path}
-                    </h2>
+                    {filePicker}
                     <p>
                       {selected.status}{' '}
                       {selected.previousPath && (
@@ -905,6 +923,15 @@ export function Reader({
                   ) : (
                     <Patch
                       key={JSON.stringify([generation, view.revision, selected.path])}
+                      searchHit={
+                        searchOpen &&
+                        searchHit?.revision === view.revision &&
+                        searchHit.generation === generation &&
+                        searchHit.path === selected.path &&
+                        searchHit.hunk === selected.hunk
+                          ? searchHit
+                          : null
+                      }
                       local={local}
                       url={url}
                       revision={view.revision}
@@ -1016,19 +1043,10 @@ export function Reader({
               ))}
           </main>
         </ResizablePanel>
-        {view && selected && (
-          <Activity mode={since ? 'hidden' : 'visible'}>
+        {(!local || view) && (
+          <Activity mode={chatOpen ? 'visible' : 'hidden'}>
             <ResizableHandle label="Resize diff and chat" />
-            <ResizablePanel
-              id="review-chat"
-              defaultSize="28%"
-              minSize="235px"
-              collapsible
-              panelRef={chatPanel}
-              inert={chatClosed}
-              aria-hidden={chatClosed || undefined}
-              onResize={(size) => setChatClosed(size.asPercentage === 0)}
-            >
+            <ResizablePanel id="review-chat" defaultSize="28%" minSize="235px">
               <ReviewChat
                 agents={agents}
                 prRequest={prRequest}
@@ -1037,20 +1055,24 @@ export function Reader({
                   setBundle((prev) => (prev && prev.version > next.version ? prev : next))
                 }
                 onPrStarted={() => {
-                  if (view.since) showComparison(false);
+                  if (view?.since) showComparison(false);
                   setPrRequest(null);
-                  chatPanel.current?.expand();
+                  setChatOpen(true);
                 }}
                 url={url}
                 local={local}
                 view={view}
-                file={selected}
-                selection={selection}
+                file={chatFile}
+                comparison={since}
+                loading={loading}
+                selection={since ? null : selection}
                 agentPicker={agentPicker}
                 composerRef={composer}
+                closeButtonRef={closeChatButton}
                 collapse={() => {
                   pendingFocus.current = expandChatButton;
-                  chatPanel.current?.collapse();
+                  setChatOpen(false);
+                  setPaneName('diff');
                 }}
                 openSource={(run, cite) => {
                   if (since) showComparison(false);
@@ -1060,7 +1082,7 @@ export function Reader({
                 }}
                 jump={(cite) => {
                   const target = files.find((f) => f.path === cite.path);
-                  if (target) {
+                  if (target && view) {
                     setSource(null);
                     if (since) showComparison(false);
                     setFullFile(false);
@@ -1100,6 +1122,7 @@ type Notes = (oldLine: number | null, newLine: number | null, comments: Draft[])
 type Compose = ((anchor: CommentAnchor, excerpt: string, draft?: Draft) => void) | undefined;
 type Move = (file: ReaderFile, change: Partial<Position>) => void;
 function Patch({
+  searchHit,
   local,
   codeLessons,
   ask,
@@ -1115,6 +1138,7 @@ function Patch({
   onLine,
   move,
 }: {
+  searchHit: SearchHit | null;
   local: boolean;
   url: string;
   revision: string;
@@ -1199,6 +1223,7 @@ function Patch({
       {pinnedLinks}
       {reminders}
       <Hunk
+        searchHit={searchHit}
         ask={ask}
         key={file.hunk}
         notes={notes}
@@ -1235,6 +1260,7 @@ function Patch({
 }
 
 function Hunk({
+  searchHit,
   ask,
   text,
   path,
@@ -1249,6 +1275,7 @@ function Hunk({
   onScroll,
 }: {
   ask: () => void;
+  searchHit: SearchHit | null;
   text: string;
   path: string;
   offset: number;
@@ -1277,6 +1304,31 @@ function Hunk({
         ?.querySelector('[data-selected="true"]')
         ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [selection]);
+  const [found, setFound] = useState<{ hit: SearchHit; span: MatchSpan } | null>(null);
+  const match = found && found.hit === searchHit ? found.span : null;
+  useEffect(() => {
+    if (!searchHit) return;
+    const controller = new AbortController();
+    const pause = searchTimeSlice(
+      () => new Promise((resolve) => window.setTimeout(resolve, 0)),
+      controller.signal,
+    );
+    scanHunk(text, literalPattern(searchHit.query), searchHit.filter, pause, searchHit.occurrence)
+      .then(({ match }) => {
+        if (!controller.signal.aborted && match) setFound({ hit: searchHit, span: match });
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted)
+          console.error('Could not locate the diff search match.', message(cause));
+      });
+    return () => controller.abort();
+  }, [searchHit, text]);
+  useLayoutEffect(() => {
+    if (match)
+      pane.current
+        ?.querySelector('.code-line mark')
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [match]);
   const notesByEnd = useMemo(() => {
     const byEnd = new Map<string, Draft[]>();
     for (const d of drafts) {
@@ -1376,7 +1428,11 @@ function Hunk({
                     </button>
                   )}
                 </span>
-                <CodeLine text={line.text} tokens={syntax[i] ?? null} />
+                <CodeLine
+                  text={line.text}
+                  tokens={syntax[i] ?? null}
+                  match={match?.row === i ? match : null}
+                />
                 {selection &&
                   (selection.side === 'old' ? line.oldLine : line.newLine) === selection.line && (
                     <span className="line-tools">

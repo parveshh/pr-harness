@@ -16,6 +16,9 @@ const graphql = () =>
             state: 'OPEN',
             headRefOid: 'head',
             isDraft: false,
+            commits: { totalCount: 1 },
+            reviewDecision: null,
+            latestOpinionatedReviews: null,
             latest: { nodes: [] },
             dismissed: { totalCount: 0 },
           },
@@ -215,6 +218,12 @@ await test('a push and dismissal on a reviewed PR survive restart and are announ
                       state: 'OPEN',
                       headRefOid: head,
                       isDraft,
+                      commits: { totalCount: 3 },
+                      reviewDecision: isDraft ? 'REVIEW_REQUIRED' : 'APPROVED',
+                      latestOpinionatedReviews: {
+                        nodes: [{ author: { login: 'another-reviewer' }, state: 'APPROVED' }],
+                        pageInfo: { hasNextPage: false, endCursor: null },
+                      },
                       latest: { nodes: reviewedHead ? [{ commit: { oid: reviewedHead } }] : [] },
                       dismissed: { totalCount: dismissed },
                     },
@@ -234,6 +243,9 @@ await test('a push and dismissal on a reviewed PR survive restart and are announ
   let monitor = start();
   await monitor.sync();
   assert.equal(store.list()[0]?.isDraft, true);
+  assert.equal(store.list()[0]?.approvalStage, 'partial');
+  assert.equal(store.list()[0]?.head, head);
+  assert.equal(store.list()[0]?.commitCount, 3);
   head = 'unreviewed';
   assert.deepEqual((await monitor.sync()).changes, []);
   reviewedHead = head;
@@ -243,6 +255,7 @@ await test('a push and dismissal on a reviewed PR survive restart and are announ
   store.close();
   store = openStore(file);
   monitor = start();
+  assert.equal(store.list()[0]?.approvalStage, 'approved');
   head = 'force-pushed';
   dismissed++;
   fail = true;

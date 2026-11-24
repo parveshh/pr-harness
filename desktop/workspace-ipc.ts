@@ -607,6 +607,13 @@ export function registerWorkspace(
     }
     return { ...msg, changedEvidence: [...changedEvidence] };
   }
+  handle('chat:new-conversation', (_, value) => {
+    const url = reviewKey.parse(value);
+    if (store.reader.active() !== url) throw Error('Reopen this review to start a conversation.');
+    if (runs.isRunning(url))
+      throw Error('Wait for the answer or cancel it before starting a new conversation.');
+    data.newConversation(url);
+  });
   handle('chat:history', (_, value) => {
     const url = reviewKey.parse(value);
     const snapshot = store.reader.read(url);
@@ -622,6 +629,7 @@ export function registerWorkspace(
       throw new Error('Reopen this revision before asking a question.');
     const signal = runs.begin(req.url, req.run);
     try {
+      const generation = data.generation(req.url);
       const configForRun = await config(req.url);
       const { agents } = configForRun;
       const settings =
@@ -633,7 +641,12 @@ export function registerWorkspace(
       signal.throwIfAborted();
       const patch = (path: string) =>
         store.reader.patch({ url: req.url, path, revision: req.revision });
-      const { sources, context } = buildAgentContext(view, req, data.history(req.url), patch);
+      const { sources, context } = buildAgentContext(
+        view,
+        req,
+        data.history(req.url, generation),
+        patch,
+      );
       const full = req.kind === 'review' || req.kind === 'summary' || req.contextMode === 'full-pr';
       const local = isLocalReview(req.url);
       const sourceLines: SourceCitation[] = [];
@@ -697,8 +710,8 @@ export function registerWorkspace(
         reportedModel: output.reportedModel,
         promptVersion: createHash('sha256').update(instructions).digest('hex').slice(0, 12),
       };
-      data.append(req.url, result);
-      return annotated(req.url, result, store.reader.read(req.url));
+      const saved = data.append(req.url, result, generation);
+      return annotated(req.url, saved, store.reader.read(req.url));
     } finally {
       runs.end(req.url, req.run);
     }

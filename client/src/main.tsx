@@ -15,13 +15,20 @@ void Promise.all([
   window.reviewer.getAppearance().catch(() => 'ink' as const),
   window.reviewer.typography().catch(() => defaultTypography),
   window.reviewer.getAccent().catch(() => 'green' as const),
-]).then(([theme, type, accent]) => {
+  window.reviewer.getSidebarVibrancy().catch(() => false),
+]).then(([theme, type, accent, vibrancy]) => {
+  document.documentElement.classList.toggle('sidebar-vibrancy', vibrancy);
   document.documentElement.dataset.palette = theme;
   document.documentElement.dataset.accent = accent;
   applyTypography(type);
   app.render(
     <StrictMode>
-      <Workspace initialTheme={theme} initialType={type} initialAccent={accent} />
+      <Workspace
+        initialVibrancy={vibrancy}
+        initialTheme={theme}
+        initialType={type}
+        initialAccent={accent}
+      />
     </StrictMode>,
   );
 });

@@ -40,6 +40,9 @@ export function applyTypography(settings: Typography) {
 export function SettingsPane({
   theme,
   chooseTheme,
+  vibrancy,
+  savingVibrancy,
+  chooseVibrancy,
   accent,
   chooseAccent,
   type,
@@ -50,6 +53,9 @@ export function SettingsPane({
   error,
 }: {
   theme: Appearance;
+  vibrancy: boolean;
+  savingVibrancy: boolean;
+  chooseVibrancy: (enabled: boolean) => void;
   chooseTheme: (v: Appearance) => void;
   accent: Accent;
   chooseAccent: (v: Accent) => void;
@@ -172,6 +178,18 @@ export function SettingsPane({
             </label>
           ))}
         </fieldset>
+        {window.reviewer.integratedTitleBar && (
+          <div className="settings-line">
+            <label htmlFor="sidebar-vibrancy">Sidebar vibrancy</label>
+            <input
+              id="sidebar-vibrancy"
+              type="checkbox"
+              checked={vibrancy}
+              disabled={savingVibrancy}
+              onChange={(event) => chooseVibrancy(event.target.checked)}
+            />
+          </div>
+        )}
         <div className="settings-line">
           <label htmlFor="ui-font">Interface font</label>
           <select
@@ -300,7 +318,12 @@ export function RepliesPane({
     >
       <div className="sidebar-title">
         <h2 id="replies-heading">Review alerts</h2>
-        <button aria-label="Close review alerts" title="Hide review alerts" onClick={close}>
+        <button
+          autoFocus
+          aria-label="Close review alerts"
+          title="Hide review alerts"
+          onClick={close}
+        >
           <ChevronLeft size={16} />
         </button>
       </div>

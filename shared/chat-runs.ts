@@ -19,12 +19,14 @@ export type ActiveRun = {
 // Everything the chat keeps for one PR between visits to it.
 export type PrChat = {
   active: ActiveRun | null;
+  resetting: boolean;
+  generation: number;
   // Answers received in this session, oldest first. Saved history holds them too.
   completed: Turn[];
   error: string;
   draft: string;
 };
-type Bridge = Pick<AssistantBridge, 'ask' | 'cancelAsk' | 'onActivity'>;
+type Bridge = Pick<AssistantBridge, 'ask' | 'cancelAsk' | 'onActivity' | 'newConversation'>;
 type StartOptions = {
   // Clear the composer draft when the answer to it arrives.
   clearDraft?: boolean;
@@ -32,7 +34,14 @@ type StartOptions = {
   before?: () => Promise<unknown>;
 };
 
-const idle: PrChat = { active: null, completed: [], error: '', draft: '' };
+const idle: PrChat = {
+  resetting: false,
+  generation: 0,
+  active: null,
+  completed: [],
+  error: '',
+  draft: '',
+};
 
 // Owns the chat state of every PR, keyed by PR URL, outside any component. A run keeps
 // going and keeps reporting here while another PR is on screen. Views subscribe to the
@@ -77,10 +86,23 @@ export function createChatRuns(bridge: Bridge, now: () => number = Date.now) {
     setDraft(url: string, draft: string) {
       update(url, (chat) => (chat.draft === draft ? chat : { ...chat, draft }));
     },
-    // Returns false when this PR already has a run.
+    async newConversation(url: string) {
+      const chat = get(url);
+      if (chat.active || chat.resetting) return false;
+      update(url, (current) => ({ ...current, resetting: true }));
+      try {
+        await bridge.newConversation(url);
+        update(url, (current) => ({ ...idle, generation: current.generation + 1 }));
+        return true;
+      } catch (error) {
+        update(url, (current) => ({ ...current, resetting: false, error: readableError(error) }));
+        return false;
+      }
+    },
+    // Returns false while a run or conversation change is in progress.
     start(request: ChatRequest, kind: RunKind, options: StartOptions = {}) {
       const { url, run } = request;
-      if (get(url).active) return false;
+      if (get(url).active || get(url).resetting) return false;
       if (!listening) {
         listening = true;
         bridge.onActivity((event) => {

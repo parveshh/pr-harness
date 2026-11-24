@@ -184,8 +184,14 @@ await test('repository monitoring filters issues and other authors, pages result
           viewer: { login: 'Reviewer' },
           repository: {
             ['p' + nextPr]: {
+              headRefOid: 'a'.repeat(40),
+              commits: { totalCount: 3 },
+              reviewDecision: 'REVIEW_REQUIRED',
               isDraft: nextPr === 4,
-              latestOpinionatedReviews: { nodes: [...nodes, { author: null, state: 'APPROVED' }] },
+              latestOpinionatedReviews: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [...nodes, { author: null, state: 'COMMENTED' }],
+              },
             },
           },
         },
@@ -230,7 +236,7 @@ await test('repository monitoring filters issues and other authors, pages result
   );
   assert.equal(data.unseen(), 0);
   assert.deepEqual(queries.at(-1), [
-    'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){p4:pullRequest(number:4){isDraft latestOpinionatedReviews(first:100){nodes{author{login} state}}}}}',
+    'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){p4:pullRequest(number:4){isDraft headRefOid commits(first:1){totalCount} reviewDecision latestOpinionatedReviews(first:100){nodes{author{login} state} pageInfo{hasNextPage endCursor}}}}}',
     { owner: 'example', name: 'project' },
   ]);
   assert.equal(data.repositories()[0]?.pulls[0]?.isDraft, true);
@@ -255,6 +261,14 @@ await test('repository monitoring filters issues and other authors, pages result
     reviews = state instanceof Error ? state : state.map(([login, s]) => [login, s]);
     await sync(repo, false);
     assert.deepEqual(approved(), [[10, expected]]);
+    const pull = data.repositories()[0]?.pulls[0];
+    assert.equal(pull?.commitCount, 3);
+    assert.equal(
+      pull?.approvalStage,
+      state instanceof Error || state.some(([, decision]) => decision === 'APPROVED')
+        ? 'partial'
+        : 'none',
+    );
     assert.equal(data.repositories()[0]?.error, null);
   }
   // PR 10 appeared after the list was first read: announced once and marked until opened.

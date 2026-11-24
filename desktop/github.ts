@@ -9,11 +9,13 @@ const run = promisify(execFile);
 const ref = z.object({ sha: z.string(), ref: z.string() });
 const pr = z.object({
   title: z.string(),
+  created_at: z.iso.datetime().optional(),
   draft: z.boolean().optional(),
   body: z.string().nullable(),
   user: z.object({ login: z.string() }).nullable(),
   base: ref,
   head: ref,
+  commits: z.number().int().nonnegative().optional(),
   changed_files: z.number().int().nonnegative(),
 });
 const entry = z.object({
@@ -296,6 +298,7 @@ export async function fetchSnapshot(
   return {
     meta: {
       title: end.title,
+      openedAt: end.created_at,
       isDraft: end.draft,
       author: end.user?.login ?? 'Unknown author',
       description: end.body ?? '',
@@ -305,6 +308,7 @@ export async function fetchSnapshot(
       baseBranch: end.base.ref,
       headBranch: end.head.ref,
       totalFiles: end.changed_files,
+      commitCount: end.commits,
     },
     revision: end.base.sha + '...' + end.head.sha,
     files: entries.map((file) => makeFile(file, raw.get(file.filename))),

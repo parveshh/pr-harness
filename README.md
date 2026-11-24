@@ -12,7 +12,7 @@ On a Mac with Apple silicon, open the arm64 disk image and drag **Local Reviewer
 
 Use the Node version in `.nvmrc`, then run `npm ci` and `npm run dev`. This launches Electron with live renderer updates. For a production build, run `npm run build` followed by `npm start`. The first launch may download the Electron binary.
 
-Install GitHub CLI and sign in with `gh auth login` to fetch PRs. Save a GitHub PR URL and click the saved entry. Choose a file, move between hunks, and mark files reviewed as you go. A file with published line comments shows a comment icon and their count at the right of its row. Closing the app restores the active PR on the next launch. Returning to **Workspace** leaves the file checkpoints saved for the next time you open that PR.
+Install GitHub CLI and sign in with `gh auth login` to fetch PRs. Open a pull request directly beneath its repository in the sidebar. Each PR row shows its commit count and short head SHA when available. A dashed check means a reviewer approved and GitHub still requires review. A solid check means GitHub reports the PR approved. Hover over the icon for its meaning. Each folder shows up to five reviews. Choose **Show more** for the rest, or select the repository name to open its full queue. To save a PR by URL, choose **Open review**. Choose a file, move between hunks, and mark files reviewed as you go. A file with published line comments shows a comment icon and their count at the right of its row. Closing the app restores the active PR on the next launch. Returning to **Pull requests** leaves the file checkpoints saved for the next time you open that PR.
 
 The reader shows cached diffs while refreshing from GitHub. Unchanged files keep their progress. GitHub's file-list limit is 3,000 files. The reader labels incomplete lists and patches and distinguishes binary files from text changes when GitHub supplies that information.
 
@@ -20,11 +20,11 @@ Use **Full file** above the diff to read surrounding code with additions and del
 
 Both views colour code by language, chosen from the file name. The old and new sides of a hunk are each read as continuous source, so a comment or string that spans lines keeps its colour. A hunk that starts inside one can be coloured wrongly until it ends, because the text above the hunk is not part of the diff. Files in an unrecognised language stay plain, as does a hunk or full-file page over 150,000 characters or with a line over 2,000.
 
-Drag a divider, or focus it and use the arrow keys, to resize the sidebar, changed files, diff, chat, or re-review queue. The app remembers the pane widths. The file list and diff scroll independently. Scrollbars appear while a pane is moving and fade at rest. In a narrow window, switch between **Files**, **Diff**, and **Chat** above the work area.
+Drag a divider, or focus it and press the arrow keys, to resize the repository sidebar or the open chat pane. In a narrow window, chat sits below the diff. Choose **Ask about PR** to give chat the full reading area.
 
-New workspaces start with the Ink palette and green accent. Change appearance in **Settings** on the navigation rail. Existing workspaces keep their saved choices.
+New workspaces start with the Ink palette and green accent. Change appearance using the **Settings** gear at the bottom left. Existing workspaces keep their saved choices.
 
-The changed-file tree groups files by folder. Filter by name or path. Collapse the tree or the full-height chat with its heading chevron. Use the panel button at the start of the PR header to show or hide the tree. Reopen chat from the PR header. The rail highlights open panes.
+Use the filename above the diff to open the searchable changed-file list. It groups files by folder and shows review progress and published comment counts. Choose a file to read it or press Escape to return to the diff. Review chat opens alongside the diff when you open a PR. Returning to the repository queue hides it. If you close chat while reading, **Ask about PR** reopens it.
 
 ## Review with a local agent
 
@@ -34,9 +34,11 @@ In **Review chat**, the sliders button in the heading opens **Review instruction
 
 Choose **Summarise PR** for an overview of the whole pull request: its purpose, the main behaviour changes by area, the riskiest changes to read first, and gaps in the tests. It always uses Full PR context, described below, and the answer lists changed files the agent did not inspect.
 
-Choose **Review PR** in chat or on the PR’s sidebar row to review the pinned revision. Each finding includes its priority and proposed comment. Open its line or range to inspect the code, then mark it **Valid** or **Dismissed**. **Add draft comments** copies validated, anchored findings into the local review. You can edit the drafts and submit them through **Finish review**. Decisions survive a restart. After opening a new revision, run the review again to draft against the updated lines.
+Choose **Review PR** in chat or on the PR’s row in the repository queue to review the pinned revision. Each finding includes its priority and proposed comment. Open its line or range to inspect the code, then mark it **Valid** or **Dismissed**. **Add draft comments** copies validated, anchored findings into the local review. You can edit the drafts and submit them through **Finish review**. Decisions survive a restart. After opening a new revision, run the review again to draft against the updated lines.
 
-Each PR has its own chat: its conversation, the question you are typing, and any answer in progress. An answer keeps running when you open another PR or return to **Workspace**, and its PR row in the sidebar shows a turning ring until it finishes. Reopen the PR to follow or cancel it. One answer runs per PR, and up to three PRs can have an answer running at once. While an answer runs, chat shows what was asked, how long it has taken, and the agent's latest text, and scrolls to keep it in view unless you have scrolled up.
+Choose **New conversation** in the Review chat header to start with an empty composer and fresh conversation context for this PR. Expand **Earlier messages** to revisit previous answers, findings, and citations. If an answer is running, finish or cancel it first.
+
+Each PR has its own chat: its conversation, the question you are typing, and any answer in progress. An answer keeps running when you open another PR or return to **Pull requests**, and its row in the repository queue shows a turning ring until it finishes. Reopen the PR to follow or cancel it. One answer runs per PR, and up to three PRs can have an answer running at once. While an answer runs, chat shows what was asked, how long it has taken, and the agent's latest text, and scrolls to keep it in view unless you have scrolled up.
 
 Select a diff line and choose **Explain file**, or type a question. **Related file** lets you include another changed file in the evidence. Chat renders GitHub-flavored Markdown, including lists, code blocks, and tables. A citation such as **reader.ts:500** opens line 500. When several citations appear together, choose **sources** to pick a file and line. Expand **Sources** beneath an answer to see the full file paths and line numbers. Citations from earlier revisions open the saved excerpt. For a newly added file, **Explain file** describes its purpose and implementation. Each agent request includes the PR title, a bounded description and changed-file list, selected and related code evidence, and up to five recent exchanges from the same revision. New-file source is sent in line order and marked complete or partial. The CLI receives this context through stdin. The cached PR snapshot and conversation stay in local SQLite. An agent using a hosted model sends the selected evidence and recent conversation to its provider. Codex also supports a locally running Ollama or LM Studio provider.
 
@@ -56,9 +58,9 @@ Published line comments and their replies appear beneath the matching old or new
 
 ## Review a local branch
 
-Use **Review local branch** on the Workspace page to review a coding agent's work before it becomes a pull request. Choose the top-level folder of a local Git clone. The dialog shows the repository, its current branch and a base branch. The remote default branch is selected when the clone has one, otherwise `main` or `master`. Choose **Start review**.
+Choose **Open review** and then **Review local branch** to review a coding agent's work before it becomes a pull request. Choose the top-level folder of a local Git clone. The dialog shows the repository, its current branch and a base branch. The remote default branch is selected when the clone has one, otherwise `main` or `master`. Choose **Start review**.
 
-The review compares the merge base of the base branch and HEAD with the working tree. Committed, staged, unstaged and untracked files all appear. Ignored files do not. The app only reads the repository. It never checks out, fetches, stages or writes there. Local reviews appear under **Saved reviews** with a **Local** label, the folder name and the branch.
+The review compares the merge base of the base branch and HEAD with the working tree. Committed, staged, unstaged and untracked files all appear. Ignored files do not. The app only reads the repository. It never checks out, fetches, stages or writes there. Select the local repository in the sidebar to see its saved branch reviews.
 
 Reading progress, drafts, review chat, findings and pinned questions work as for a pull request. Focused and Full PR chat read the reviewed revision from the local clone, including uncommitted files. Agents see the folder name and branch, never the folder's path. The header shows the branch, its base and the revision. **Uncommitted changes** marks a revision that includes work in the working tree. If the working tree changes after you open a revision, full-file and source reads ask you to refresh rather than show code from a different state.
 
@@ -76,11 +78,11 @@ The view refreshes about every ten seconds while it is open and up to three runs
 
 ## Monitor repositories
 
-In the sidebar, click **+** beside **Repositories**, enter a GitHub URL or `owner/repository`, and choose **Add repository**. Choose **Select authors**, search by GitHub username, and check the authors to follow. You can also add a username missing from the list. Choose **Apply selection** to save them together. The sidebar lists their open PRs and refreshes about every two minutes while the app is open. Open a PR directly from the sidebar. The last successful list stays available offline.
+In the sidebar, click **+** beside **Repositories**, enter a GitHub URL or `owner/repository`, and choose **Add repository**. Choose **Select authors**, search by GitHub username, and check the authors to follow. You can also add a username missing from the list. Choose **Apply selection** to save them together. Selecting the repository shows those authors’ open PRs in the main pane. The list refreshes about every two minutes while the app is open. The last successful list stays available offline.
 
 When a watched author opens a pull request, the app shows a system notification, counts it on the app icon in the Dock or launcher, and highlights its row with a **New** tag. Clicking the notification opens the PR. Opening the PR clears the tag and lowers the count. PRs that are listed because you just added a repository or chose an author are not treated as new. New PRs are found when the list refreshes, about every two minutes while the app's window is open, so a notification can trail GitHub by a few minutes. A PR that is closed and reopened is announced again, and a draft is announced when it is created. On macOS the count on the Dock icon needs notifications to be allowed for the app. Windows shows the notification and the highlight but no count on the icon.
 
-Each PR row in the sidebar has two icons. The sparkle opens the PR and starts **Summarise PR** in Review chat. The check opens the PR's review with **Approve** already chosen; nothing is sent until you preview and submit it. A PR whose latest review from your GitHub CLI account is an approval has a green background and a green check. That state is read from GitHub when the list refreshes and right after you submit a review, so an approval made on github.com shows too. GitHub keeps an approval after new commits unless it is dismissed, so a green row does not mean you have seen the latest push.
+Monitored PR rows have actions to review, summarise, or approve. The sparkle opens the PR and starts **Summarise PR** in Review chat. The check opens the PR's review with **Approve** already chosen; nothing is sent until you preview and submit it. A PR whose latest review from your GitHub CLI account is an approval has a highlighted approval check. That state is read from GitHub when the list refreshes and right after you submit a review, so an approval made on github.com shows too. GitHub keeps an approval after new commits unless it is dismissed, so the approval can predate the latest push.
 
 ## Project layout
 
@@ -108,11 +110,11 @@ After you open an update, select a question to compare the original evidence wit
 
 ## Workspace settings and reply alerts
 
-The gear at the bottom of the left rail opens **Settings**. Choose a theme, including **Light**, an accent colour for buttons and highlights, an interface font, and a text size. Settings is the only place the theme changes. Code keeps its monospaced font and follows the selected text size. Appearance is saved in SQLite.
+At the bottom left, the bell opens **Review alerts** and the gear below it opens **Settings**. Close alerts to return to the repository list. Choose a theme, including **Light**, an accent colour for buttons and highlights, an interface font, and a text size. Settings is the only place the theme changes. Code keeps its monospaced font and follows the selected text size. Appearance is saved in SQLite.
 
 **Connect account** starts GitHub CLI browser sign-in for github.com. Complete the authorization on GitHub. Settings displays the active CLI account, and **Switch account** starts another sign-in.
 
-Draft PRs show a **Draft** label in the repository sidebar, saved reviews and PR header.
+Draft PRs show a **Draft** label in the repository queue, saved reviews and PR header.
 
 The **Review alerts** bell shows replies, dismissals of your GitHub reviews and new pushes to open PRs you have reviewed on GitHub. Local Reviewer checks saved PRs and open PRs from monitored authors while the workspace is open. The first check establishes the current state. Subsequent checks pick up changes, including after a restart. A push and a dismissal on the same PR appear together in one desktop notification. Open a push or dismissal alert to return to the PR, or open a reply to see its GitHub discussion. Each GitHub account has its own unread count.
 
@@ -124,7 +126,7 @@ Reminders appear beside the diff or full-file page and link to their original Gi
 
 ## Compare two pull requests
 
-Expand the repository sidebar and choose **Compare pull requests** beside a monitored repository. Pick two open PRs targeting the same base branch, including PRs by authors you do not watch. **Compare revisions** pins each head and merge base and shows changed paths in common, including rename paths.
+Open the **Manage authors** menu beside a monitored repository and choose **Compare pull requests**. Pick two open PRs targeting the same base branch, including PRs by authors you do not watch. **Compare revisions** pins each head and merge base and shows changed paths in common, including rename paths.
 
 Choose **Investigate with selected agent** to check for interactions across files. Each finding pairs an inferred consequence with excerpts from both PRs. Click a filename and line to open the exact source revision on GitHub. Removed lines link to the merge base. Evidence limits appear in the report.
 

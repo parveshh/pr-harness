@@ -1,77 +1,82 @@
 import { CrossPrComparison } from './CrossPrComparison.js';
-import { useEffect, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
+import {
+  useEffect,
+  useId,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+  type FormEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { Button, Dialog, DialogTrigger, Input, Popover, TextField } from 'react-aria-components';
 import { login, readableError, repoName, type Repository } from '../../shared/assistant.js';
 
 import {
-  BookMarked,
+  Folder,
+  FolderOpen,
+  ChevronRight,
   ChevronDown,
   Search,
-  GitPullRequest,
   GitCompareArrows,
-  Layers2,
   MoreHorizontal,
-  Folders,
   Plus,
-  HardDrive,
   Bell,
   Settings,
-  Sparkles,
+  GitCommitHorizontal,
+  CircleDashedCheck,
   CircleCheck,
-  ListChecks,
-  LoaderCircle,
+  CircleAlert,
+  UserRoundCheck,
 } from 'lucide-react';
-import { useWorkingPrs } from './chatRuns.js';
+import type { ApprovalStage, SavedReview } from '../../shared/reviews.js';
+import { CommitLink, PrNumberLink, formatPrDate } from './components/PrMetadata.js';
+import type { RepositoryGroup } from '../../shared/repository-groups.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 
 export function RepositorySidebar({
-  onOpen,
-  onSummarise,
-  onReview,
-  onApprove,
+  repos,
+  setRepos,
+  groups,
+  openSaved,
+  openMonitored,
+  selectedRepo,
+  chooseRepository,
   refresh,
-  onHome,
   activeUrl,
-  collapsed,
-  onToggle,
   openInbox,
+  openSettings,
   repliesButton,
   repliesPane,
-  settingsOpen,
-  onReturn,
-  returnTo,
-  openSettings,
   unread,
 }: {
-  onOpen: (url: string) => void;
-  onReview: (url: string) => void;
-  onSummarise: (url: string) => void;
-  onApprove: (url: string) => void;
-  // Changes when the PR list should be read from GitHub again, such as after a review.
+  repos: Repository[];
+  setRepos: Dispatch<SetStateAction<Repository[] | null>>;
+  groups: RepositoryGroup[];
+  openSaved: (url: string) => void;
+  openMonitored: (url: string) => void;
+  selectedRepo: string | null;
+  chooseRepository: (name: string) => void;
   refresh: number;
-  onHome: () => void;
   activeUrl: string | null;
-  collapsed: boolean;
-  onToggle: () => void;
   openInbox: () => void;
+  openSettings: () => void;
   repliesButton: RefObject<HTMLButtonElement | null>;
   repliesPane: ReactNode;
-  settingsOpen: boolean;
-  // Shows the open review again, or reopens the one the reviewer left for the workspace.
-  onReturn: () => void;
-  returnTo: string | null;
-  openSettings: () => void;
   unread: number;
 }) {
-  const [repos, setRepos] = useState<Repository[]>([]),
-    [adding, setAdding] = useState(false),
+  const [adding, setAdding] = useState(false),
     [name, setName] = useState(''),
     [comparison, setComparison] = useState<string | null>(null),
     [manage, setManage] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const workingPrs = useWorkingPrs();
-  const repositoriesOpen = !collapsed && !repliesPane;
+  const [showRepositories, setShowRepositories] = useState(true);
+  const [lastActive, setLastActive] = useState(activeUrl);
+  if (activeUrl !== lastActive) {
+    setLastActive(activeUrl);
+    if (activeUrl) setShowRepositories(true);
+  }
   const selected = repos.find((r) => r.name === manage);
   function openAdd() {
     setError('');
@@ -98,7 +103,10 @@ export function RepositorySidebar({
           }
         }
       } catch (e) {
-        if (alive) setError(readableError(e));
+        if (alive) {
+          setRepos((current) => current ?? []);
+          setError('Could not load repositories. ' + readableError(e));
+        }
       } finally {
         running = false;
       }
@@ -112,7 +120,7 @@ export function RepositorySidebar({
       clearInterval(timer);
       window.removeEventListener('focus', focus);
     };
-  }, [refresh]);
+  }, [refresh, setRepos]);
   // Opening a PR clears its new mark in the main process. Read the saved list again so the
   // highlight does not return when the reviewer leaves the PR.
   useEffect(() => {
@@ -128,7 +136,7 @@ export function RepositorySidebar({
     return () => {
       alive = false;
     };
-  }, [activeUrl]);
+  }, [activeUrl, setRepos]);
   function update(work: () => Promise<Repository[]>, done?: () => void) {
     setBusy(true);
     setError('');
@@ -153,215 +161,78 @@ export function RepositorySidebar({
       () => {
         setName('');
         setAdding(false);
+        setShowRepositories(true);
+        chooseRepository(parsed.data);
         setManage(parsed.data);
       },
     );
   }
   return (
-    <aside
-      className={'repo-sidebar' + (collapsed ? ' collapsed' : '')}
-      aria-label="Repository sidebar"
-    >
+    <aside className="repo-sidebar repository-navigation" aria-label="Repository sidebar">
       <nav className="workspace-rail" aria-label="Workspace tools">
         <button
-          onClick={onHome}
-          aria-label="Workspace"
-          title="Workspace"
-          aria-current={!activeUrl ? 'page' : undefined}
-        >
-          <Layers2 size={21} />
-        </button>
-        <button
-          onClick={activeUrl || returnTo ? onReturn : undefined}
-          aria-disabled={!activeUrl && !returnTo ? true : undefined}
-          aria-label={
-            activeUrl || returnTo ? 'Review' : 'Review, open one from the workspace first'
-          }
-          title={
-            activeUrl
-              ? 'Review'
-              : returnTo
-                ? 'Return to your last review'
-                : 'Open a review from the workspace first'
-          }
-          aria-current={activeUrl ? 'page' : undefined}
-        >
-          <GitPullRequest size={19} />
-        </button>
-        <span className="rail-divider" aria-hidden="true" />
-        <button
-          onClick={onToggle}
-          aria-expanded={repositoriesOpen}
-          aria-controls={repositoriesOpen ? 'repository-list' : undefined}
-          aria-label={repositoriesOpen ? 'Hide repositories' : 'Show repositories'}
-          title={repositoriesOpen ? 'Hide repositories' : 'Show repositories'}
-        >
-          <Folders size={19} />
-        </button>
-        <button
           ref={repliesButton}
-          aria-expanded={!!repliesPane}
-          aria-controls={repliesPane ? 'review-replies' : undefined}
           title="Review alerts"
           aria-label={'Review alerts, ' + unread + ' unread'}
+          aria-expanded={!!repliesPane}
+          aria-controls={repliesPane ? 'review-replies' : undefined}
           onClick={openInbox}
         >
-          <Bell size={19} />
-          {unread > 0 && <span className="reply-count">{unread > 99 ? '99+' : unread}</span>}
+          <Bell size={18} aria-hidden="true" />
+          {unread > 0 && (
+            <span className="reply-count" aria-hidden="true">
+              {unread > 99 ? '99+' : unread}
+            </span>
+          )}
         </button>
         <button
-          title="Settings"
           aria-label="Settings"
-          aria-expanded={settingsOpen}
-          className="rail-settings"
+          title="Settings"
+          aria-haspopup="dialog"
           onClick={openSettings}
         >
-          <Settings size={19} />
+          <Settings size={18} aria-hidden="true" />
         </button>
       </nav>
-      {repositoriesOpen && (
-        <div id="repository-list" className="sidebar-contents">
+      <div className="sidebar-contents" hidden={!!repliesPane}>
+        <nav aria-label="Repositories">
           <div className="sidebar-title">
-            <h2>Repositories</h2>
+            <h2>
+              <button
+                className="repositories-disclosure"
+                aria-expanded={showRepositories}
+                aria-controls="repository-folders"
+                onClick={() => setShowRepositories(!showRepositories)}
+              >
+                Repositories{' '}
+                {showRepositories ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              </button>
+            </h2>
             <button aria-label="Add repository" title="Add repository" onClick={openAdd}>
               <Plus size={16} />
             </button>
           </div>
-          {!repos.length && !adding && (
-            <button className="add-first" onClick={openAdd}>
-              <BookMarked size={15} /> Add your first repository
-            </button>
-          )}
-          {repos.map((r) => (
-            <section className="repo-group" key={r.name}>
-              <div className="repo-group-name">
-                <BookMarked size={14} />
-                <strong title={r.name}>{r.name}</strong>
-                <button
-                  title="Compare pull requests"
-                  aria-label={'Compare pull requests in ' + r.name}
-                  onClick={() => setComparison(r.name)}
-                >
-                  <GitCompareArrows size={15} />
-                </button>
-                <button
-                  title="Manage authors"
-                  aria-label={'Manage authors for ' + r.name}
-                  onClick={() => {
-                    setError('');
-                    setManage(r.name);
-                  }}
-                >
-                  <MoreHorizontal size={15} />
-                </button>
-              </div>
-              {!r.watching.length ? (
-                <button className="choose-authors" onClick={() => setManage(r.name)}>
-                  Choose authors
-                </button>
-              ) : (
-                <>
-                  <small>
-                    {r.watching.length} monitored ·{' '}
-                    {r.pulls.filter((p) => r.watching.includes(p.author)).length} open
-                  </small>
-                  {r.pulls
-                    .filter((p) => r.watching.includes(p.author))
-                    .map((p) => {
-                      const pr = 'https://github.com/' + r.name + '/pull/' + p.number;
-                      // An answer for this PR may be running while another PR is open.
-                      const isNew = p.unseen && activeUrl !== pr;
-                      const run = workingPrs.get(pr);
-                      const working = run
-                        ? run === 'summary'
-                          ? 'Summarising'
-                          : run === 'review'
-                            ? 'Reviewing'
-                            : 'Answering a question in'
-                        : null;
-                      return (
-                        <div
-                          key={p.number}
-                          className="monitored-pr"
-                          data-current={activeUrl === pr || undefined}
-                          data-approved={p.approved || undefined}
-                          data-new={isNew || undefined}
-                          data-working={!!run || undefined}
-                        >
-                          <button
-                            className="monitored-open"
-                            aria-current={activeUrl === pr ? 'page' : undefined}
-                            onClick={() => onOpen(pr)}
-                          >
-                            <span>
-                              <GitPullRequest size={12} /> #{p.number} · {p.author}
-                              {p.isDraft && ' · Draft'}
-                            </span>
-                            {isNew && <b className="monitored-new">New</b>}
-                            {p.title}
-                          </button>
-                          <span className="monitored-actions">
-                            {working ? (
-                              <span
-                                className="monitored-working"
-                                role="status"
-                                aria-label={working + ' pull request #' + p.number}
-                                title={working + ' this PR. Open it to follow or cancel.'}
-                              >
-                                <LoaderCircle className="spin" size={14} aria-hidden />
-                              </span>
-                            ) : (
-                              <>
-                                <button
-                                  aria-label={'Review pull request #' + p.number}
-                                  title="Review this PR for findings"
-                                  onClick={() => onReview(pr)}
-                                >
-                                  <ListChecks size={14} />
-                                </button>
-                                <button
-                                  aria-label={'Summarise pull request #' + p.number}
-                                  title="Summarise this PR"
-                                  onClick={() => onSummarise(pr)}
-                                >
-                                  <Sparkles size={14} />
-                                </button>
-                              </>
-                            )}
-                            <button
-                              aria-label={
-                                (p.approved ? 'Approved. Review' : 'Approve') +
-                                ' pull request #' +
-                                p.number
-                              }
-                              title={
-                                p.approved
-                                  ? 'You approved this PR. Review it again'
-                                  : 'Approve this PR. You confirm before it is sent'
-                              }
-                              onClick={() => onApprove(pr)}
-                            >
-                              <CircleCheck size={14} />
-                            </button>
-                          </span>
-                        </div>
-                      );
-                    })}
-                </>
-              )}
-              {r.error && <small role="status">Refresh failed · cached results</small>}
-            </section>
-          ))}
-          {error && !manage && !adding && <p role="alert">{error}</p>}
-        </div>
-      )}
-      {repositoriesOpen && (
-        <div className="sidebar-foot">
-          <span className="local-status">
-            <HardDrive size={13} /> Local workspace
-          </span>
-        </div>
-      )}
+          <div id="repository-folders" hidden={!showRepositories}>
+            {groups.map((group) => (
+              <RepositoryFolder
+                key={group.key}
+                group={group}
+                activeUrl={selectedRepo === group.key ? activeUrl : null}
+                currentQueue={!activeUrl && selectedRepo === group.key && !repliesPane}
+                choose={() => chooseRepository(group.key)}
+                manage={() => {
+                  setError('');
+                  setManage(group.key);
+                }}
+                openSaved={openSaved}
+                openMonitored={openMonitored}
+                onError={setError}
+              />
+            ))}
+          </div>
+        </nav>
+        {error && !manage && !adding && <p role="alert">{error}</p>}
+      </div>
       {repliesPane}
       {comparison && (
         <CrossPrComparison key={comparison} repo={comparison} close={() => setComparison(null)} />
@@ -400,6 +271,15 @@ export function RepositorySidebar({
       )}
       {selected && (
         <WorkspaceDialog title={selected.name} onClose={() => setManage(null)}>
+          <button
+            className="quiet"
+            onClick={() => {
+              setComparison(selected.name);
+              setManage(null);
+            }}
+          >
+            <GitCompareArrows size={15} /> Compare pull requests
+          </button>
           <AuthorPicker
             key={selected.name}
             repo={selected}
@@ -429,6 +309,207 @@ export function RepositorySidebar({
   );
 }
 
+const approvalIcons = {
+  partial: { icon: CircleDashedCheck, label: 'Partially approved · further review required' },
+  approved: { icon: CircleCheck, label: 'Approved on GitHub' },
+  'approval-recorded': { icon: UserRoundCheck, label: 'Reviewer approval recorded' },
+  mixed: { icon: CircleAlert, label: 'Reviewer approval recorded · changes requested' },
+  'changes-requested': { icon: CircleAlert, label: 'Changes requested' },
+} satisfies Record<Exclude<ApprovalStage, 'none'>, { icon: typeof CircleCheck; label: string }>;
+
+function sidebarStatus({
+  head,
+  commitCount,
+  approvalStage,
+}: Pick<SavedReview, 'head' | 'commitCount' | 'approvalStage'>) {
+  const commits =
+    commitCount === undefined ? '' : commitCount + (commitCount === 1 ? ' commit' : ' commits');
+  const badge =
+    approvalStage && approvalStage !== 'none' ? approvalIcons[approvalStage] : undefined;
+  const commitLabel = [commits, head].filter(Boolean).join(' · ');
+  return { head, commits, commitLabel, badge, approvalStage };
+}
+
+function RepositoryFolder({
+  group,
+  currentQueue,
+  activeUrl,
+  choose,
+  manage,
+  openSaved,
+  openMonitored,
+  onError,
+}: {
+  onError: (message: string) => void;
+  group: RepositoryGroup;
+  currentQueue: boolean;
+  activeUrl: string | null;
+  choose: () => void;
+  manage: () => void;
+  openSaved: (url: string) => void;
+  openMonitored: (url: string) => void;
+}) {
+  const listId = useId();
+  const [expanded, setExpanded] = useState(true);
+  const [showAll, setShowAll] = useState(false);
+  const [lastActive, setLastActive] = useState(activeUrl);
+  if (activeUrl !== lastActive) {
+    setLastActive(activeUrl);
+    if (activeUrl) setExpanded(true);
+  }
+  const rows = [
+    ...group.pulls.map(({ url, pull }) => ({
+      url,
+      label: pull.title,
+      status: sidebarStatus(pull),
+      detail: '#' + pull.number + ' ' + pull.title,
+      metadata: [
+        '@' + pull.author,
+        pull.isDraft && 'Draft',
+        pull.openedAt && 'Opened ' + formatPrDate(pull.openedAt),
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      open: openMonitored,
+    })),
+    ...group.saved.map((review) => {
+      const { url, local, title, author, isDraft, savedAt, openedAt } = review;
+      const number = url.split('/').at(-1);
+      const label = local
+        ? (local.branch ?? 'Detached HEAD') + ' → ' + local.baseBranch
+        : title || 'Pull request';
+      return {
+        url,
+        label,
+        status: sidebarStatus(review),
+        detail: local ? label : title ? '#' + number + ' ' + title : 'Pull request #' + number,
+        metadata: local
+          ? ''
+          : [
+              author && '@' + author,
+              isDraft && 'Draft',
+              openedAt ? 'Opened ' + formatPrDate(openedAt) : 'Saved ' + formatPrDate(savedAt),
+            ]
+              .filter(Boolean)
+              .join(' · '),
+        open: openSaved,
+      };
+    }),
+  ];
+  const limit = 5;
+  const visible = showAll ? rows : rows.slice(0, limit);
+  if (!showAll && activeUrl && !visible.some((row) => row.url === activeUrl)) {
+    const active = rows.find((row) => row.url === activeUrl);
+    if (active) visible[limit - 1] = active;
+  }
+  const Arrow = expanded ? ChevronDown : ChevronRight;
+  const FolderIcon = expanded && rows.length ? FolderOpen : Folder;
+  return (
+    <div className="repository-folder">
+      <div className="repository-row" data-selected={currentQueue || undefined}>
+        {rows.length > 0 ? (
+          <button
+            className="folder-disclosure"
+            aria-label={(expanded ? 'Collapse ' : 'Expand ') + group.key}
+            aria-expanded={expanded}
+            aria-controls={listId}
+            onClick={() => setExpanded(!expanded)}
+          >
+            <FolderIcon className="folder-icon" size={16} />
+            <Arrow className="folder-arrow" size={16} />
+          </button>
+        ) : (
+          <Folder size={16} className="empty-folder-icon" />
+        )}
+        <button
+          className="repo-link"
+          title={group.key}
+          aria-label={group.key}
+          aria-current={currentQueue ? 'page' : undefined}
+          onClick={() => {
+            setExpanded(true);
+            choose();
+          }}
+        >
+          <span>{group.label}</span>
+        </button>
+        {group.monitored && (
+          <button
+            className="repo-options"
+            title="Manage authors"
+            aria-label={'Manage authors for ' + group.key}
+            onClick={manage}
+          >
+            <MoreHorizontal size={16} />
+          </button>
+        )}
+      </div>
+      {rows.length > 0 && (
+        <ul
+          id={listId}
+          className="sidebar-reviews"
+          aria-label={'Reviews in ' + group.key}
+          hidden={!expanded}
+        >
+          {visible.map(({ url, label, detail, metadata, status, open }) => {
+            const description = [metadata, status.commitLabel, status.badge?.label]
+              .filter(Boolean)
+              .join(' · ');
+            return (
+              <li key={url} className="sidebar-review-row">
+                <button
+                  className="sidebar-review"
+                  title={description ? label + '\n' + description : detail}
+                  aria-description={description || undefined}
+                  aria-label={detail}
+                  aria-current={url === activeUrl ? 'page' : undefined}
+                  onClick={() => open(url)}
+                >
+                  <span className="sidebar-review-heading">
+                    <span className="sidebar-review-title">{label}</span>
+                    {status.badge && (
+                      <span
+                        className="approval-stage"
+                        data-stage={status.approvalStage}
+                        title={status.badge.label}
+                      >
+                        <status.badge.icon size={15} aria-hidden="true" />
+                      </span>
+                    )}
+                  </span>
+                </button>
+                {metadata && (
+                  <small className="sidebar-review-meta">
+                    <PrNumberLink url={url} onError={onError} /> · {metadata}
+                  </small>
+                )}
+                {status.commitLabel && (
+                  <small className="sidebar-review-commit" title={status.commitLabel}>
+                    <GitCommitHorizontal size={13} aria-hidden="true" />
+                    {status.commits}
+                    {status.head && <CommitLink url={url} head={status.head} onError={onError} />}
+                  </small>
+                )}
+              </li>
+            );
+          })}
+          {rows.length > limit && (
+            <li>
+              <button
+                className="sidebar-show-more"
+                aria-expanded={showAll}
+                onClick={() => setShowAll(!showAll)}
+              >
+                {showAll ? 'Show less' : 'Show more'}
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function AuthorPicker({
   repo,
   busy,
@@ -451,7 +532,7 @@ function AuthorPicker({
           Refresh authors
         </button>
       </div>
-      <p>Open pull requests from selected authors appear in the sidebar.</p>
+      <p>Open pull requests from selected authors appear in the repository’s pull request list.</p>
       <DialogTrigger isOpen={open} onOpenChange={setOpen}>
         <Button
           className="author-trigger"

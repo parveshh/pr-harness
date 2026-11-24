@@ -16,13 +16,14 @@ try {
   });
   try {
     const page = await app.firstWindow();
-    await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
+    await page.getByRole('heading', { name: 'Pull requests' }).waitFor();
     assert.equal(await app.evaluate(({ app }) => app.isPackaged), true);
+    await page.getByRole('button', { name: 'Open review', exact: true }).click();
     await page
       .getByLabel('GitHub pull request URL')
       .fill('https://github.com/example/project/pull/1');
     await page.getByRole('button', { name: 'Save pull request' }).click();
-    await page.getByRole('button', { name: /example\/project.*#1/ }).waitFor();
+    await page.getByRole('button', { name: /#1.*example\/project/ }).waitFor();
     console.log('Packaged app opened and saved a pull request in its isolated SQLite workspace.');
   } finally {
     await app.close();

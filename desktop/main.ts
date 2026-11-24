@@ -1,4 +1,11 @@
-import { app, BrowserWindow, ipcMain, Notification, type IpcMainInvokeEvent } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  nativeTheme,
+  Notification,
+  type IpcMainInvokeEvent,
+} from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openStore } from './store.js';
@@ -29,7 +36,13 @@ function verifySender(event: IpcMainInvokeEvent) {
   }
 }
 
-function openWindow() {
+const solidWindowBackground = '#1c2c2e';
+function applySidebarVibrancy(view: BrowserWindow, enabled: boolean) {
+  view.setVibrancy(enabled ? 'sidebar' : null);
+  view.setBackgroundColor(enabled ? '#00000000' : solidWindowBackground);
+}
+
+function openWindow(sidebarVibrancy: boolean) {
   const view = new BrowserWindow({
     title: 'Local Reviewer',
     icon: appIcon,
@@ -40,7 +53,7 @@ function openWindow() {
     height: 720,
     minWidth: 570,
     minHeight: 440,
-    backgroundColor: '#1c2c2e',
+    backgroundColor: solidWindowBackground,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/preload.cjs'),
       sandbox: true,
@@ -48,6 +61,7 @@ function openWindow() {
       nodeIntegration: false,
     },
   });
+  if (process.platform === 'darwin' && sidebarVibrancy) applySidebarVibrancy(view, true);
   window = view;
   view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   view.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -63,6 +77,11 @@ function openWindow() {
 function startWorkspace() {
   app.dock?.setIcon(appIcon);
   const store = openStore(join(app.getPath('userData'), 'workspace.sqlite'));
+  function syncMacFrameAppearance() {
+    if (process.platform === 'darwin')
+      nativeTheme.themeSource = store.getAppearance() === 'light' ? 'light' : 'dark';
+  }
+  syncMacFrameAppearance();
   const reader = store.reader;
   // Notifications are kept until dismissed, or they could be collected before a click.
   const shown = new Set<Notification>();
@@ -92,8 +111,9 @@ function startWorkspace() {
         // With no window to tell, make the PR the one a new window opens on.
         store.save(url);
         reader.select(url);
+        diffSearchController?.abort();
         assistant.seen(url);
-        return openWindow();
+        return openWindow(store.getSidebarVibrancy());
       }
       if (window.isMinimized()) window.restore();
       window.show();
@@ -110,6 +130,7 @@ function startWorkspace() {
     app.getPath('documents'),
     shutdown.signal,
   );
+  let diffSearchController: AbortController | undefined;
   let fetchController: AbortController | undefined;
   ipcMain.handle('reader:active', (event) => {
     verifySender(event);
@@ -120,6 +141,7 @@ function startWorkspace() {
     // Answers keep running for the PR they belong to while another PR is open.
     reader.select(url);
     if (typeof url === 'string') assistant.seen(url);
+    diffSearchController?.abort();
     fetchController?.abort();
   });
   ipcMain.handle('reader:cached', (event, url: unknown) => {
@@ -137,6 +159,12 @@ function startWorkspace() {
   ipcMain.handle('questions:evidence', (event, input: unknown) => {
     verifySender(event);
     return reader.questions.evidence(questionKey.parse(input));
+  });
+  ipcMain.handle('reader:search', (event, request: unknown) => {
+    verifySender(event);
+    diffSearchController?.abort();
+    diffSearchController = new AbortController();
+    return reader.searchDiff(request, diffSearchController.signal);
   });
   ipcMain.handle('reader:patch', (event, key: unknown) => {
     verifySender(event);
@@ -167,6 +195,7 @@ function startWorkspace() {
     if (isLocalReview(url)) return refreshLocal(url, controller);
     const snapshot = await fetchSnapshot(url, controller.signal);
     controller.signal.throwIfAborted();
+    reader.observeRemoteHead(url, snapshot.meta.head, snapshot.meta.commitCount);
     snapshot.revision = reader.revisions.identify(url, snapshot.revision, snapshot.meta.baseBranch);
     const current = reader.read(url);
     if (!current || snapshot.revision === current.revision) return reader.install(url, snapshot);
@@ -251,6 +280,24 @@ function startWorkspace() {
     verifySender(event);
     return reader.revisions.evidence(input);
   });
+  ipcMain.handle('appearance:sidebar-vibrancy', (event) => {
+    verifySender(event);
+    return process.platform === 'darwin' && store.getSidebarVibrancy();
+  });
+  ipcMain.handle('appearance:save-sidebar-vibrancy', (event, value: unknown) => {
+    verifySender(event);
+    const enabled = z.boolean().parse(value);
+    if (process.platform !== 'darwin' || !window)
+      throw Error('Sidebar vibrancy requires a Mac window.');
+    const previous = store.getSidebarVibrancy();
+    try {
+      applySidebarVibrancy(window, enabled);
+      store.saveSidebarVibrancy(enabled);
+    } catch (error) {
+      applySidebarVibrancy(window, previous);
+      throw error;
+    }
+  });
   ipcMain.handle('appearance:get', (event) => {
     verifySender(event);
     return store.getAppearance();
@@ -258,6 +305,7 @@ function startWorkspace() {
   ipcMain.handle('appearance:save', (event, value: unknown) => {
     verifySender(event);
     store.saveAppearance(value);
+    syncMacFrameAppearance();
   });
   ipcMain.handle('accent:get', (event) => {
     verifySender(event);
@@ -285,9 +333,9 @@ function startWorkspace() {
     if (process.platform !== 'darwin') app.quit();
   });
   app.on('activate', () => {
-    if (!window) openWindow();
+    if (!window) openWindow(store.getSidebarVibrancy());
   });
-  openWindow();
+  openWindow(store.getSidebarVibrancy());
 }
 
 app

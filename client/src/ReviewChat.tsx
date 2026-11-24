@@ -32,7 +32,8 @@ import {
   ArrowUp,
   LoaderCircle,
   SlidersHorizontal,
-  ChevronRight,
+  SquarePen,
+  X,
 } from 'lucide-react';
 import { shortRevision, splitHunks } from '../../shared/reader.js';
 import type { ReaderView, ReaderFile } from '../../shared/reader.js';
@@ -48,10 +49,13 @@ export function ReviewChat({
   local,
   view,
   file,
+  comparison,
+  loading,
   selection,
   jump,
   openSource,
   collapse,
+  closeButtonRef,
   composerRef,
 }: {
   agents: AgentCatalog | null;
@@ -64,12 +68,15 @@ export function ReviewChat({
   url: string;
   // A local branch review has no repository scope for instructions.
   local: boolean;
-  view: ReaderView;
-  file: ReaderFile;
+  view: ReaderView | null;
+  file: ReaderFile | undefined;
+  comparison: boolean;
+  loading: boolean;
   selection: ChatRequest['selection'];
   jump: (cite: CommentAnchor) => void;
   openSource: (run: string, cite: SourceCitation) => void;
   collapse: () => void;
+  closeButtonRef: RefObject<HTMLButtonElement | null>;
   composerRef: RefObject<HTMLTextAreaElement | null>;
 }) {
   // The harness and model come from the app-wide choice. This pane owns the scoped prompt.
@@ -93,7 +100,8 @@ export function ReviewChat({
   const running = !!chat.active,
     question = chat.draft;
   const [assessments, setAssessments] = useState<ReadonlyMap<string, Finding[]>>(new Map());
-  const [history, setHistory] = useState<Turn[]>([]),
+  const [history, setHistory] = useState<{ generation: number; turns: Turn[] } | null>(null),
+    [showEarlier, setShowEarlier] = useState(false),
     [error, setError] = useState(''),
     [extra, setExtra] = useState(''),
     [contextMode, setContextMode] = useState<ContextMode>('focused'),
@@ -102,10 +110,10 @@ export function ReviewChat({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const alive = useRef(false);
   const loadedConfigUrl = useRef<string | null>(null);
-  const messages = useMemo(
-    () => [...history, ...chat.completed.filter((m) => !history.some((h) => h.run === m.run))],
-    [history, chat.completed],
-  );
+  const messages = useMemo(() => {
+    const turns = history?.generation === chat.generation ? history.turns : [];
+    return [...turns, ...chat.completed.filter((m) => !turns.some((h) => h.run === m.run))];
+  }, [history, chat.generation, chat.completed]);
   function apply(c: Config, changed?: PromptPurpose) {
     setConfig(c);
     if (changed !== 'summary') {
@@ -141,20 +149,27 @@ export function ReviewChat({
       alive.current = false;
     };
   }, [url]);
+  const lastCompleted = chat.completed.at(-1)?.run;
   useEffect(() => {
-    let live = true;
-    window.reviewer
-      .history(url)
-      .then((history) => {
-        if (live) setHistory(history);
-      })
-      .catch((e) => {
-        if (live) setError(readableError(e));
-      });
+    let request = 0;
+    function load() {
+      const id = ++request;
+      window.reviewer
+        .history(url)
+        .then((turns) => {
+          if (id === request) setHistory({ generation: chat.generation, turns });
+        })
+        .catch((e) => {
+          if (id === request) setError(readableError(e));
+        });
+    }
+    load();
+    window.addEventListener('focus', load);
     return () => {
-      live = false;
+      request++;
+      window.removeEventListener('focus', load);
     };
-  }, [url, view.revision]);
+  }, [url, view?.revision, chat.generation, lastCompleted]);
   const agent = agents?.agents.find((a) => a.id === agents.selection.agent);
   async function save(target: PromptPurpose) {
     const summary = target === 'summary';
@@ -183,7 +198,7 @@ export function ReviewChat({
     typed = false,
     kind: RunKind = 'question',
   ) {
-    if (running || prompt === null || !agent || !text.trim()) return;
+    if (!view || !file || running || prompt === null || !agent || !text.trim()) return;
     setError('');
     const target = kind === 'summary' ? 'summary' : 'review';
     const edited =
@@ -219,11 +234,11 @@ export function ReviewChat({
   useLayoutEffect(() => {
     if (following.current && log.current) log.current.scrollTop = log.current.scrollHeight;
   }, [activeRun, progress, messages.length]);
-  const canRunPrAction = !!agent && !running && prompt !== null;
+  const canRunPrAction = !!agent && !chat.resetting && !running && prompt !== null;
   // A PR action requested from the sidebar waits only while the harness list or the prompt is
   // still loading. After that it either starts or says why not, so it never fires later.
   const takePrRequest = useEffectEvent(() => {
-    if (!agents || (prompt === null && !configFailed)) return;
+    if (chat.resetting || !file || !agents || (prompt === null && !configFailed)) return;
     onPrStarted();
     if (canRunPrAction && prRequest)
       send(
@@ -246,9 +261,71 @@ export function ReviewChat({
     // part of answering the request. The request is cleared in the same step.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (prRequest !== null) takePrRequest();
-  }, [prRequest, agents, prompt, configFailed]);
+  }, [prRequest, agents, prompt, configFailed, file, chat.resetting]);
   const canAsk =
-    !!agent && !running && (contextMode === 'full-pr' || ['text', 'partial'].includes(file.kind));
+    !!file &&
+    !!agent &&
+    !running &&
+    !chat.resetting &&
+    (contextMode === 'full-pr' || ['text', 'partial'].includes(file.kind));
+  const cancelRun = running && (
+    <button type="button" onClick={() => chatRuns.cancel(url)}>
+      Cancel
+    </button>
+  );
+  function renderExchange(m: Turn) {
+    return (
+      <div className="exchange" key={m.run}>
+        <strong className="chat-speaker">
+          <UserRound size={14} /> You
+        </strong>
+        <div className="chat-question">
+          <ChatMarkdown text={m.question} />
+        </div>
+        <strong className="chat-speaker assistant-speaker">
+          <Sparkles size={13} /> Assistant
+        </strong>
+        <small>
+          {m.settings.agent} · {m.reportedModel || m.settings.model || 'agent default'} ·{' '}
+          {shortRevision(m.revision)}
+          {m.contextMode === 'full-pr' && ' · Full PR'}
+        </small>
+        {!!m.changedEvidence?.length && (
+          <small>Evidence needs another look · {m.changedEvidence.join(', ')}</small>
+        )}
+        <Answer
+          url={url}
+          turn={m}
+          current={m.revision === view?.revision}
+          jump={jump}
+          openSource={openSource}
+        />
+        {m.findings && (
+          <ReviewFindings
+            url={url}
+            turn={m}
+            current={m.revision === view?.revision}
+            bundle={bundle}
+            jump={jump}
+            findings={assessments.get(m.run) ?? m.findings}
+            onUpdated={(next) => {
+              const updated = next.findings;
+              if (updated) setAssessments((prev) => new Map(prev).set(next.run, updated));
+            }}
+            onDrafts={onDrafts}
+          />
+        )}
+      </div>
+    );
+  }
+  async function startFresh() {
+    setError('');
+    if ((await chatRuns.newConversation(url)) && alive.current) {
+      setShowEarlier(false);
+      following.current = true;
+      composerRef.current?.focus();
+    }
+  }
   return (
     <section className="review-chat" aria-label="Review chat">
       <div className="chat-heading">
@@ -260,6 +337,20 @@ export function ReviewChat({
         </h2>
         <div className="chat-agent-picker">{agentPicker}</div>
         <div className="chat-heading-tools">
+          <button
+            type="button"
+            className="chat-settings-toggle"
+            aria-label="New conversation"
+            title={
+              running
+                ? 'Wait for the answer or cancel it to start a new conversation'
+                : 'New conversation'
+            }
+            disabled={running || chat.resetting}
+            onClick={() => void startFresh()}
+          >
+            <SquarePen size={15} aria-hidden />
+          </button>
           {prompt !== null && config && (
             <fieldset disabled={running}>
               <button
@@ -363,12 +454,13 @@ export function ReviewChat({
             </fieldset>
           )}
           <button
-            className="pane-toggle"
-            title="Collapse review chat"
-            aria-label="Collapse review chat"
+            ref={closeButtonRef}
+            className="close-chat"
+            title="Close review chat"
+            aria-label="Close review chat"
             onClick={collapse}
           >
-            <ChevronRight size={17} />
+            <X size={17} />
           </button>
         </div>
       </div>
@@ -387,156 +479,139 @@ export function ReviewChat({
           following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
         }}
       >
-        {messages.map((m) => (
-          <div className="exchange" key={m.run}>
-            <strong className="chat-speaker">
-              <UserRound size={14} /> You
-            </strong>
-            <div className="chat-question">
-              <ChatMarkdown text={m.question} />
-            </div>
-            <strong className="chat-speaker assistant-speaker">
-              <Sparkles size={13} /> Assistant
-            </strong>
-            <small>
-              {m.settings.agent} · {m.reportedModel || m.settings.model || 'agent default'} ·{' '}
-              {shortRevision(m.revision)}
-              {m.contextMode === 'full-pr' && ' · Full PR'}
-            </small>
-            {!!m.changedEvidence?.length && (
-              <small>Evidence needs another look · {m.changedEvidence.join(', ')}</small>
-            )}
-            <Answer
-              url={url}
-              turn={m}
-              current={m.revision === view.revision}
-              jump={jump}
-              openSource={openSource}
-            />
-            {m.findings && (
-              <ReviewFindings
-                url={url}
-                turn={m}
-                current={m.revision === view.revision}
-                bundle={bundle}
-                jump={jump}
-                findings={assessments.get(m.run) ?? m.findings}
-                onUpdated={(next) => {
-                  const updated = next.findings;
-                  if (updated) setAssessments((prev) => new Map(prev).set(next.run, updated));
-                }}
-                onDrafts={onDrafts}
-              />
-            )}
-          </div>
-        ))}
+        {messages.some((m) => m.archived) && (
+          <details
+            className="earlier-chat"
+            open={showEarlier}
+            onToggle={(e) => setShowEarlier(e.currentTarget.open)}
+          >
+            <summary>Earlier messages</summary>
+            {showEarlier && messages.filter((m) => m.archived).map(renderExchange)}
+          </details>
+        )}
+        {messages.filter((m) => !m.archived).map(renderExchange)}
         {chat.active && <RunProgress run={chat.active} />}
       </div>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send(question, contextMode, true);
-        }}
-      >
-        <div className="chat-suggestions">
-          <button
-            type="button"
-            className="summarise-pr"
-            disabled={!canRunPrAction}
-            title="Uses Full PR context"
-            onClick={() => send(summaryQuestion, 'full-pr', false, 'summary')}
-          >
-            Summarise PR
-          </button>
-          <button
-            type="button"
-            disabled={!canRunPrAction}
-            title="Review the full PR for actionable findings"
-            onClick={() => send(prReviewQuestion, 'full-pr', false, 'review')}
-          >
-            Review PR
-          </button>
-          <button
-            type="button"
-            disabled={!canAsk}
-            onClick={() =>
-              send(
-                file.status === 'added'
-                  ? 'Explain this new file. What does it introduce, how does it work, and how does it fit into this PR?'
-                  : 'Explain what changed in this file and why it matters, starting with the selected hunk.',
-              )
-            }
-          >
-            Explain file
-          </button>
-        </div>
-        <div className="composer-box">
-          <small className="context-file">
-            {file.path} ·{' '}
-            {selection
-              ? (selection.startLine && selection.startLine !== selection.line
-                  ? 'lines ' + selection.startLine + '–' + selection.line
-                  : 'line ' + selection.line) +
-                ' (' +
-                selection.side +
-                ')'
-              : file.status === 'added'
-                ? 'new file'
-                : 'hunk ' + (file.hunk + 1)}
-          </small>
-          <textarea
-            ref={composerRef}
-            id="chat-question"
-            aria-label="Ask about the diff"
-            rows={4}
-            value={question}
-            onChange={(e) => chatRuns.setDraft(url, e.target.value)}
-            disabled={running}
-            placeholder="Ask a question about this change…"
-          />
-          <div className="composer-actions">
-            <select
-              aria-label="Context"
-              title={
-                contextMode === 'full-pr'
-                  ? local
-                    ? 'Searches saved diffs and reads requested source from the local repository at the reviewed revision.'
-                    : 'Searches saved diffs and reads requested source from the pinned repository. The first source lookup downloads that revision.'
-                  : 'Answers from the selected file and hunk.'
+      {view && file ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send(question, contextMode, true);
+          }}
+        >
+          <div className="chat-suggestions">
+            <button
+              type="button"
+              className="summarise-pr"
+              disabled={!canRunPrAction}
+              title="Uses Full PR context"
+              onClick={() => send(summaryQuestion, 'full-pr', false, 'summary')}
+            >
+              Summarise PR
+            </button>
+            <button
+              type="button"
+              disabled={!canRunPrAction}
+              title="Review the full PR for actionable findings"
+              onClick={() => send(prReviewQuestion, 'full-pr', false, 'review')}
+            >
+              Review PR
+            </button>
+            <button
+              type="button"
+              disabled={!canAsk}
+              onClick={() =>
+                send(
+                  file.status === 'added'
+                    ? 'Explain this new file. What does it introduce, how does it work, and how does it fit into this PR?'
+                    : 'Explain what changed in this file and why it matters, starting with the selected hunk.',
+                )
               }
-              value={contextMode}
-              disabled={running}
-              onChange={(e) => setContextMode(e.target.value === 'full-pr' ? 'full-pr' : 'focused')}
             >
-              <option value="focused">Focused</option>
-              <option value="full-pr">Full PR</option>
-            </select>
-            <select
-              aria-label="Related file"
-              className="related-file"
-              title={extra || "Prioritise another file's diff alongside this one"}
-              value={extra}
-              onChange={(e) => setExtra(e.target.value)}
-            >
-              <option value="">Related file: auto</option>
-              {view.files
-                .filter((f) => f.path !== file.path)
-                .map((f) => (
-                  <option key={f.path}>{f.path}</option>
-                ))}
-            </select>
-            {running ? (
-              <button type="button" onClick={() => chatRuns.cancel(url)}>
-                Cancel
-              </button>
-            ) : (
-              <button disabled={!canAsk || !question.trim()}>
-                <ArrowUp size={14} /> Send
-              </button>
-            )}
+              Explain file
+            </button>
           </div>
+          <div className="composer-box">
+            <small className="context-file">
+              {comparison && 'Full PR diff · '}
+              {file.path} ·{' '}
+              {selection
+                ? (selection.startLine && selection.startLine !== selection.line
+                    ? 'lines ' + selection.startLine + '–' + selection.line
+                    : 'line ' + selection.line) +
+                  ' (' +
+                  selection.side +
+                  ')'
+                : file.status === 'added'
+                  ? 'new file'
+                  : 'hunk ' + (file.hunk + 1)}
+            </small>
+            <textarea
+              ref={composerRef}
+              id="chat-question"
+              aria-label="Ask about the diff"
+              rows={4}
+              value={question}
+              readOnly={chat.resetting}
+              onChange={(e) => chatRuns.setDraft(url, e.target.value)}
+              disabled={running}
+              placeholder="Ask a question about this change…"
+            />
+            <div className="composer-actions">
+              <select
+                aria-label="Context"
+                title={
+                  contextMode === 'full-pr'
+                    ? local
+                      ? 'Searches saved diffs and reads requested source from the local repository at the reviewed revision.'
+                      : 'Searches saved diffs and reads requested source from the pinned repository. The first source lookup downloads that revision.'
+                    : 'Answers from the selected file and hunk.'
+                }
+                value={contextMode}
+                disabled={running}
+                onChange={(e) =>
+                  setContextMode(e.target.value === 'full-pr' ? 'full-pr' : 'focused')
+                }
+              >
+                <option value="focused">Focused</option>
+                <option value="full-pr">Full PR</option>
+              </select>
+              <select
+                aria-label="Related file"
+                className="related-file"
+                title={extra || "Prioritise another file's diff alongside this one"}
+                value={extra}
+                onChange={(e) => setExtra(e.target.value)}
+              >
+                <option value="">Related file: auto</option>
+                {view.files
+                  .filter((f) => f.path !== file.path)
+                  .map((f) => (
+                    <option key={f.path}>{f.path}</option>
+                  ))}
+              </select>
+              {cancelRun || (
+                <button disabled={!canAsk || !question.trim()}>
+                  <ArrowUp size={14} /> Send
+                </button>
+              )}
+            </div>
+          </div>
+        </form>
+      ) : (
+        <div className="chat-context-status">
+          <p role="status">
+            {!view
+              ? loading
+                ? 'Loading review context…'
+                : 'Refresh the review to load chat context.'
+              : comparison
+                ? 'Switch to Full PR to ask about a changed file.'
+                : 'This revision has no changed files to ask about.'}
+          </p>
+          {cancelRun}
         </div>
-      </form>
+      )}
       {(error || chat.error) && <p role="alert">{error || chat.error}</p>}
     </section>
   );

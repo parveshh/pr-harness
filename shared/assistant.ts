@@ -1,6 +1,6 @@
 import { finding, type AssessFinding } from './findings.js';
 import { z } from 'zod';
-import { isLocalReview, pullRequestUrl, reviewKey } from './reviews.js';
+import { isLocalReview, pullRequestUrl, pullSidebarFields, reviewKey } from './reviews.js';
 
 export const defaultPrompt = `Answer the reviewer’s question directly. Match the scope to the request. For a line or file explanation, start with what the selected code does. For a new file, explain its responsibility and where it is used. For a whole PR review, lead with the findings that would most affect the decision to merge.
 
@@ -111,6 +111,7 @@ export const chatRequest = z.object({
   question: z.string().trim().min(1).max(8000),
 });
 export const turn = z.object({
+  archived: z.literal(true).optional(),
   findings: finding.array().optional(),
   contextMode: contextMode.optional(),
   run: z.uuid(),
@@ -127,6 +128,7 @@ export const turn = z.object({
 });
 export const activity = z.object({ run: z.uuid(), text: z.string() });
 export const watchPr = z.object({
+  ...pullSidebarFields,
   number: z.number().int().positive(),
   title: z.string(),
   author: login,
@@ -171,6 +173,7 @@ export interface AssistantBridge {
   clearPrompt(url: string, target: Scope, purpose?: PromptPurpose): Promise<Config>;
   assessFinding(value: AssessFinding): Promise<Turn>;
   chooseExecutable(agent: AgentId): Promise<boolean>;
+  newConversation(url: string): Promise<void>;
   history(url: string): Promise<Turn[]>;
   ask(request: ChatRequest): Promise<Turn>;
   cancelAsk(run: string): Promise<void>;

@@ -3,6 +3,7 @@
 export function chatRuns(limit = 3) {
   const active = new Map<string, { id: string; controller: AbortController }>();
   return {
+    isRunning: (url: string) => active.has(url),
     begin(url: string, id: string): AbortSignal {
       if (active.has(url))
         throw new Error(

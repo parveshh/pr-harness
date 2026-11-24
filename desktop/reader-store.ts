@@ -1,4 +1,5 @@
 import { saveDraftStatus } from './review-activity.js';
+import { setImmediate } from 'node:timers/promises';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   checkpoint,
@@ -8,6 +9,13 @@ import {
   splitHunks,
   type ReaderView,
 } from '../shared/reader.js';
+import {
+  diffSearchRequest,
+  scanHunk,
+  searchTimeSlice,
+  literalPattern,
+  type MatchingHunk,
+} from '../shared/diff-search.js';
 import { reviewKey } from '../shared/reviews.js';
 import { questionStore } from './questions.js';
 import { revisionStore } from './revisions.js';
@@ -62,6 +70,16 @@ export function readerStore(db: DatabaseSync) {
   }
   return {
     active,
+    observeRemoteHead(url: string, head: string, commitCount: number | undefined) {
+      // A network read can advance sidebar status even while the reader stays on its pinned revision.
+      db.prepare(
+        `INSERT INTO pull_review_status(url,head,commit_count)
+        SELECT url,?,? FROM reply_targets WHERE url=?
+        ON CONFLICT(url) DO UPDATE SET head=excluded.head,
+          commit_count=COALESCE(excluded.commit_count,CASE WHEN head=excluded.head THEN commit_count END),
+          approval_stage=CASE WHEN head=excluded.head THEN approval_stage END`,
+      ).run(head, commitCount ?? null, url);
+    },
     setDraft(url: string, isDraft: boolean | undefined) {
       saveDraftStatus(db, url, isDraft);
     },
@@ -192,6 +210,25 @@ export function readerStore(db: DatabaseSync) {
         throw error;
       }
       return read(url);
+    },
+    async searchDiff(input: unknown, signal?: AbortSignal) {
+      const { url, revision, paths, query, filter } = diffSearchRequest.parse(input);
+      const lookup = db.prepare(
+        'SELECT patch FROM review_files JOIN snapshots USING(url) WHERE url=? AND revision=? AND path=?',
+      );
+      const result: MatchingHunk[] = [];
+      const pattern = literalPattern(query);
+      const pause = searchTimeSlice(setImmediate, signal);
+      for (const path of paths) {
+        const patch = lookup.get(url, revision, path)?.patch;
+        if (typeof patch !== 'string')
+          throw Error('This saved diff changed. Run the search again.');
+        for (const [hunk, text] of splitHunks(patch).entries()) {
+          const { count } = await scanHunk(text, pattern, filter, pause);
+          if (count) result.push({ path, hunk, count });
+        }
+      }
+      return result;
     },
     patch(input: unknown) {
       const { url, revision, path } = fileKey.parse(input);

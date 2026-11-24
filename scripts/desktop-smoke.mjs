@@ -146,11 +146,11 @@ if (!live) {
       'const changedReview = fs.existsSync(' +
         JSON.stringify(repliesFile) +
         ") && process.argv.some(a=>a.includes('pullRequest(number:12)'));",
-      "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('query ReviewStatus'))){console.log(JSON.stringify({data:{repository:{pullRequest:{state:'OPEN',headRefOid:changedReview?'f'.repeat(40):response.meta.head.sha,isDraft:!!response.meta.draft,latest:{nodes:changedReview?[{commit:{oid:response.meta.head.sha}}]:[]},dismissed:{totalCount:changedReview?1:0}}}}}));return;}",
+      "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('query ReviewStatus'))){console.log(JSON.stringify({data:{repository:{pullRequest:{state:'OPEN',headRefOid:changedReview?'f'.repeat(40):response.meta.head.sha,isDraft:!!response.meta.draft,commits:{totalCount:3},reviewDecision:'REVIEW_REQUIRED',latestOpinionatedReviews:{nodes:[{author:{login:'teammate'},state:'APPROVED'}],pageInfo:{hasNextPage:false,endCursor:null}},latest:{nodes:changedReview?[{commit:{oid:response.meta.head.sha}}]:[]},dismissed:{totalCount:changedReview?1:0}}}}}));return;}",
       // The reviewer counts as having approved once the grouped review has been posted.
       "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('latestOpinionatedReviews'))){const query=process.argv.find(a=>a.startsWith('query='));const state=fs.existsSync(" +
         JSON.stringify(posted) +
-        ")?[{author:{login:'fixture-reviewer'},state:'APPROVED'}]:[];console.log(JSON.stringify({data:{viewer:{login:'fixture-reviewer'},repository:Object.fromEntries([...query.matchAll(/(p\\d+):pullRequest/g)].map(m=>[m[1],{isDraft:m[1]==='p12',latestOpinionatedReviews:{nodes:m[1]==='p12'?state:[]}}]))}}));return;}",
+        ")?[{author:{login:'fixture-reviewer'},state:'APPROVED'}]:[];console.log(JSON.stringify({data:{viewer:{login:'fixture-reviewer'},repository:Object.fromEntries([...query.matchAll(/(p\\d+):pullRequest/g)].map(m=>[m[1],{isDraft:m[1]==='p12',headRefOid:response.meta.head.sha,commits:{totalCount:3},reviewDecision:state.length?'APPROVED':'REVIEW_REQUIRED',latestOpinionatedReviews:{pageInfo:{hasNextPage:false,endCursor:null},nodes:m[1]==='p12'?[{author:{login:'teammate'},state:'APPROVED'},...state]:[]}}]))}}));return;}",
       'const {actionsFixture} = require(' +
         JSON.stringify(resolve('fixtures/github/actions.mjs')) +
         ');',
@@ -186,7 +186,7 @@ if (!live) {
       "else if(process.argv.some(a=>a.includes('/reviews?'))) { if(!fs.existsSync(posted)){console.log('[]');return;} const payload=JSON.parse(fs.readFileSync(posted,'utf8').trim()); console.log(JSON.stringify([{id:75,body:payload.body,commit_id:payload.commit_id,state:'COMMENTED',user:{login:'fixture-reviewer'}}])); }",
       "else if(process.argv.some(a=>a.includes('/contributors?'))) console.log(JSON.stringify([{login:'octo'},{login:'other'},...Array.from({length:28},(_,i)=>({login:'contributor-'+(i+1)}))]));",
       // A second pull request is opened once the test asks for it.
-      "else if(process.argv.some(a=>a.includes('/issues?'))) console.log(JSON.stringify([{number:12,title:'Tracked PR',user:{login:'octo'},pull_request:{}},...(fs.existsSync(" +
+      "else if(process.argv.some(a=>a.includes('/issues?'))) console.log(JSON.stringify([{number:12,title:'Tracked PR',user:{login:'octo'},created_at:response.meta.created_at,pull_request:{}},...(fs.existsSync(" +
         JSON.stringify(join(directory, 'new-pr')) +
         ")?[{number:14,title:'Fresh PR',user:{login:'octo'},pull_request:{}}]:[])]));",
       "else if(process.argv.some(a=>a.includes('/pulls?'))) console.log(JSON.stringify([{number:12,title:'Tracked PR',user:{login:'octo'}},{number:13,title:'Other PR',user:{login:'other'}}]));",
@@ -246,14 +246,21 @@ async function chooseHarness(page, { agent, model }) {
     .getByRole('button', { name: new RegExp('^Harness and model: .* · ' + model + '$') })
     .waitFor();
 }
-let restoredFilesWidth;
+async function checkMacFrame(app, theme) {
+  if (process.platform === 'darwin') {
+    assert.equal(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource), theme);
+  }
+}
+const filePicker = (page) => page.getByRole('button', { name: /^Choose file,/ });
+const ask = (page) => page.getByRole('button', { name: 'Ask about PR', exact: true }).click();
+const back = (page) => page.getByRole('button', { name: 'Pull requests', exact: true }).click();
 try {
   const app = await launch();
   try {
     const page = await app.firstWindow();
     page.setDefaultTimeout(15000);
     await resize(app, page, 1380, 720);
-    await page.getByText('Your first review starts here').waitFor();
+    await page.getByRole('heading', { name: 'Add your first repository' }).waitFor();
     await capture(page, 'workspace');
     if (!live) {
       await writeFile(signedOut, '');
@@ -323,12 +330,42 @@ try {
         ),
         '#b8a8f5',
       );
+      await checkMacFrame(app, 'dark');
       await capture(page, 'accent');
       await settingsPane.getByText('Light', { exact: true }).click();
       await page.waitForFunction(
         () =>
           globalThis.getComputedStyle(globalThis.document.documentElement).colorScheme === 'light',
       );
+      const vibrancy = settingsPane.getByRole('checkbox', { name: 'Sidebar vibrancy' });
+      if (process.platform === 'darwin') {
+        assert.equal(await vibrancy.isChecked(), false);
+        await vibrancy.check();
+        await page.locator('html.sidebar-vibrancy').waitFor();
+        const surfaces = await page.evaluate(() => {
+          const style = (selector) =>
+            globalThis.getComputedStyle(globalThis.document.querySelector(selector))
+              .backgroundColor;
+          return {
+            reduce: globalThis.matchMedia('(prefers-reduced-transparency: reduce)').matches,
+            root: style('html'),
+            sidebar: style('.repo-sidebar'),
+            page: style('.studio-page'),
+          };
+        });
+        if (!surfaces.reduce) {
+          assert.equal(surfaces.root, 'rgba(0, 0, 0, 0)');
+          assert.match(surfaces.sidebar, /(?:rgba|\/)/);
+          assert.match(surfaces.page, /^rgb\(|^color\([^/]+\)$/);
+        }
+        await vibrancy.uncheck();
+        await page.locator('html:not(.sidebar-vibrancy)').waitFor();
+        await vibrancy.check();
+        await page.locator('html.sidebar-vibrancy').waitFor();
+      } else {
+        assert.equal(await vibrancy.count(), 0);
+      }
+      await checkMacFrame(app, 'light');
       await capture(page, 'light-settings');
       await settingsPane.getByText('Green', { exact: true }).click();
       await settingsPane.getByText('Default', { exact: true }).click();
@@ -336,29 +373,35 @@ try {
       assert.equal(await page.getByRole('button', { name: /^Appearance/ }).count(), 0);
     }
     const toolsRail = page.getByRole('navigation', { name: 'Workspace tools' });
-    const workspaceButton = toolsRail.getByRole('button', { name: 'Workspace', exact: true });
-    const reviewButton = toolsRail.getByRole('button', { name: 'Review', exact: true });
-    const railBounds = await toolsRail.boundingBox();
-    const collapsedSidebarWidth = await page
-      .locator('#workspace-sidebar')
-      .evaluate((el) => el.clientWidth);
-    await toolsRail.getByRole('button', { name: 'Show repositories' }).click();
-    const expandedSidebarWidth = await page
-      .locator('#workspace-sidebar')
-      .evaluate((el) => el.clientWidth);
-    if (process.platform === 'darwin') {
-      const pos = await app.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()[0].getWindowButtonPosition(),
-      );
-      assert.deepEqual(pos, { x: 14, y: 19 });
-      const collapse = page.getByRole('button', { name: 'Hide repositories' });
-      const pinned = await collapse.boundingBox();
-      assert.ok(pinned && pinned.y >= pos.y + 16);
-      await collapse.click();
-      const expand = page.getByRole('button', { name: 'Show repositories' });
-      assert.deepEqual(await expand.boundingBox(), pinned);
-      await expand.click();
-    }
+    const repositories = page.getByRole('navigation', { name: 'Repositories', exact: true });
+    await repositories.getByRole('heading', { name: 'Repositories' }).waitFor();
+    const bell = toolsRail.getByRole('button', { name: /^Review alerts,/ });
+    const gear = toolsRail.getByRole('button', { name: 'Settings', exact: true });
+    assert.equal(await toolsRail.getByRole('button').count(), 2);
+    const [bellBox, gearBox, repoBox] = await Promise.all([
+      bell.boundingBox(),
+      gear.boundingBox(),
+      repositories.boundingBox(),
+    ]);
+    assert.ok(bellBox && gearBox && repoBox);
+    assert.equal((await toolsRail.boundingBox()).width, 52);
+    assert.equal(bellBox.x, gearBox.x);
+    assert.ok(bellBox.y + bellBox.height <= gearBox.y);
+    assert.ok(gearBox.x + gearBox.width <= repoBox.x);
+    const bottomGap =
+      (await page.evaluate(() => globalThis.innerHeight)) - gearBox.y - gearBox.height;
+    assert.ok(bottomGap >= 0 && bottomGap <= 16);
+    await bell.press('Enter');
+    const alertPane = page.getByRole('region', { name: 'Review alerts' });
+    await alertPane
+      .getByRole('button', { name: 'Close review alerts' })
+      .and(page.locator(':focus'))
+      .waitFor();
+    assert.equal(await repositories.isVisible(), false);
+    await alertPane.getByRole('button', { name: 'Close review alerts' }).press('Enter');
+    await bell.and(page.locator(':focus')).waitFor();
+    await repositories.waitFor();
+    assert.equal(await page.getByRole('region', { name: 'Review chat' }).count(), 0);
     if (!live) {
       const trigger = page.getByRole('button', { name: 'Add repository', exact: true });
       await trigger.focus();
@@ -373,18 +416,33 @@ try {
     }
     if (!live)
       await page.evaluate(() =>
-        globalThis.localStorage.setItem('react-resizable-panels:review-layout', 'invalid'),
+        globalThis.localStorage.setItem('react-resizable-panels:review-with-chat', 'invalid'),
       );
     assert.equal(await page.getByRole('button', { name: /^Harness and model/ }).count(), 0);
+    await page.getByRole('button', { name: 'Open review', exact: true }).click();
     await page.getByLabel('GitHub pull request URL').fill(url);
     await page.getByRole('button', { name: 'Save pull request' }).click();
+    if (!live)
+      await repositories
+        .getByRole('listitem')
+        .filter({ has: page.getByRole('button', { name: 'Pull request #12', exact: true }) })
+        .locator('.sidebar-review-meta')
+        .filter({ hasText: /^#12 · Saved / })
+        .waitFor();
     await page
+      .locator('.pr-queue')
       .getByRole('button', { name: live ? /octocat\/hello-world/ : /example\/project/ })
       .click();
     const region = page.getByRole('region', { name: 'File diff' });
     await region.waitFor({ timeout: 45000 });
     assert.equal(await page.evaluate(() => typeof globalThis.require), 'undefined');
     if (!live) {
+      await repositories
+        .getByRole('listitem')
+        .filter({ has: page.locator('[aria-current="page"]') })
+        .locator('.sidebar-review-meta')
+        .filter({ hasText: /^#12 · @reviewer/ })
+        .waitFor();
       await page.getByRole('button', { name: 'Overview', exact: true }).click();
       const description = page.getByRole('region', { name: 'PR description' });
       await description.getByRole('heading', { level: 2, name: 'What changes' }).waitFor();
@@ -393,65 +451,33 @@ try {
         'Review progress:',
       );
       await page.getByRole('button', { name: 'Changes', exact: true }).click();
-      assert.equal(
-        await page.locator('#workspace-sidebar').evaluate((el) => el.clientWidth),
-        expandedSidebarWidth,
-      );
-      assert.deepEqual(await toolsRail.boundingBox(), railBounds);
-      await toolsRail.getByRole('button', { name: 'Hide repositories' }).click();
-      await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
-      await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
-      assert.equal(await workspaceButton.getAttribute('aria-current'), 'page');
-      assert.equal(await reviewButton.getAttribute('aria-current'), null);
-      assert.equal(
-        await page.locator('#workspace-sidebar').evaluate((el) => el.clientWidth),
-        collapsedSidebarWidth,
-      );
-      assert.deepEqual(await toolsRail.boundingBox(), railBounds);
-      await resize(app, page, 570, 720);
-      await toolsRail.getByRole('button', { name: 'Show repositories' }).click();
-      const previousTextSize = await page.evaluate(() => {
-        const root = globalThis.document.documentElement;
-        const previous = root.dataset.textSize;
-        root.dataset.textSize = 'larger';
-        return previous;
-      });
-      const repoList = page.locator('.sidebar-contents');
-      const addButton = await repoList
-        .getByRole('button', { name: 'Add repository', exact: true })
-        .boundingBox();
-      const repoBounds = await repoList.boundingBox();
-      assert.ok(
-        addButton &&
-          repoBounds &&
-          addButton.x >= repoBounds.x &&
-          addButton.x + addButton.width <= repoBounds.x + repoBounds.width + 1,
-      );
-      const home = page.locator('.shell');
-      assert.ok(await home.evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
-      const list = home.getByRole('region', { name: /Saved reviews/ });
-      assert.ok(await list.evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
-      await page.evaluate((previous) => {
-        if (previous) globalThis.document.documentElement.dataset.textSize = previous;
-        else delete globalThis.document.documentElement.dataset.textSize;
-      }, previousTextSize);
-      await toolsRail.getByRole('button', { name: 'Hide repositories' }).click();
+      const initialChat = page.getByRole('region', { name: 'Review chat' });
+      await initialChat.waitFor();
+      const [diffHeader, chatHeader] = await Promise.all([
+        page.locator('.review-center > header').boundingBox(),
+        initialChat.locator('.chat-heading').boundingBox(),
+      ]);
+      assert.equal(diffHeader.y, 0);
+      assert.equal(chatHeader.y, diffHeader.y);
+      assert.ok(chatHeader.x >= diffHeader.x + diffHeader.width);
+      await resize(app, page, 570, 440);
+      const compactChat = await initialChat.boundingBox();
+      const compactDiff = await page.locator('#review-diff').boundingBox();
+      assert.ok(compactChat && compactDiff && compactChat.height > 0 && compactDiff.height > 0);
+      assert.ok(compactChat.y >= compactDiff.y + compactDiff.height - 1);
+      await capture(page, 'compact-pr');
       await resize(app, page, 1380, 720);
-      await page.getByRole('button', { name: /example\/project.*#12/ }).click();
-      await region.waitFor();
-      assert.equal(await workspaceButton.getAttribute('aria-current'), null);
-      assert.equal(await reviewButton.getAttribute('aria-current'), 'page');
-      // Workspace and Review are the two destinations: leaving a review keeps a way back to it.
-      await workspaceButton.click();
-      await toolsRail
-        .getByRole('button', { name: 'Workspace', exact: true, current: 'page' })
-        .waitFor();
-      await reviewButton.click();
-      await toolsRail
-        .getByRole('button', { name: 'Review', exact: true, current: 'page' })
-        .waitFor();
-      assert.deepEqual(await toolsRail.boundingBox(), railBounds);
-      await toolsRail.getByRole('button', { name: 'Show repositories' }).click();
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      await page
+        .getByRole('dialog', { name: 'Settings' })
+        .getByRole('button', { name: 'Close' })
+        .click();
+      await back(page);
+      await resize(app, page, 570, 720);
+      assert.ok(
+        await page.locator('.shell').evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+      );
+      await resize(app, page, 1380, 720);
       await page.getByRole('button', { name: 'Add repository', exact: true }).click();
       await page.getByLabel('Repository', { exact: true }).fill('example/project');
       await capture(page, 'add-repository');
@@ -491,13 +517,22 @@ try {
       await dialog.getByRole('button', { name: 'Select authors, 1 selected' }).waitFor();
       await dialog.getByRole('button', { name: 'Close', exact: true }).click();
       const sidebar = page.getByRole('complementary', { name: 'Repository sidebar' });
-      const compareButton = sidebar.getByRole('button', {
-        name: 'Compare pull requests in example/project',
-      });
+      await page
+        .locator('.pr-queue')
+        .getByRole('button', { name: /Tracked PR.*Draft/ })
+        .click();
+      await ask(page);
+      async function compare() {
+        await sidebar.getByRole('button', { name: 'Manage authors for example/project' }).click();
+        await page
+          .getByRole('dialog', { name: 'example/project' })
+          .getByRole('button', { name: 'Compare pull requests' })
+          .click();
+      }
       const pairDialog = page.getByRole('dialog', { name: 'Compare pull requests' });
       for (const agent of ['cursor', 'antigravity', 'copilot']) {
         await chooseHarness(page, { agent, model: 'fixture-model' });
-        await compareButton.click();
+        await compare();
         await pairDialog.getByLabel('First pull request').selectOption('21');
         await pairDialog.getByLabel('Second pull request').selectOption('22');
         await pairDialog.getByRole('button', { name: 'Compare revisions' }).click();
@@ -511,7 +546,7 @@ try {
       }
       await chooseHarness(page, { agent: 'codex', model: 'fixture-model' });
       await writeFile(slowList, '');
-      await compareButton.click();
+      await compare();
       // Close while gh is actually waiting on a page of results.
       let scanPid;
       for (let wait = 0; wait < 100 && !scanPid; wait++) {
@@ -521,7 +556,7 @@ try {
       assert.ok(scanPid, 'GitHub candidate scan started');
       await pairDialog.getByRole('button', { name: 'Close', exact: true }).click();
       await rm(slowList);
-      await compareButton.click();
+      await compare();
       await pairDialog.getByLabel('First pull request').selectOption('21');
       await pairDialog.getByLabel('Second pull request').selectOption('22');
       assert.throws(() => process.kill(scanPid, 0), { code: 'ESRCH' });
@@ -567,11 +602,152 @@ try {
       await pairDialog.getByRole('button', { name: 'Investigate with selected agent' }).click();
       await pairDialog.getByText('No interaction identified in the inspected evidence.').waitFor();
       await pairDialog.getByRole('button', { name: 'Close', exact: true }).click();
-      await sidebar.getByRole('button', { name: /Draft.*Tracked PR/ }).click();
+      await back(page);
+      if (preview) await resize(app, page, 1506, 720);
+      await page.getByRole('heading', { name: 'Pull requests', exact: true }).waitFor();
+      await capture(page, 'repository-queue');
+      assert.equal(await page.getByRole('region', { name: 'Review chat' }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: /Other PR/ }).count(), 0);
+      const folderList = sidebar.getByRole('list', { name: 'Reviews in example/project' });
+      const sidebarPr = folderList.getByRole('button', { name: '#12 Tracked PR', exact: true });
+      assert.equal(await sidebarPr.count(), 1);
+      await sidebar.getByRole('button', { name: 'Collapse example/project' }).press('Enter');
+      await folderList.waitFor({ state: 'hidden' });
+      await sidebar.getByRole('button', { name: 'Expand example/project' }).press('Enter');
+      const { meta } = JSON.parse(await readFile(join(directory, 'review.json'), 'utf8'));
+      const opened = await page.evaluate(
+        (date) =>
+          'Opened ' +
+          new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(date)),
+        meta.created_at,
+      );
+      const prRow = folderList
+        .getByRole('listitem')
+        .filter({ has: page.getByRole('button', { name: '#12 Tracked PR', exact: true }) });
+      assert.equal(
+        await prRow.locator('.sidebar-review-meta').innerText(),
+        '#12 · @octo · Draft · ' + opened,
+      );
+      await prRow.getByText('3 commits', { exact: false }).waitFor();
+      const commit = 'https://github.com/example/project/commit/' + meta.head.sha;
+      const sidebarLink = prRow.getByRole('link', { name: meta.head.sha.slice(0, 8) });
+      async function hasAccentText(link) {
+        return link.locator('code').evaluate((code) => {
+          const color = globalThis.getComputedStyle(code).color;
+          code.style.color = 'var(--accent)';
+          const accent = globalThis.getComputedStyle(code).color;
+          code.style.removeProperty('color');
+          return color === accent;
+        });
+      }
+      assert.ok(await hasAccentText(sidebarLink));
+      assert.equal(await sidebarLink.getAttribute('href'), commit);
+      await app.evaluate(({ shell }) => {
+        globalThis.originalCommitLink = shell.openExternal;
+        globalThis.commitLinks = [];
+        shell.openExternal = async (url) => {
+          globalThis.commitLinks.push(url);
+        };
+      });
+      const prNumber = { name: '#12', exact: true };
+      for (const link of [
+        prRow.getByRole('link', prNumber),
+        page.getByRole('main').getByRole('link', prNumber),
+      ]) {
+        assert.ok(await hasAccentText(link));
+        assert.equal(await link.getAttribute('href'), url);
+        await link.click();
+      }
+      await sidebarLink.click();
+      await page.getByRole('heading', { name: 'Pull requests', exact: true }).waitFor();
+      await sidebarPr
+        .getByTitle('Partially approved · further review required', { exact: true })
+        .waitFor();
+      assert.equal(
+        await sidebar.evaluate((el) => globalThis.getComputedStyle(el).borderRightWidth),
+        '0px',
+      );
+      await sidebarPr.click();
+      await sidebarPr.and(page.locator('[aria-current="page"]')).waitFor();
+      await filePicker(page).waitFor();
       await page.locator('.pr-heading').getByText('Draft', { exact: true }).waitFor();
-      assert.equal(await sidebar.getByRole('button', { name: /Other PR/ }).count(), 0);
+      await page.locator('.pr-meta').getByText(opened, { exact: true }).waitFor();
+      const headerLink = page
+        .locator('.pr-meta')
+        .getByRole('link', { name: meta.head.sha.slice(0, 8) });
+      assert.ok(await hasAccentText(headerLink));
+      const headerNumber = page.locator('.review-center > header').getByRole('link', prNumber);
+      assert.ok(await hasAccentText(headerNumber));
+      await headerNumber.press('Enter');
+      await headerLink.press('Enter');
+      assert.deepEqual(
+        await app.evaluate(({ shell }) => {
+          shell.openExternal = globalThis.originalCommitLink;
+          return globalThis.commitLinks;
+        }),
+        [url, url, commit, url, commit],
+      );
       assert.equal(await page.getByRole('button', { name: 'PR discussions' }).count(), 0);
+      await page.keyboard.press('Control+f');
+      const diffSearch = page.getByRole('search', { name: 'Search PR diff' });
+      const query = diffSearch.getByRole('searchbox', { name: 'Search changed lines' });
+      const scope = diffSearch.getByLabel('Lines to search');
+      const match = region.locator('.code-line mark');
+      await query.fill('RE');
+      await diffSearch.getByText('1 of 4', { exact: true }).waitFor();
+      await match.filter({ hasText: /^Re$/ }).waitFor();
+      await region.focus();
+      await page.keyboard.press('F3');
+      await filePicker(page)
+        .and(page.getByRole('button', { name: 'Choose file, obsolete.txt' }))
+        .waitFor();
+      assert.equal(await match.innerText(), 're');
+      await page.keyboard.press('F3');
+      await diffSearch.getByText('3 of 4', { exact: true }).waitFor();
+      await page.waitForFunction(() => {
+        const mark = globalThis.document.querySelector('.code-line mark');
+        if (!mark) return false;
+        const before = globalThis.document.createRange();
+        before.selectNodeContents(mark.parentElement);
+        before.setEndBefore(mark);
+        return before.toString() === '-reti';
+      });
+      await page.keyboard.press('Shift+F3');
+      await query.press('Shift+Enter');
+      await filePicker(page)
+        .and(page.getByRole('button', { name: 'Choose file, README.md' }))
+        .waitFor();
+      await scope.selectOption('removed');
+      await diffSearch.getByText('1 of 3', { exact: true }).waitFor();
+      await query.press('Shift+Enter');
+      await region.locator('[data-old-line="850"] mark').waitFor();
+      await scope.selectOption('added');
+      await diffSearch.getByText('1 of 1', { exact: true }).waitFor();
+      await query.fill('new line 60');
+      await region.locator('[data-new-line="99"] mark').waitFor();
+      await query.fill('unmatched-text-in-this-pr');
+      await diffSearch.getByText('No matches', { exact: true }).waitFor();
+      assert.equal(await match.count(), 0);
+      await query.fill('first change');
+      await region.locator('[data-new-line="1"] mark').waitFor();
+      await query.press('Enter');
+      await diffSearch.getByText('1 of 1', { exact: true }).waitFor();
+      await query.press('Escape');
+      await page
+        .getByRole('button', { name: 'Search diff', exact: true })
+        .and(page.locator(':focus'))
+        .waitFor();
+      assert.equal(await match.count(), 0);
+      await filePicker(page).click();
       await page.getByRole('button', { name: /^src\/reader\.ts, modified/ }).click();
+      if (preview) {
+        await page
+          .getByRole('button', { name: 'Refresh', exact: true })
+          .and(page.locator(':enabled'))
+          .waitFor();
+        await capture(page, 'repository-review');
+        await resize(app, page, 1380, 720);
+      }
       const discussions = page.locator('.pr-conversation');
       await page.getByRole('button', { name: 'Discussion', exact: true }).click();
       const discussionThread = page
@@ -779,6 +955,7 @@ try {
         .click({ trial: true });
       await rm(switchedAccount);
       // Each file shows how many published comments it has.
+      await filePicker(page).click();
       const partialRow = page.getByRole('button', {
         name: 'partial.ts, modified, 2 comments',
         exact: true,
@@ -811,8 +988,10 @@ try {
       await discussions.getByText('Later visible line?').waitFor();
       await page.getByRole('button', { name: 'Diff only', exact: true }).click();
       await page.getByRole('button', { name: 'Changes', exact: true }).click();
+      await filePicker(page).click();
       await page.getByRole('button', { name: 'README.md, added', exact: true }).click();
       const chat = page.getByRole('region', { name: 'Review chat' });
+      await ask(page);
       const headerPicker = chat
         .locator('.chat-heading')
         .getByRole('button', { name: /^Harness and model:/ });
@@ -830,7 +1009,7 @@ try {
       assert.ok((await pickerColours()).every((colour) => colour !== transparent));
       assert.deepEqual(await headerPicker.boundingBox(), idleBounds);
       const files = page.getByRole('navigation', { name: 'Changed files' });
-      const fileWidth = () => files.evaluate((el) => el.clientWidth);
+      await filePicker(page).click();
       const treeFolder = files.getByRole('button', { name: 'src', exact: true });
       await treeFolder.click();
       await files.getByRole('button', { name: /^src\/reader/ }).waitFor({ state: 'hidden' });
@@ -838,25 +1017,14 @@ try {
       await files.getByRole('button', { name: /^src\/reader/ }).waitFor();
       await files.getByLabel('Filter files').fill('');
       await treeFolder.click();
-      await page.getByRole('button', { name: 'Collapse file tree' }).click();
-      await page
-        .getByRole('button', { name: 'Show changed files', expanded: false })
-        .and(page.locator(':focus'))
-        .waitFor();
+      await page.keyboard.press('Escape');
+      await filePicker(page).and(page.locator(':focus')).waitFor();
       assert.equal(await files.count(), 0);
-      await page.getByRole('button', { name: 'Show changed files' }).click();
-      await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
-      await page.getByRole('button', { name: 'Hide changed files', expanded: true }).click();
-      await resize(app, page, 850, 720);
-      await region.waitFor();
-      await resize(app, page, 1380, 720);
-      await page.getByRole('button', { name: 'Show changed files', expanded: false }).click();
-      await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
       const chatText = chat.getByLabel('Ask about the diff');
       await chatText.fill('Does this line wrap?');
-      await page.getByRole('button', { name: 'Collapse review chat' }).click();
+      await page.getByRole('button', { name: 'Close review chat' }).click();
       await page
-        .getByRole('button', { name: 'Expand review chat' })
+        .getByRole('button', { name: 'Ask about PR' })
         .and(page.locator(':focus'))
         .waitFor();
       assert.equal(await chat.count(), 0);
@@ -866,10 +1034,6 @@ try {
       assert.equal(await chatText.inputValue(), 'Does this line wrap?');
       await chat.getByText(/line 1 \(new\)/).waitFor();
       await chatText.fill('');
-      const fileBounds = await files.boundingBox(),
-        chatBounds = await chat.boundingBox();
-      assert.equal(fileBounds.y, chatBounds.y);
-      assert.equal(fileBounds.height, chatBounds.height);
       await page.getByRole('button', { name: 'Review actions' }).click();
       await page.getByRole('menuitem', { name: 'Approve PR' }).click();
       const approval = page.getByRole('dialog', { name: 'Submit review to GitHub?' });
@@ -883,28 +1047,17 @@ try {
       await railDivider.press('ArrowRight');
       assert.ok((await sidebar.evaluate((el) => el.clientWidth)) > sidebarWidth);
       await railDivider.press('ArrowLeft');
-      const before = await fileWidth();
-      const divider = page.getByRole('separator', { name: 'Resize files and diff' });
-      const box = await divider.boundingBox();
-      assert.ok(box);
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(box.x + 52, box.y + box.height / 2, { steps: 5 });
-      await page.mouse.up();
-      assert.ok((await fileWidth()) > before + 30);
       const chatDivider = page.getByRole('separator', { name: 'Resize diff and chat' });
       const chatBefore = await chat.evaluate((el) => el.clientWidth);
       await chatDivider.press('ArrowLeft');
       assert.ok((await chat.evaluate((el) => el.clientWidth)) > chatBefore);
-      restoredFilesWidth = await fileWidth();
       await resize(app, page, 850, 720);
-      await page.getByRole('button', { name: 'Diff', exact: true }).click();
-      // A narrow window swaps panes with the Files, Diff and Chat switch.
-      await page.getByRole('button', { name: 'Files', exact: true }).click();
+      await page.getByRole('button', { name: 'Close review chat' }).click();
+      await filePicker(page).click();
       await files.getByLabel('Filter files').waitFor();
-      await page.getByRole('button', { name: 'Diff', exact: true }).click();
+      await page.keyboard.press('Escape');
       await region.waitFor();
-      await page.getByRole('button', { name: 'Chat', exact: true }).click();
+      await ask(page);
       await headerPicker.press('Enter');
       await page.getByRole('dialog', { name: 'Harness and model' }).waitFor();
       await page.keyboard.press('Escape');
@@ -914,11 +1067,12 @@ try {
       await chat.getByLabel('Ask about the diff').fill('Keep my question');
       await chat.getByRole('button', { name: 'Send', exact: true }).scrollIntoViewIfNeeded();
       await chat.getByRole('button', { name: 'Send', exact: true }).click({ trial: true });
-      assert.equal(await divider.isVisible(), false);
-      await page.getByRole('button', { name: 'Diff', exact: true }).click();
+      assert.equal(await chatDivider.isVisible(), false);
+      await page.getByRole('button', { name: 'Close review chat', exact: true }).click();
       await region.waitFor();
       await resize(app, page, 1380, 720);
-      await divider.waitFor();
+      await ask(page);
+      await chatDivider.waitFor();
       assert.equal(await chat.getByLabel('Ask about the diff').inputValue(), 'Keep my question');
       await chat.getByLabel('Ask about the diff').fill('');
 
@@ -988,7 +1142,7 @@ try {
       const lineLabel = await citedReaderLine.innerText();
       await citedReaderLine.click();
       await citedLines.waitFor({ state: 'hidden' });
-      await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
+      await page.getByRole('button', { name: 'Choose file, src/reader.ts', exact: true }).waitFor();
       const side = lineLabel.includes('(original)') ? 'old' : 'new';
       const line = Number(lineLabel.match(/:(\d+)/)[1]);
       await region
@@ -1008,7 +1162,7 @@ try {
       await sources.locator('summary').click();
       if (preview) {
         await resize(app, page, 850, 720);
-        await page.getByRole('button', { name: 'Chat', exact: true }).click();
+        await ask(page);
         await answer
           .getByRole('heading', { name: 'Review notes' })
           .evaluate((el) => el.scrollIntoView({ block: 'start' }));
@@ -1016,7 +1170,7 @@ try {
         await resize(app, page, 1380, 720);
       }
       await chat.locator('.cite').last().click();
-      await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
+      await page.getByRole('button', { name: 'Choose file, src/reader.ts', exact: true }).waitFor();
       await page.locator('.diff-line[data-selected="true"]').waitFor();
       await capture(page, 'review-chat');
       await chooseHarness(page, { agent: 'claude', model: 'invalid-model' });
@@ -1059,7 +1213,7 @@ try {
         .waitFor();
       await page.getByRole('button', { name: 'Back to changes' }).click();
       await region.waitFor();
-      await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
+      await page.getByRole('button', { name: 'Choose file, src/reader.ts', exact: true }).waitFor();
       await chat.getByLabel('Context', { exact: true }).selectOption('focused');
       await chat.getByRole('button', { name: 'Review instructions', exact: true }).click();
       const promptDialog = page.getByRole('dialog', { name: 'Review instructions' });
@@ -1094,9 +1248,8 @@ try {
       });
       assert.equal(summaryInstructions, customSummary);
       // The same summary and an approval can be started from the PR's row in the sidebar.
-      const trackedRow = page
-        .getByRole('complementary', { name: 'Repository sidebar' })
-        .locator('.monitored-pr');
+      const trackedRow = page.locator('.pr-queue .monitored-pr').filter({ hasText: 'Tracked PR' });
+      await back(page);
       await trackedRow
         .getByRole('button', { name: 'Summarise pull request #12', exact: true })
         .click();
@@ -1106,6 +1259,7 @@ try {
         const log = globalThis.document.querySelector('.chat-log');
         return log && log.scrollHeight - log.scrollTop - log.clientHeight < 4;
       });
+      await back(page);
       assert.equal(await trackedRow.getAttribute('data-approved'), null);
       await trackedRow
         .getByRole('button', { name: 'Approve pull request #12', exact: true })
@@ -1114,6 +1268,7 @@ try {
       assert.equal(await decision.inputValue(), 'APPROVE');
       await page.keyboard.press('Escape');
       await decision.waitFor({ state: 'hidden' });
+      await ask(page);
       await chat.getByLabel('Ask about the diff').fill('Wait for cancellation');
       await chat.getByRole('button', { name: 'Send', exact: true }).click();
       await chat.getByText('Waiting for cancellation', { exact: true }).waitFor();
@@ -1124,12 +1279,12 @@ try {
         name: 'Answering a question in pull request #12',
         exact: true,
       });
-      await working.waitFor();
-      await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
-      await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
+      await back(page);
+      await page.getByRole('heading', { name: 'Pull requests', exact: true }).waitFor();
       await working.waitFor();
       await capture(page, 'workspace-saved-reviews');
       await trackedRow.getByRole('button', { name: /Tracked PR/ }).click();
+      await ask(page);
       await chat.getByText('Waiting for cancellation', { exact: true }).waitFor();
       assert.equal(
         await chat.getByLabel('Ask about the diff').inputValue(),
@@ -1146,21 +1301,25 @@ try {
       await chat.getByLabel('Ask about the diff').fill('Answer while away');
       await chat.getByRole('button', { name: 'Send', exact: true }).click();
       await chat.getByText('Still working', { exact: true }).waitFor();
-      await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
-      await page.getByRole('heading', { name: 'Review workspace' }).waitFor();
+      await back(page);
+      await page.getByRole('heading', { name: 'Pull requests', exact: true }).waitFor();
       await working.waitFor();
       await writeFile(releaseAnswer + '-away', '');
       await working.waitFor({ state: 'detached' });
       await trackedRow.getByRole('button', { name: /Tracked PR/ }).click();
+      await ask(page);
       const away = chat.locator('.exchange').filter({ hasText: 'Answer while away' });
       await away.getByRole('heading', { name: 'Review notes' }).waitFor();
       assert.equal(await away.count(), 1);
       assert.equal(await chat.getByLabel('Ask about the diff').inputValue(), '');
       assert.equal(await chat.getByRole('alert').count(), 0);
+      await filePicker(page).click();
       await page.getByRole('button', { name: /logo\.png/ }).click();
       await page.getByText('Binary file. A line diff is unavailable.').waitFor();
+      await filePicker(page).click();
       await page.getByRole('button', { name: /new name\.txt/ }).click();
       await page.getByText('old name.txt', { exact: true }).waitFor();
+      await filePicker(page).click();
       await page
         .getByRole('navigation')
         .getByRole('button', { name: /src\/reader\.ts/ })
@@ -1232,7 +1391,6 @@ try {
       await chat.getByText(/lines 40–42 \(new\)/).waitFor();
       await capture(page, 'inline-range');
       if (preview) {
-        await page.getByRole('button', { name: 'Hide repositories' }).click();
         await resize(app, page, 1731, 909);
         await page.getByRole('button', { name: 'Review actions', exact: true }).click();
         await page.getByRole('menuitem', { name: 'Approve PR' }).waitFor();
@@ -1244,7 +1402,6 @@ try {
         await capture(page, 'review-workspace');
         await page.keyboard.press('Escape');
         await resize(app, page, 1380, 720);
-        await page.getByRole('button', { name: 'Show repositories' }).click();
       }
       // A question saved with an older version still follows its hunk across a push.
       await page.evaluate(async (pr) => {
@@ -1287,10 +1444,9 @@ try {
     page.setDefaultTimeout(15000);
     await resize(reopened, page, 1380, 720);
     if (!live) {
-      const files = page.getByRole('navigation', { name: 'Changed files' });
-      await page.getByRole('button', { name: 'Hide repositories' }).waitFor();
-      await files.waitFor();
-      assert.ok(Math.abs((await files.evaluate((el) => el.clientWidth)) - restoredFilesWidth) < 3);
+      await filePicker(page).waitFor();
+      await page.getByRole('region', { name: 'Review chat' }).waitFor();
+      await ask(page);
       await page.getByRole('heading', { name: 'Review notes' }).first().waitFor();
       // The harness and model chosen before the restart still apply.
       await page
@@ -1305,6 +1461,11 @@ try {
     await region.waitFor();
     if (!live) {
       // The theme and font chosen in Settings survive the restart.
+      await checkMacFrame(reopened, 'light');
+      if (process.platform === 'darwin') {
+        await page.locator('html.sidebar-vibrancy').waitFor();
+        assert.equal(await page.evaluate(() => globalThis.reviewer.getSidebarVibrancy()), true);
+      }
       assert.deepEqual(
         await page.evaluate(() => {
           const { palette, accent, font } = globalThis.document.documentElement.dataset;
@@ -1316,7 +1477,7 @@ try {
         .getByText(/claude · fixture-model.*Full PR/)
         .first()
         .waitFor();
-      await page.getByRole('button', { name: /Tracked PR/ }).waitFor();
+      await page.getByRole('button', { name: 'example/project', exact: true }).waitFor();
       assert.equal(
         await page.getByRole('region', { name: 'Review chat' }).locator('.exchange').count(),
         5,
@@ -1325,7 +1486,7 @@ try {
       await page
         .getByRole('button', { name: 'Could concurrent retries bypass this guard?', exact: true })
         .waitFor();
-      await page.getByRole('heading', { name: 'src/reader.ts' }).waitFor();
+      await page.getByRole('button', { name: 'Choose file, src/reader.ts', exact: true }).waitFor();
       await page.getByText(/Showing the saved revision/).waitFor();
       assert.equal(await region.evaluate((el) => el.scrollTop), 160);
       await page.getByRole('button', { name: /Finish review 3/ }).click();
@@ -1346,6 +1507,7 @@ try {
       await page.getByRole('button', { name: 'Submit review to GitHub', exact: true }).click();
       await page.getByRole('button', { name: 'Check GitHub', exact: true }).click();
       await page.getByRole('button', { name: /Open published review/ }).waitFor();
+      await back(page);
       // Publishing refreshes the sidebar, which marks the PR as approved by this reviewer.
       const approvedRow = page.locator('.monitored-pr[data-approved]');
       await approvedRow.waitFor();
@@ -1374,6 +1536,8 @@ try {
       assert.equal(payload.comments[2].start_line, 40);
       assert.equal(payload.comments[2].start_side, 'RIGHT');
       assert.equal(payload.event, 'COMMENT');
+      await approvedRow.getByRole('button', { name: /Tracked PR/ }).click();
+      await ask(page);
       await page.getByRole('button', { name: 'Finish review', exact: true }).waitFor();
       const chat = page.getByRole('region', { name: 'Review chat' });
       await page.getByRole('button', { name: 'Draft on new line 40', exact: true }).click();
@@ -1389,13 +1553,12 @@ try {
       await page.getByRole('button', { name: 'Open update' }).waitFor();
       await page.getByRole('button', { name: 'Reviewed ✓' }).waitFor();
       await page.getByText('Hunk 2 of 2').waitFor();
-      const fullTree = page.getByRole('navigation', { name: 'Changed files' });
       const fullChat = page.getByRole('region', { name: 'Review chat' });
-      const fullTreeWidth = await fullTree.evaluate((el) => el.clientWidth);
       const fullChatWidth = await fullChat.evaluate((el) => el.clientWidth);
       await page.getByRole('button', { name: 'Open update' }).click();
       const delta = page.getByRole('region', { name: 'Changes since checkpoint' });
       await delta.getByText('+guard retries', { exact: true }).waitFor();
+      await fullChat.getByRole('button', { name: 'Cancel', exact: true }).waitFor();
       await page.getByRole('button', { name: 'Pipeline: Failed' }).click();
       const revisedPipeline = page.getByRole('dialog', { name: 'Pipeline' });
       await revisedPipeline
@@ -1415,66 +1578,33 @@ try {
         .waitFor();
       await revisedPipeline.getByRole('button', { name: 'Close', exact: true }).click();
       const queue = page.getByRole('navigation', { name: 'Re-review queue' });
+      await filePicker(page).click();
       const folder = queue.getByRole('button', { name: 'src', exact: true });
       const readerFile = queue.getByRole('button', { name: /src\/reader.ts.*Needs another look/ });
       await readerFile.waitFor();
       await folder.click();
       await readerFile.waitFor({ state: 'hidden' });
-      await page.getByRole('button', { name: 'Full PR', exact: true }).click();
-      assert.equal(
-        await page
-          .getByRole('navigation', { name: 'Changed files' })
-          .getByRole('button', { name: 'src', exact: true })
-          .getAttribute('aria-expanded'),
-        'false',
-      );
-      await page.getByRole('button', { name: 'Since my last review' }).click();
       await queue.getByLabel('Filter files').fill('reader');
       await readerFile.waitFor();
       await queue.getByLabel('Filter files').fill('');
       await folder.click();
 
-      const collapseSidebar = page.getByRole('button', { name: 'Hide repositories' });
-      const startedExpanded = await collapseSidebar.isVisible();
-      if (startedExpanded) await collapseSidebar.click();
-      if (process.platform === 'darwin') {
-        const navBounds = await queue.boundingBox();
-        const backBounds = await page
-          .getByRole('button', { name: 'Back to workspace' })
-          .boundingBox();
-        const buttons = await reopened.evaluate(({ BrowserWindow }) =>
-          BrowserWindow.getAllWindows()[0].getWindowButtonPosition(),
-        );
-        // Three native buttons occupy roughly 60 points from the first button's origin.
-        assert.ok(navBounds && navBounds.x >= buttons.x + 60 + 12);
-        assert.ok(backBounds && backBounds.x >= navBounds.x + navBounds.width);
-      }
+      await page.keyboard.press('Escape');
       await resize(reopened, page, 850, 720);
-      await page.getByRole('button', { name: 'Files', exact: true }).click();
+      await filePicker(page).click();
       await readerFile.click();
       await delta.getByText('+guard retries', { exact: true }).waitFor();
       await resize(reopened, page, 1380, 720);
-      if (startedExpanded) await page.getByRole('button', { name: 'Show repositories' }).click();
-      const queueWidth = await queue.evaluate((el) => el.clientWidth);
-      const separator = page.getByRole('separator', { name: 'Resize re-review queue and diff' });
-      const divider = await separator.boundingBox();
-      assert.ok(divider);
-      const x = divider.x + divider.width / 2;
-      const y = divider.y + divider.height / 2;
-      await page.mouse.move(x, y);
-      await page.mouse.down();
-      await page.mouse.move(x + 48, y, { steps: 6 });
-      await page.mouse.up();
-      assert.ok(Math.abs((await queue.evaluate((el) => el.clientWidth)) - queueWidth - 48) <= 3);
       await page.getByRole('button', { name: 'Full PR', exact: true }).click();
-      assert.ok(Math.abs((await fullTree.evaluate((el) => el.clientWidth)) - fullTreeWidth) < 3);
       assert.ok(Math.abs((await fullChat.evaluate((el) => el.clientWidth)) - fullChatWidth) < 3);
       await page.getByRole('button', { name: 'Since my last review' }).click();
       await page.getByText('1 outdated draft', { exact: true }).waitFor();
+      await filePicker(page).click();
       await page
         .getByRole('navigation', { name: 'Re-review queue' })
         .getByRole('button', { name: /src\/reader.ts.*Needs another look/ })
         .waitFor();
+      await page.keyboard.press('Escape');
       const removed = await delta.locator('.deletion').first().boundingBox();
       const added = await delta.locator('.addition').first().boundingBox();
       assert.ok(removed && added && removed.y < added.y && removed.x === added.x);
@@ -1547,6 +1677,7 @@ try {
       await page.getByRole('button', { name: 'Open update' }).click();
       await page.getByText('Rewritten history', { exact: true }).waitFor();
       await delta.getByText('+rewritten guard', { exact: true }).waitFor();
+      await back(page);
       await page.getByRole('button', { name: 'Summarise pull request #12', exact: true }).click();
       await chat
         .locator('.exchange')
@@ -1570,6 +1701,7 @@ try {
       await page.getByRole('button', { name: 'Open update' }).click();
       await page.getByText('Base changed', { exact: true }).waitFor();
       await delta.getByText('+retargeted guard', { exact: true }).waitFor();
+      await back(page);
       await page.getByRole('button', { name: 'Review pull request #12', exact: true }).click();
       const findings = page.getByRole('region', { name: 'Review findings' });
       await findings.getByText('Retry loses its update', { exact: true }).waitFor();
@@ -1588,6 +1720,19 @@ try {
         await page.locator('.exchange .chat-question').allTextContents(),
         messageOrder,
       );
+      const composer = chat.getByRole('textbox', { name: 'Ask about the diff' });
+      await composer.fill('Unsent question');
+      await chat.getByRole('button', { name: 'New conversation' }).click();
+      const earlier = chat.getByText('Earlier messages', { exact: true });
+      await earlier.waitFor();
+      assert.equal(await composer.inputValue(), '');
+      assert.equal(await chat.locator('.exchange:visible').count(), 0);
+      await earlier.click();
+      await findings.getByText('Added to drafts').waitFor();
+      await earlier.click();
+      await composer.fill('Check fresh conversation context');
+      await chat.getByRole('button', { name: 'Send', exact: true }).click();
+      await chat.getByText('Prior exchanges received: 0', { exact: true }).waitFor();
       const date = new Date().toISOString();
       await writeFile(
         repliesFile,
@@ -1636,18 +1781,15 @@ try {
         .and(page.locator(':focus'))
         .waitFor();
     }
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
-    await page.getByLabel('GitHub pull request URL').waitFor();
+    await back(page);
+    await page.getByRole('heading', { name: 'Pull requests', exact: true }).waitFor();
     if (!live) {
-      await page
-        .locator('.saved-link')
-        .filter({ hasText: '#12' })
-        .getByText('Draft', { exact: true })
-        .waitFor();
+      await page.getByRole('button', { name: /Tracked PR.*Draft/ }).waitFor();
       // Opening the new pull request clears its highlight and the count on the app icon.
       const freshRow = page.locator('.monitored-pr[data-new]');
       await freshRow.getByRole('button', { name: /Fresh PR/ }).click();
       await freshRow.waitFor({ state: 'detached' });
+      await filePicker(page).click();
       await page.getByRole('button', { name: /^src\/reader\.ts, modified/ }).click();
       const reminder = page.getByRole('region', { name: 'Review lessons for these changes' });
       await reminder.getByText('Check the callers before changing this behaviour.').waitFor();
@@ -1664,6 +1806,105 @@ try {
         'New pull request in example/project|#14 Fresh PR\n@octo',
         'example/project #12|Your review was dismissed · New push after your review',
       ]);
+
+      await back(page);
+      // Local branch reviews use the same picker and return to their own repository queue.
+      await reopened.evaluate(
+        ({ dialog }, source) => {
+          dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] });
+        },
+        join(directory, 'source'),
+      );
+      await page.getByRole('button', { name: 'Open review', exact: true }).click();
+      await page.getByRole('button', { name: 'Review local branch', exact: true }).click();
+      const localDialog = page.getByRole('dialog', { name: 'Review local branch' });
+      await localDialog.getByLabel('Base branch').selectOption({ label: 'pair-21' });
+      await localDialog.getByRole('button', { name: 'Start review' }).click();
+      await filePicker(page).waitFor();
+      await page.getByRole('button', { name: 'Ask about branch' }).waitFor();
+      assert.equal(await page.getByRole('region', { name: 'Review chat' }).count(), 0);
+      await page.getByRole('button', { name: 'Local reviews', exact: true }).click();
+      await page.getByRole('heading', { name: 'Local reviews', exact: true }).waitFor();
+      await page
+        .getByRole('region', { name: 'Saved reviews' })
+        .getByRole('button', { name: /pair-21/ })
+        .waitFor();
+      const otherPr = 'https://github.com/another/project/pull/88';
+      await page.getByRole('button', { name: 'Open review', exact: true }).click();
+      await page.getByLabel('GitHub pull request URL').fill(otherPr);
+      await page.getByRole('button', { name: 'Save pull request' }).click();
+      const savedQueue = page.getByRole('main');
+      assert.equal(
+        await savedQueue.getByRole('link', { name: '#88', exact: true }).getAttribute('href'),
+        otherPr,
+      );
+      await savedQueue.getByRole('button', { name: /#88.*another\/project/ }).waitFor();
+      assert.equal(await savedQueue.getByRole('button', { name: /Tracked PR/ }).count(), 0);
+      await page.getByRole('button', { name: 'example/project', exact: true }).click();
+      await savedQueue.getByRole('button', { name: /Tracked PR/ }).waitFor();
+      assert.equal(await savedQueue.getByRole('button', { name: /#88/ }).count(), 0);
+
+      // A longer folder previews five reviews. A PR opened from its queue stays visible.
+      for (let number = 89; number <= 94; number++) {
+        await page.getByRole('button', { name: 'Open review', exact: true }).click();
+        await page
+          .getByLabel('GitHub pull request URL')
+          .fill('https://github.com/another/project/pull/' + number);
+        await page.getByRole('button', { name: 'Save pull request' }).click();
+        await savedQueue.getByRole('button', { name: '#' + number + ' another/project' }).waitFor();
+      }
+      const otherFolder = page.getByRole('list', { name: 'Reviews in another/project' });
+      const more = otherFolder.getByRole('button', { name: 'Show more', exact: true });
+      await more.waitFor();
+      assert.equal(await otherFolder.locator('.sidebar-review').count(), 5);
+      await otherFolder
+        .locator('.sidebar-review-meta')
+        .filter({ hasText: / · Saved / })
+        .first()
+        .waitFor();
+      const previewNames = await otherFolder.locator('.sidebar-review-meta a').allTextContents();
+      await more.click();
+      assert.equal(await otherFolder.locator('.sidebar-review').count(), 7);
+      await resize(reopened, page, 850, 440);
+      const scrollArea = page.locator('.repository-navigation > .sidebar-contents:visible');
+      const fixedGear = page
+        .getByRole('navigation', { name: 'Workspace tools' })
+        .getByRole('button', { name: 'Settings' });
+      const beforeScroll = await fixedGear.boundingBox();
+      assert.ok(
+        await scrollArea.evaluate((el) => {
+          el.scrollTop = el.scrollHeight;
+          return el.scrollTop > 0;
+        }),
+      );
+      assert.deepEqual(await fixedGear.boundingBox(), beforeScroll);
+      await resize(reopened, page, 1380, 720);
+      const outsidePreview = (
+        await otherFolder.locator('.sidebar-review-meta a').allTextContents()
+      ).find((name) => !previewNames.includes(name));
+      assert.ok(outsidePreview);
+      const number = outsidePreview.split('#').at(-1);
+      await otherFolder.getByRole('button', { name: 'Show less' }).click();
+      await savedQueue.getByRole('button', { name: '#' + number + ' another/project' }).click();
+      await otherFolder.locator('[aria-current="page"]').waitFor();
+      assert.match(
+        await otherFolder.locator('[aria-current="page"]').getAttribute('aria-label'),
+        new RegExp('#' + number + '(?: |$)'),
+      );
+      await capture(page, 'sidebar-folders');
+      await back(page);
+
+      // Saved reviews remain usable when repository monitoring is unavailable at startup.
+      await reopened.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler('repos:list');
+        ipcMain.handle('repos:list', () => {
+          throw Error('Fixture repository read failed');
+        });
+      });
+      await page.reload();
+      await page.getByRole('alert').filter({ hasText: 'Fixture repository read failed' }).waitFor();
+      await page.getByRole('button', { name: 'another/project', exact: true }).click();
+      await savedQueue.getByRole('button', { name: /#88.*another\/project/ }).waitFor();
     }
     console.info(
       live

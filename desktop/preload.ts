@@ -10,6 +10,7 @@ import { localBrief, localCandidate, localStarted } from '../shared/local.js';
 import { reviewBundle } from '../shared/publish.js';
 import { pinnedQuestion, questionEvidence } from '../shared/questions.js';
 import { changeEvidence } from '../shared/rereview.js';
+import { matchingHunks } from '../shared/diff-search.js';
 import { readerView, reviewUpdate } from '../shared/reader.js';
 import { z } from 'zod';
 import { pipelines, pipelineJob } from '../shared/pipelines.js';
@@ -73,6 +74,11 @@ const reviewer: ReviewerBridge = {
     await ipcRenderer.invoke('account:device');
   },
   integratedTitleBar: process.platform === 'darwin',
+  getSidebarVibrancy: async () =>
+    z.boolean().parse(await ipcRenderer.invoke('appearance:sidebar-vibrancy')),
+  saveSidebarVibrancy: async (enabled) => {
+    await ipcRenderer.invoke('appearance:save-sidebar-vibrancy', enabled);
+  },
   getAppearance: async () => appearance.parse(await ipcRenderer.invoke('appearance:get')),
   saveAppearance: async (value) => {
     await ipcRenderer.invoke('appearance:save', value);
@@ -125,6 +131,9 @@ const reviewer: ReviewerBridge = {
     config.parse(await ipcRenderer.invoke('agent:clear-prompt', url, target, purpose)),
   chooseExecutable: async (agent) =>
     z.boolean().parse(await ipcRenderer.invoke('agent:choose', agent)),
+  newConversation: async (url) => {
+    await ipcRenderer.invoke('chat:new-conversation', url);
+  },
   history: async (url) => turn.array().parse(await ipcRenderer.invoke('chat:history', url)),
   ask: async (req) => turn.parse(await ipcRenderer.invoke('chat:ask', req)),
   cancelAsk: async (run) => {
@@ -166,6 +175,8 @@ const reviewer: ReviewerBridge = {
   citedSource: async (key) =>
     z.string().parse(await ipcRenderer.invoke('reader:cited-source', key)),
   fullFile: async (key) => z.string().parse(await ipcRenderer.invoke('reader:full-file', key)),
+  searchDiff: async (request) =>
+    matchingHunks.parse(await ipcRenderer.invoke('reader:search', request)),
   filePatch: async (key) => z.string().parse(await ipcRenderer.invoke('reader:patch', key)),
   remember: async (value) => {
     await ipcRenderer.invoke('reader:remember', value);

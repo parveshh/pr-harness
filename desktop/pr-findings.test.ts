@@ -108,7 +108,7 @@ await test('only validated findings become drafts, atomically and once, on their
     reportedModel: null,
     findings,
   };
-  first.assistant.append(url, msg);
+  first.assistant.append(url, msg, first.assistant.generation(url));
   const key = { url, run: msg.run };
   const request = { ...key, version: 0, ids: [f.id] };
   assert.throws(() => first.findings.draft(request), /valid findings/);

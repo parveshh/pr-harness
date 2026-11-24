@@ -179,18 +179,44 @@ export function assistantStore(db: DatabaseSync) {
         turn.parse(JSON.parse(String(row.data))).sourceCitations?.find((ref) => ref.id === id)
       );
     },
-    history(url: string) {
-      return db
-        .prepare('SELECT data FROM conversation WHERE url=? ORDER BY id')
-        .all(url)
-        .map((row) => turn.parse(JSON.parse(String(row.data))));
+    newConversation(url: string) {
+      db.prepare(
+        `INSERT INTO chat_sessions(url,generation) VALUES (?,1)
+        ON CONFLICT(url) DO UPDATE SET generation=generation+1`,
+      ).run(url);
     },
-    append(url: string, msg: Turn) {
-      db.prepare('INSERT INTO conversation(url,run,data) VALUES(?,?,?)').run(
-        url,
-        msg.run,
-        JSON.stringify(msg),
+    generation(url: string) {
+      return Number(
+        db.prepare('SELECT generation FROM chat_sessions WHERE url=?').get(url)?.generation ?? 0,
       );
+    },
+    history(url: string, generation?: number): Turn[] {
+      const rows =
+        generation === undefined
+          ? db
+              .prepare(
+                `SELECT data, conversation.generation <> COALESCE(chat_sessions.generation,0) AS archived
+            FROM conversation LEFT JOIN chat_sessions USING(url) WHERE url=? ORDER BY id`,
+              )
+              .all(url)
+          : db
+              .prepare(
+                'SELECT data, 0 AS archived FROM conversation WHERE url=? AND generation=? ORDER BY id',
+              )
+              .all(url, generation);
+      return rows.map((row): Turn => {
+        const msg = turn.parse(JSON.parse(String(row.data)));
+        return row.archived === 1 ? { ...msg, archived: true } : msg;
+      });
+    },
+    append(url: string, msg: Turn, generation: number): Turn {
+      const row = db
+        .prepare(
+          `INSERT INTO conversation(url,run,data,generation) VALUES(?,?,?,?)
+        RETURNING generation <> COALESCE((SELECT generation FROM chat_sessions WHERE url=?),0) AS archived`,
+        )
+        .get(url, msg.run, JSON.stringify(msg), generation, url);
+      return row?.archived === 1 ? { ...msg, archived: true } : msg;
     },
   };
 }

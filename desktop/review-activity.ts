@@ -1,28 +1,61 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { pullReviewFields, pullReviewInfo, summarizePullReviews } from './pull-review-status.js';
 import { z } from 'zod';
 import { pullRequestUrl } from '../shared/reviews.js';
 import { reviewChange, type ReviewChange } from '../shared/workspace.js';
 import type { Graphql } from './github.js';
 
-export const reviewActivityMigration = `
-CREATE TABLE IF NOT EXISTS pull_draft_status (
-  url TEXT PRIMARY KEY REFERENCES reply_targets(url) ON DELETE CASCADE, draft INTEGER NOT NULL
-) STRICT;
-CREATE TABLE IF NOT EXISTS review_observations (
-  account TEXT NOT NULL, url TEXT NOT NULL REFERENCES reply_targets(url) ON DELETE CASCADE,
-  head TEXT NOT NULL, dismissed INTEGER NOT NULL,
-  PRIMARY KEY(account,url)
-) STRICT;
-CREATE TABLE IF NOT EXISTS review_changes (
-  id INTEGER PRIMARY KEY, account TEXT NOT NULL, url TEXT NOT NULL, kind TEXT NOT NULL,
-  head TEXT NOT NULL, created TEXT NOT NULL, unread INTEGER NOT NULL DEFAULT 1
-) STRICT;
-CREATE INDEX IF NOT EXISTS review_changes_inbox ON review_changes(account,created);
-PRAGMA user_version=17;`;
+export function migrateReviewActivity(db: DatabaseSync) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pull_draft_status (
+      url TEXT PRIMARY KEY REFERENCES reply_targets(url) ON DELETE CASCADE, draft INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS review_observations (
+      account TEXT NOT NULL, url TEXT NOT NULL REFERENCES reply_targets(url) ON DELETE CASCADE,
+      head TEXT NOT NULL, dismissed INTEGER NOT NULL,
+      PRIMARY KEY(account,url)
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS review_changes (
+      id INTEGER PRIMARY KEY, account TEXT NOT NULL, url TEXT NOT NULL, kind TEXT NOT NULL,
+      head TEXT NOT NULL, created TEXT NOT NULL, unread INTEGER NOT NULL DEFAULT 1
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS review_changes_inbox ON review_changes(account,created);
+  `);
+  // Early v17 workspaces kept a required draft flag on each account's observation.
+  if (
+    db.prepare("SELECT 1 FROM pragma_table_info('review_observations') WHERE name='draft'").get()
+  ) {
+    // Accounts can have different cached values with no observation time to order them.
+    // Leave disputed flags unknown until refresh and keep any existing PR-wide status.
+    db.exec(`
+      INSERT INTO pull_draft_status(url,draft)
+      SELECT url, MIN(draft) FROM review_observations GROUP BY url HAVING MIN(draft)=MAX(draft)
+      ON CONFLICT(url) DO NOTHING;
+      ALTER TABLE review_observations DROP COLUMN draft;
+    `);
+  }
+  db.exec('PRAGMA user_version=18');
+}
 
-const status = z.object({
+// A v19 preview required a count and approval for every head. A fresh GitHub
+// snapshot may arrive before its reviews, so those two fields can now be unknown.
+export function migratePullReviewStatus(db: DatabaseSync, version: number) {
+  if (version === 19) db.exec('ALTER TABLE pull_review_status RENAME TO pull_review_status_v19');
+  db.exec(`CREATE TABLE IF NOT EXISTS pull_review_status (
+    url TEXT PRIMARY KEY REFERENCES reply_targets(url) ON DELETE CASCADE,
+    head TEXT NOT NULL, commit_count INTEGER, approval_stage TEXT
+  ) STRICT`);
+  if (version === 19)
+    db.exec(`
+    INSERT INTO pull_review_status(url, head, commit_count, approval_stage)
+    SELECT url, head, commit_count, approval_stage FROM pull_review_status_v19;
+    DROP TABLE pull_review_status_v19;
+  `);
+  db.exec('PRAGMA user_version=20');
+}
+
+const status = pullReviewInfo.extend({
   state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
-  headRefOid: z.string().min(1),
   isDraft: z.boolean(),
   dismissed: z.object({ totalCount: z.number().int().nonnegative() }),
   latest: z.object({
@@ -42,13 +75,32 @@ export async function readReviewStatus(
   );
   const query = `query ReviewStatus($owner:String!,$name:String!,$author:String!){
     repository(owner:$owner,name:$name){pullRequest(number:${number}){
-      state headRefOid isDraft
+      state isDraft ${pullReviewFields}
       latest:reviews(last:1,author:$author,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){nodes{commit{oid}}}
       dismissed:reviews(first:1,author:$author,states:[DISMISSED]){totalCount}
     }}
   }`;
-  return response.parse(JSON.parse(await graphql(query, { owner, name, author: account }, signal)))
-    .data.repository.pullRequest;
+  const pull = response.parse(
+    JSON.parse(await graphql(query, { owner, name, author: account }, signal)),
+  ).data.repository.pullRequest;
+  const summary = await summarizePullReviews(
+    pull,
+    account,
+    owner,
+    name,
+    Number(number),
+    graphql,
+    signal,
+  );
+  return {
+    state: pull.state,
+    isDraft: pull.isDraft,
+    headRefOid: pull.headRefOid,
+    latest: pull.latest,
+    dismissed: pull.dismissed,
+    commitCount: summary.commitCount,
+    approvalStage: summary.approvalStage,
+  };
 }
 
 export function saveDraftStatus(db: DatabaseSync, url: string, isDraft: boolean | undefined) {
@@ -64,7 +116,7 @@ export function reviewActivityStore(db: DatabaseSync) {
       account: string,
       url: string,
       registered: string,
-      current: z.infer<typeof status>,
+      current: Awaited<ReturnType<typeof readReviewStatus>>,
       created: string,
     ) {
       const added: ReviewChange[] = [];
@@ -94,6 +146,9 @@ export function reviewActivityStore(db: DatabaseSync) {
             });
           };
           saveDraftStatus(db, url, current.isDraft);
+          db.prepare(
+            'INSERT OR REPLACE INTO pull_review_status(url,head,commit_count,approval_stage) VALUES(?,?,?,?)',
+          ).run(url, current.headRefOid, current.commitCount, current.approvalStage);
           const review = current.latest.nodes[0];
           if (previous) {
             if (current.dismissed.totalCount > Number(previous.dismissed)) record('dismissed');

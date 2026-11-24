@@ -1,15 +1,26 @@
-# Local Reviewer desktop design QA
+# Repository queue and focused review
 
-The comparison used the selected ImageGen mockup at 1731 × 909 and the Electron reader at the same CSS viewport. The fixture uses a different PR, a saved panel layout, a three-line selection, and an existing conversation. The captured desktop frame was scaled from 2× for comparison. A second capture at 850 × 720 checks the single-pane chat view.
+The selected mockup shows two states of the same window. The repository stays selected as the reviewer moves from its pull-request list into a diff. The filename opens a searchable picker. The original comparison below records the earlier on-demand chat design. The current layout opens chat with the PR and gives each pane its own header at the top of the window.
 
-| Area | Result |
+## Visual comparison
+
+| Evidence | Location |
 | --- | --- |
-| Layout | The navigation rail, changed-file tree, center diff, and chat form four vertical regions. The file tree and chat share the same top edge and height. The split button stays in the PR header. Custom panel widths and macOS window-control clearance account for the different proportions. |
-| Typography | The initial comparison showed undersized diff text and pane titles. The revised view uses 15 px code and 16 px prose at standard text size. The PR title has looser tracking, comments have more line spacing, and chat paragraphs stop at a 64ch reading measure. The settings-selected interface font and text scale apply. |
-| Sources | Repeated file paths interrupted paragraphs in the supplied readability screenshot. The revised wide and narrow chat captures show compact source controls in running text. Single references show the filename and line, and grouped references open a picker. Expanding Sources exposes each referenced path and line. Code literals remain literal. |
-| Colour and icons | The comparison uses the Ink palette and green accent. Diff additions and deletions carry explicit signs. The existing icon library provides the rail, folder, file, and line-action icons. |
-| Interactions | The fixture exercised panel collapse and keyboard focus, filtering and expanding folders, selected-line and range questions, inline draft editing, approval preview, and offline recovery. The narrow reader switches between Files, Diff, and Chat. |
+| Selected ImageGen mockup | `~/.codex/generated_images/01a20dee-1fd3-7043-8060-9b1deb1f38b4/exec-c88a00a5-df59-4185-ae02-bfb984aaa71f.png` |
+| Electron captures | `/private/tmp/local-reviewer-queue-qa/repository-queue.png` and `repository-review.png` in the same directory |
+| Comparison, mockup on the left | `/private/tmp/local-reviewer-queue-qa/comparison.png` |
 
-The visual and interaction checks used an isolated Electron fixture on macOS. Other platforms and a live GitHub submission were outside this run.
+The reference is a 1536 × 1024 image containing two desktop window excerpts. Each comparison uses the 1506-pixel interior width. Both Electron captures use a 1506 × 720 CSS viewport at one output pixel per CSS pixel. The comparison crops the bottom of each capture to the corresponding reference height and scales both sides together. Electron’s content capture excludes native window buttons.
+
+| Area | Findings and changes |
+| --- | --- |
+| Repository queue | The first capture showed a narrower sidebar and smaller headings than the mockup. The default sidebar now occupies 19% of the window, and the page and sidebar titles have distinct sizes. The selected repository uses an accent tint. PR numbers and titles lead each row. Author, draft state and actions follow. |
+| Open PR | The pull-request breadcrumb, title, filename picker and code occupy one reading pane. The app retains review submission, checkpoints, file-view controls, discussion and checks. The fixture contains a real inline discussion, which accounts for the extra content below its first diff hunk. |
+| Typography and icons | The reviewer’s font, text size, palette and accent apply to the new controls. The capture uses the light palette and the fixture’s saved humanist font. File paths truncate inside the picker button. The file list supports full-path search. The reference requires only standard interface icons, supplied by the app’s existing icon library. |
+| Short windows | In the first desktop run, returning from chat at 850 × 440 left the diff with no visible height. The revised reader scrolls vertically when its controls and diff exceed the available height. The desktop fixture now exercises that transition. |
+
+## Interaction coverage
+
+The Electron fixture exercises repository selection, opening a PR, returning to the queue, keyboard filtering and Escape in the file picker, automatic chat on open and restore, closing and reopening chat, recovering typed questions, re-reviewing a push, and reopening saved work offline. The narrow checks include a 570-pixel workspace and an 850-pixel reader. The screenshots and interactions use an isolated profile and controlled GitHub and agent responses on macOS.
 
 Final result: passed

@@ -1,3 +1,4 @@
+import { pullReviewFields, pullReviewInfo, summarizePullReviews } from './pull-review-status.js';
 import { z } from 'zod';
 import { githubApi, githubGraphql } from './github.js';
 import { login, repoName, readableError } from '../shared/assistant.js';
@@ -35,19 +36,7 @@ export async function pages<T>(
 const reviewStates = z.object({
   data: z.object({
     viewer: z.object({ login: z.string() }),
-    repository: z.record(
-      z.string(),
-      z
-        .object({
-          isDraft: z.boolean(),
-          latestOpinionatedReviews: z.object({
-            nodes: z.array(
-              z.object({ author: z.object({ login: z.string() }).nullable(), state: z.string() }),
-            ),
-          }),
-        })
-        .nullable(),
-    ),
+    repository: z.record(z.string(), pullReviewInfo.extend({ isDraft: z.boolean() }).nullable()),
   }),
 });
 // One request answers, for up to fifty PRs, whether the signed-in reviewer approved each.
@@ -59,19 +48,15 @@ async function pullStatuses(
   signal: AbortSignal,
   graphql: typeof githubGraphql,
 ) {
-  const statuses = new Map<number, { approved: boolean; isDraft: boolean }>();
+  const statuses = new Map<
+    number,
+    Awaited<ReturnType<typeof summarizePullReviews>> & { isDraft: boolean }
+  >();
   const [owner = '', repo = ''] = name.split('/');
   for (let at = 0; at < numbers.length; at += 50) {
     const fields = numbers
       .slice(at, at + 50)
-      .map(
-        (n) =>
-          'p' +
-          n +
-          ':pullRequest(number:' +
-          n +
-          '){isDraft latestOpinionatedReviews(first:100){nodes{author{login} state}}}',
-      );
+      .map((n) => 'p' + n + ':pullRequest(number:' + n + '){isDraft ' + pullReviewFields + '}');
     const query =
       'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){' +
       fields.join(' ') +
@@ -79,15 +64,13 @@ async function pullStatuses(
     const { viewer, repository } = reviewStates.parse(
       JSON.parse(await graphql(query, { owner, name: repo }, signal)),
     ).data;
-    const me = viewer.login.toLowerCase();
     for (const [alias, pull] of Object.entries(repository)) {
-      if (pull)
-        statuses.set(Number(alias.slice(1)), {
-          isDraft: pull.isDraft,
-          approved: pull.latestOpinionatedReviews.nodes.some(
-            (review) => review.author?.login.toLowerCase() === me && review.state === 'APPROVED',
-          ),
-        });
+      if (!pull) continue;
+      const number = Number(alias.slice(1));
+      statuses.set(number, {
+        isDraft: pull.isDraft,
+        ...(await summarizePullReviews(pull, viewer.login, owner, repo, number, graphql, signal)),
+      });
     }
   }
   return statuses;
@@ -116,16 +99,21 @@ export function monitor(
       for (const creator of repo.watching) {
         const items = await pages(
           prefix + '/issues?state=open&creator=' + encodeURIComponent(creator),
-          pr.extend({ pull_request: z.object({}).optional() }),
+          pr.extend({
+            pull_request: z.object({}).optional(),
+            created_at: z.iso.datetime().optional(),
+          }),
           signal,
           api,
         );
         for (const item of items)
           if (item.pull_request && item.user?.login === creator)
             pulls.push({
+              ...known.get(item.number),
               number: item.number,
               title: item.title,
               author: creator,
+              openedAt: item.created_at ?? known.get(item.number)?.openedAt,
               approved: known.get(item.number)?.approved ?? false,
               isDraft: known.get(item.number)?.isDraft,
               unseen: known.get(item.number)?.unseen ?? fresh,

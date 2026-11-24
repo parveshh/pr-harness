@@ -187,7 +187,6 @@
   flex: none;
   padding: 22px 14px 14px;
   background: var(--rail);
-  border-right: 1px solid var(--line);
   color: var(--ink);
   display: flex;
   flex-direction: column;
@@ -289,16 +288,6 @@
   font:
     0.6875rem/1.65 ui-monospace,
     monospace;
-}
-.sidebar-foot {
-  margin-top: auto;
-  border-top: 1px solid var(--line);
-  padding: 16px 8px 2px;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 0.75rem;
 }
 .home-bar {
   height: 54px;
@@ -918,7 +907,7 @@
 }
 .integrated-titlebar .repo-sidebar::before {
   content: '';
-  height: 52px;
+  height: var(--window-control-height);
   position: absolute;
   inset: 0 0 auto;
   app-region: drag;
@@ -1188,9 +1177,6 @@
   letter-spacing: -0.015em;
   text-transform: none;
 }
-.sidebar-foot {
-  font-size: 0.6875rem;
-}
 .review-drafts,
 .entry button,
 .dialog-actions button:not(.quiet),
@@ -1297,18 +1283,6 @@
   }
 }
 
-.sidebar-foot {
-  flex-direction: column;
-  align-items: stretch;
-  padding: 10px 0 0;
-  gap: 4px;
-}
-.local-status {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 3px 8px;
-}
 /* Reserve the border at rest so hover never shifts the header. */
 .agent-trigger {
   display: inline-flex;
@@ -1712,7 +1686,7 @@ body,
   }
 }
 
-@container (max-width:960px) {
+@container (max-width:680px) {
   .reader:has(.reading-grid[data-pane='chat']) .pr-heading {
     display: none;
   }
@@ -1855,13 +1829,12 @@ body,
   max-height: 26vh;
 }
 
-/* Workspace navigation keeps its own column in both sidebar states. */
+/* The utility rail stays outside the scrolling repository and alert lists. */
 .studio {
-  --workspace-rail-width: 50px;
+  --workspace-rail-width: 52px;
   --window-control-height: 0px;
 }
 .integrated-titlebar .studio {
-  --workspace-rail-width: 92px;
   --window-control-height: 48px;
 }
 .repo-sidebar:not(.collapsed) {
@@ -1874,70 +1847,43 @@ body,
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 8px 0 14px;
+  justify-content: flex-end;
+  gap: 0;
+  padding-bottom: 10px;
   border-right: 1px solid var(--line);
-  background: color-mix(in srgb, var(--rail) 80%, var(--editor));
+  background: var(--rail);
 }
 .repo-sidebar .workspace-rail button {
   display: grid;
   place-items: center;
   position: relative;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   padding: 0;
-  color: color-mix(in srgb, var(--muted) 85%, var(--rail));
+  color: var(--ink);
   border: 1px solid transparent;
   border-radius: 9px;
   background: transparent;
-}
-.rail-divider {
-  width: 22px;
-  height: 1px;
-  margin: 2px 0;
-  background: var(--line);
-}
-.repo-sidebar .workspace-rail button[aria-disabled='true'] {
-  opacity: 0.4;
-  cursor: default;
-}
-.repo-sidebar .workspace-rail button[aria-disabled='true']:hover {
-  color: color-mix(in srgb, var(--muted) 85%, var(--rail));
-  background: none;
-}
-/* The page you are on carries a marker; an open side panel is only filled. */
-.repo-sidebar .workspace-rail button[aria-current='page']::before {
-  content: '';
-  position: absolute;
-  left: -7px;
-  top: 7px;
-  bottom: 7px;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--control);
 }
 .repo-sidebar .workspace-rail button:hover {
   color: var(--ink-bright);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
-.repo-sidebar .workspace-rail button:is([aria-current='page'], [aria-expanded='true']) {
+.repo-sidebar .workspace-rail button[aria-expanded='true'] {
   color: var(--control);
   background: color-mix(in srgb, var(--ink) 11%, var(--rail));
   border-color: color-mix(in srgb, var(--ink) 10%, transparent);
 }
 @media (forced-colors: active) {
-  .repo-sidebar .workspace-rail button:is([aria-current='page'], [aria-expanded='true']) {
+  .repo-sidebar .workspace-rail button[aria-expanded='true'] {
     border-color: Highlight;
     color: Highlight;
   }
 }
-.rail-settings {
-  margin-top: auto;
-}
 .reply-count {
   position: absolute;
-  top: -4px;
-  right: -4px;
+  top: 0;
+  right: -2px;
   min-width: 14px;
   padding: 1px 3px;
   background: var(--control);
@@ -2076,6 +2022,13 @@ body,
   margin: 18px 0;
 }
 .settings-group .settings-line label {
+  margin: 0;
+}
+.settings-line input[type='checkbox'] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
   margin: 0;
 }
 .settings-line select {
@@ -2270,7 +2223,7 @@ body,
   border: 0;
   border-radius: 0;
 }
-@container (max-width:960px) {
+@container (max-width:680px) {
   .reading-grid > :is([data-panel], .pane-divider) {
     display: none !important;
   }
