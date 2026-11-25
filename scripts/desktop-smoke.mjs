@@ -2181,6 +2181,23 @@ try {
             ? { line: Number(row.dataset.newLine), x: box.left + box.width / 2, y: centre(row) }
             : null;
         });
+      // Resolves once the diff has not scrolled for several frames.
+      const scrollSettled = () =>
+        largeDiff.evaluate(
+          (pane) =>
+            new Promise((resolve) => {
+              let last = pane.scrollTop,
+                still = 0;
+              const tick = () => {
+                if (pane.scrollTop !== last) {
+                  last = pane.scrollTop;
+                  still = 0;
+                } else if (++still >= 6) return resolve(undefined);
+                globalThis.requestAnimationFrame(tick);
+              };
+              globalThis.requestAnimationFrame(tick);
+            }),
+        );
       const deepLine = (await (await middleLine()).jsonValue()).line;
       assert.ok(deepLine > 300);
       const deepScroll = await largeDiff.evaluate((el) => el.scrollTop);
@@ -2289,8 +2306,14 @@ try {
         deepScroll,
       );
       assert.equal(await dragIcon.count(), 1, 'the row a drag started on stays rendered');
+      // Leaving the edge stops auto-scroll. Read the end line only once the pane is still, or a
+      // slow runner keeps scrolling and releases over a different row.
+      await page.mouse.move(dragStart.x + dragStart.width / 2, paneBox.y + paneBox.height / 2, {
+        steps: 3,
+      });
+      await scrollSettled();
       const dragEnd = await (await middleLine()).jsonValue();
-      await page.mouse.move(dragEnd.x, dragEnd.y, { steps: 3 });
+      await page.mouse.move(dragEnd.x, dragEnd.y);
       await page.mouse.up();
       assert.ok(dragEnd.line > dragFrom + 50, 'the drag reached rows beyond the first window');
       await deepEditor.getByText(new RegExp(dragFrom + '[–-]' + dragEnd.line)).waitFor();
@@ -2314,8 +2337,12 @@ try {
         upScroll,
       );
       assert.equal(await upIcon.count(), 1, 'the starting row stays rendered below the window');
+      await page.mouse.move(upStart.x + upStart.width / 2, paneBox.y + paneBox.height / 2, {
+        steps: 3,
+      });
+      await scrollSettled();
       const upEnd = await (await middleLine()).jsonValue();
-      await page.mouse.move(upEnd.x, upEnd.y, { steps: 3 });
+      await page.mouse.move(upEnd.x, upEnd.y);
       await page.mouse.up();
       assert.ok(upEnd.line < upFrom - 50);
       await deepEditor.getByText(new RegExp(upEnd.line + '[–-]' + upFrom)).waitFor();

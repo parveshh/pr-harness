@@ -439,3 +439,43 @@ await test('upgrading a version 25 workspace adds review requests and keeps save
   assert.equal(check.prepare('PRAGMA user_version').get()?.user_version, 27);
   assert.equal(check.prepare('SELECT approved FROM review_requests').get()?.approved, 1);
 });
+
+await test('a workspace whose review requests predate the approval column opens and gains it', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'reviewer-requests-repair-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'workspace.sqlite');
+  const current = openStore(path);
+  current.reviewRequests.replace('reviewer', [], '2026-11-25T10:00:00.000Z');
+  current.close();
+  // The table as early development builds created it at version 26, before `approved`.
+  const early = new DatabaseSync(path);
+  early.exec(`DROP TABLE review_requests;
+    CREATE TABLE review_requests(
+      account TEXT NOT NULL REFERENCES review_request_accounts(account) ON DELETE CASCADE,
+      repo TEXT NOT NULL,number INTEGER NOT NULL,title TEXT NOT NULL,author TEXT NOT NULL,
+      draft INTEGER NOT NULL CHECK(draft IN (0,1)),updated TEXT NOT NULL,head TEXT,
+      via TEXT NOT NULL CHECK(via IN ('direct','team')),
+      unseen INTEGER NOT NULL DEFAULT 0 CHECK(unseen IN (0,1)),
+      PRIMARY KEY(account,repo,number)
+    ) STRICT;
+    INSERT INTO review_requests(account,repo,number,title,author,draft,updated,head,via,unseen)
+      VALUES('reviewer','org/repo',3,'Early request','octo',0,'2026-11-25T09:00:00Z',NULL,'team',1);`);
+  early.close();
+
+  const repaired = openStore(path);
+  t.after(() => repaired.close());
+  assert.deepEqual(repaired.reviewRequests.list('reviewer'), [
+    {
+      repo: 'org/repo',
+      number: 3,
+      title: 'Early request',
+      author: 'octo',
+      isDraft: false,
+      updatedAt: '2026-11-25T09:00:00Z',
+      head: null,
+      via: 'team',
+      approved: false,
+      unseen: true,
+    },
+  ]);
+});
