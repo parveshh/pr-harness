@@ -23,6 +23,21 @@ CREATE TABLE IF NOT EXISTS review_requests(
   PRIMARY KEY(account,repo,number)
 ) STRICT;
 PRAGMA user_version=26;`;
+// Development builds created review_requests at version 26 before it had `approved`, so a
+// workspace can be on a current version without the column. Add it wherever it is missing.
+export function ensureReviewRequestSchema(db: DatabaseSync) {
+  const table = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_requests'")
+    .get();
+  if (!table) return;
+  const approved = db
+    .prepare("SELECT 1 FROM pragma_table_info('review_requests') WHERE name='approved'")
+    .get();
+  if (!approved)
+    db.exec(
+      'ALTER TABLE review_requests ADD COLUMN approved INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1))',
+    );
+}
 
 type Requested = Omit<ReviewRequest, 'unseen'>;
 const key = (request: Pick<ReviewRequest, 'repo' | 'number'>) =>

@@ -19,7 +19,11 @@ import {
 import { readerMigration, readerStore } from './reader-store.js';
 import { pullRequestUrl, reviewList } from '../shared/reviews.js';
 import { ensureLocalReviewSchema, localReviewMigration, localStore } from './local-store.js';
-import { reviewRequestMigration, reviewRequestStore } from './review-requests.js';
+import {
+  ensureReviewRequestSchema,
+  reviewRequestMigration,
+  reviewRequestStore,
+} from './review-requests.js';
 
 export function openStore(filename: string) {
   const db = new DatabaseSync(filename);
@@ -108,6 +112,7 @@ export function openStore(filename: string) {
       db.exec('PRAGMA user_version=27');
     }
     ensureLocalReviewSchema(db);
+    ensureReviewRequestSchema(db);
     if (version === 0)
       db.prepare('UPDATE workspace SET appearance=?, accent=? WHERE id=1').run('ink', 'green');
     db.exec('COMMIT');
