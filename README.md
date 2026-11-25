@@ -84,6 +84,12 @@ When a watched author opens a pull request, the app shows a system notification,
 
 Monitored PR rows have actions to review, summarise, or approve. The sparkle opens the PR and starts **Summarise PR** in Review chat. The check opens the PR's review with **Approve** already chosen; nothing is sent until you preview and submit it. A PR whose latest review from your GitHub CLI account is an approval has a highlighted approval check. That state is read from GitHub when the list refreshes and right after you submit a review, so an approval made on github.com shows too. GitHub keeps an approval after new commits unless it is dismissed, so the approval can predate the latest push.
 
+### Review requests
+
+**Review requests** at the top of the sidebar lists open pull requests on github.com that ask your GitHub CLI account for a review, in any repository, whether or not you monitor it. The count beside it is the number waiting. Requests made to a team you belong to are included and labelled **Team request**. Select it to see the list in the main pane, where each row has the same actions as a monitored PR. Opening a PR from the list saves it, and **Pull requests** in its header returns to the list.
+
+The list refreshes about every two minutes while the app's window is open, and when you choose **Refresh**. A new request shows a system notification, counts on the app icon, and has a **New** tag until you open the PR. Requests that are already waiting the first time an account is checked are not treated as new. A request leaves the list at the next refresh once you submit your review, the request is removed, or the PR is closed. Each GitHub account has its own saved list, which stays available offline. When no account is connected, the pane links to **Settings**. The list is read with one read-only search for the account, up to GitHub's limit of 1,000 results.
+
 ## Project layout
 
 - `client/` contains the React renderer. It accesses the desktop through `window.reviewer`.
@@ -92,7 +98,7 @@ Monitored PR rows have actions to review, summarise, or approve. The sparkle ope
 
 ## Checks
 
-Run `npm run lint`, `npm run format:check`, `npm run typecheck`, and `npm test`. Use `npm run format` to apply formatting. After building, `npm run test:desktop` verifies repository dialogs, monitored authors, all five agent adapters, citation navigation, cancellation, the file reader, draft editing and discarding, an offline restart, and receipt recovery after a simulated lost submission response with a temporary profile and fixture CLI on macOS or Linux. Use `npm run test:desktop -- --live` to exercise a public PR with your signed-in GitHub CLI. Both desktop tests require a graphical session.
+Run `npm run lint`, `npm run format:check`, `npm run typecheck`, and `npm test`. Use `npm run format` to apply formatting. After building, `npm run test:desktop` verifies repository dialogs, the review requests list, monitored authors, all five agent adapters, citation navigation, cancellation, the file reader, draft editing and discarding, an offline restart, and receipt recovery after a simulated lost submission response with a temporary profile and fixture CLI on macOS or Linux. Use `npm run test:desktop -- --live` to exercise a public PR with your signed-in GitHub CLI. Both desktop tests require a graphical session.
 
 ## Review another push
 

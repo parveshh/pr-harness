@@ -45,6 +45,10 @@ export type SnapshotFile = { info: FileInfo; patch: string; signature: string };
 export type Snapshot = { meta: ReviewMeta; revision: string; files: SnapshotFile[] };
 type Api = (endpoint: string, signal: AbortSignal, diff?: boolean) => Promise<string>;
 
+// Failures that only connecting an account or installing the CLI can fix.
+export const missingCliMessage = 'Install GitHub CLI (gh) and reopen Local Reviewer.';
+export const signInMessage = 'Sign in with gh auth login, then retry.';
+
 export function githubEnvironment() {
   return {
     ...process.env,
@@ -102,11 +106,10 @@ async function runGh(args: string[], signal: AbortSignal, env: NodeJS.ProcessEnv
     const details = z
       .object({ code: z.union([z.string(), z.number()]).optional(), stderr: z.string().optional() })
       .safeParse(error).data;
-    if (details?.code === 'ENOENT')
-      throw new Error('Install GitHub CLI (gh) and reopen Local Reviewer.', { cause: error });
+    if (details?.code === 'ENOENT') throw new Error(missingCliMessage, { cause: error });
     const reason = details?.stderr ?? '';
     if (/auth login|HTTP 401|authentication token/i.test(reason))
-      throw new Error('Sign in with gh auth login, then retry.', { cause: error });
+      throw new Error(signInMessage, { cause: error });
     if (/rate limit/i.test(reason))
       throw new Error('GitHub rate limit reached. Retry after the limit resets.', { cause: error });
     if (/HTTP (403|404)/i.test(reason))

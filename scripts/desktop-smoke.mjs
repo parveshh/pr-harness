@@ -172,6 +172,8 @@ if (!live) {
       'const loginRelease = ' + JSON.stringify(loginRelease) + ';',
       'const signedOut = ' + JSON.stringify(signedOut) + ';',
       'const switchedAccount = ' + JSON.stringify(switchedAccount) + ';',
+      // One open pull request asks the signed-in account for a review.
+      "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('query ReviewRequests'))){console.log(JSON.stringify({data:{viewer:{login:fs.existsSync(switchedAccount)?'second-reviewer':'fixture-reviewer'},search:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{__typename:'PullRequest',number:31,title:'Requested PR',isDraft:false,updatedAt:'2026-11-24T12:00:00Z',headRefOid:'e'.repeat(40),author:{login:'octo'},repository:{nameWithOwner:'example/requests'},reviewRequests:{nodes:[{requestedReviewer:{__typename:'Team'}}]}}]}}}));return;}",
       "if(process.argv.includes('auth') && process.argv.includes('login')){console.error('First copy your one-time code: ABCD-1234'); const timer=setInterval(()=>{if(fs.existsSync(loginRelease)){if(fs.existsSync(signedOut))fs.unlinkSync(signedOut);clearInterval(timer);}},30);return;}",
       "if(process.argv.includes('user') && fs.existsSync(signedOut)){console.error('gh auth login');process.exit(1);}",
       'const threadFile = ' + JSON.stringify(join(directory, 'discussion-replies.jsonl')) + ';',
@@ -279,6 +281,27 @@ try {
     await page.getByRole('heading', { name: 'Add your first repository' }).waitFor();
     await capture(page, 'workspace');
     if (!live) {
+      // Pull requests waiting for this account's review are listed without monitoring a
+      // repository. A request already waiting at the first check is not marked as new.
+      const requestsLink = page.getByRole('button', {
+        name: 'Review requests, 1 open',
+        exact: true,
+      });
+      await requestsLink.press('Enter');
+      await page.getByRole('heading', { name: 'Review requests', exact: true }).waitFor();
+      await requestsLink.and(page.locator('[aria-current=page]')).waitFor();
+      const requested = page
+        .getByRole('region', { name: 'Review requests' })
+        .locator('.monitored-pr');
+      await requested
+        .getByRole('button', { name: /Requested PR.*example\/requests.*@octo.*Team request/ })
+        .waitFor();
+      await requested
+        .getByRole('button', { name: 'Summarise pull request example/requests #31', exact: true })
+        .waitFor();
+      assert.equal(await requested.getByText('New', { exact: true }).count(), 0);
+      await page.getByText(/^Requested from @fixture-reviewer · Checked /).waitFor();
+      await capture(page, 'review-requests');
       await writeFile(signedOut, '');
       await page.getByRole('button', { name: 'Settings', exact: true }).click();
       const settingsPane = page.getByRole('dialog', { name: 'Settings', exact: true });

@@ -13,6 +13,7 @@ import { changeEvidence } from '../shared/rereview.js';
 import { matchingHunks } from '../shared/diff-search.js';
 import { readerView, reviewUpdate } from '../shared/reader.js';
 import { z } from 'zod';
+import { reviewRequestInbox } from '../shared/review-requests.js';
 import { pipelines, pipelineJob } from '../shared/pipelines.js';
 import { repository, config, agentCatalog, turn, activity } from '../shared/assistant.js';
 
@@ -62,6 +63,9 @@ const reviewer: ReviewerBridge = {
   readReplies: async (account) => inbox.parse(await ipcRenderer.invoke('replies:read', account)),
   openReply: async (account, id) =>
     inbox.parse(await ipcRenderer.invoke('replies:open', account, id)),
+  reviewRequests: async () => reviewRequestInbox.parse(await ipcRenderer.invoke('requests:list')),
+  syncReviewRequests: async () =>
+    reviewRequestInbox.parse(await ipcRenderer.invoke('requests:sync')),
   startLogin: async () => signIn.parse(await ipcRenderer.invoke('account:start')),
   loginProgress: async () => signIn.parse(await ipcRenderer.invoke('account:progress')),
   cancelLogin: async () => {

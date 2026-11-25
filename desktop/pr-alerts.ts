@@ -1,5 +1,6 @@
 import { reviewChangeTitle, type ReviewChange } from '../shared/workspace.js';
 import type { Repository } from '../shared/assistant.js';
+import { reviewRequestUrl, type ReviewRequest } from '../shared/review-requests.js';
 
 type Pull = Repository['pulls'][number];
 // What the desktop shell provides: a system notification and a count on the app icon.
@@ -29,6 +30,27 @@ export function prAlerts(port: AlertPort, open: (url: string) => void) {
             .slice(0, 4)
             .map((p) => '#' + p.number + ' ' + p.title.slice(0, 60))
             .join('\n') + (pulls.length > 4 ? '\n…' : ''),
+          () => open(link),
+        );
+    },
+    // Tells the reviewer that their review has just been requested.
+    requested(requests: ReviewRequest[]) {
+      const [first] = requests;
+      if (!first) return;
+      const link = reviewRequestUrl(first);
+      if (requests.length === 1)
+        port.notify(
+          'Review requested in ' + first.repo,
+          '#' + first.number + ' ' + first.title.slice(0, 140) + '\n@' + first.author,
+          () => open(link),
+        );
+      else
+        port.notify(
+          requests.length + ' new review requests',
+          requests
+            .slice(0, 4)
+            .map((r) => (r.repo + '#' + r.number + ' ' + r.title).slice(0, 80))
+            .join('\n') + (requests.length > 4 ? '\n…' : ''),
           () => open(link),
         );
     },

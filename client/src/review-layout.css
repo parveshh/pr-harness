@@ -631,6 +631,29 @@
 .repository-row:focus-within {
   background: var(--hover);
 }
+.review-requests-row {
+  margin-bottom: 14px;
+}
+.repo-sidebar .requests-icon {
+  box-sizing: content-box;
+  flex: none;
+  padding: 7px;
+}
+.request-count {
+  flex: none;
+  margin-inline: 6px 8px;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+/* Matches the New tag on the rows it counts. */
+.request-count[data-new] {
+  background: #ecc98b;
+  color: #1c1d20;
+  font-weight: 600;
+}
 .repo-sidebar .repo-link,
 .repo-sidebar .sidebar-review,
 .repo-sidebar .sidebar-show-more {
@@ -782,6 +805,30 @@
   margin: 0 0 14px;
   color: var(--muted);
   font-size: 0.94rem;
+}
+.queue-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+.queue-status button,
+.queue-empty-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 0.8125rem;
+}
+.queue-empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
 }
 .pr-queue {
   border: 1px solid var(--line);

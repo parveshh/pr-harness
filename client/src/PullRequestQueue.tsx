@@ -10,6 +10,100 @@ import type { RepositoryGroup } from '../../shared/repository-groups.js';
 import { DraftLabel, PrNumberLink } from './components/PrMetadata.js';
 import { useWorkingPrs } from './chatRuns.js';
 import type { PrCommand } from './Reader.js';
+import type { Repository } from '../../shared/assistant.js';
+import type { RunKind } from '../../shared/chat-runs.js';
+
+type QueuePull = Pick<
+  Repository['pulls'][number],
+  'number' | 'title' | 'author' | 'isDraft' | 'approved' | 'unseen'
+>;
+// One open pull request with its review, summarise and approve actions. `repository` is
+// given where a list spans repositories, and then also tells same-numbered PRs apart.
+export function PullRequestRow({
+  url,
+  pull: p,
+  repository,
+  note,
+  run,
+  open,
+  onError,
+}: {
+  url: string;
+  pull: QueuePull;
+  repository?: string;
+  note?: string;
+  // The kind of answer being written for this PR, if one is running.
+  run: RunKind | undefined;
+  open: (url: string, kind?: PrCommand['kind']) => void;
+  onError: (message: string) => void;
+}) {
+  const subject = 'pull request ' + (repository ? repository + ' ' : '') + '#' + p.number;
+  const working = run
+    ? run === 'summary'
+      ? 'Summarising'
+      : run === 'review'
+        ? 'Reviewing'
+        : 'Answering a question in'
+    : null;
+  return (
+    <div
+      className="monitored-pr"
+      data-approved={p.approved || undefined}
+      data-new={p.unseen || undefined}
+      data-working={!!run || undefined}
+    >
+      <PrNumberLink url={url} onError={onError} />
+      <button className="monitored-open" onClick={() => open(url)}>
+        <strong>{p.title}</strong>
+        {repository && <small>{repository}</small>}
+        <small>@{p.author}</small>
+        {note && <small>{note}</small>}
+        {p.isDraft && <DraftLabel />}
+        {p.unseen && <b className="monitored-new">New</b>}
+      </button>
+      <span className="monitored-actions">
+        {working ? (
+          <span
+            className="monitored-working"
+            role="status"
+            aria-label={working + ' ' + subject}
+            title={working + ' this PR. Open it to follow or cancel.'}
+          >
+            <LoaderCircle className="spin" size={14} aria-hidden />
+          </span>
+        ) : (
+          <>
+            <button
+              aria-label={'Review ' + subject}
+              title="Review this PR for findings"
+              onClick={() => open(url, 'review')}
+            >
+              <ListChecks size={14} />
+            </button>
+            <button
+              aria-label={'Summarise ' + subject}
+              title="Summarise this PR"
+              onClick={() => open(url, 'summarise')}
+            >
+              <Sparkles size={14} />
+            </button>
+          </>
+        )}
+        <button
+          aria-label={(p.approved ? 'Approved. Review ' : 'Approve ') + subject}
+          title={
+            p.approved
+              ? 'You approved this PR. Review it again'
+              : 'Approve this PR. You confirm before it is sent'
+          }
+          onClick={() => open(url, 'approve')}
+        >
+          <CircleCheck size={14} />
+        </button>
+      </span>
+    </div>
+  );
+}
 
 export function PullRequestQueue({
   group: { key: repository, monitored, pulls, saved },
@@ -35,76 +129,17 @@ export function PullRequestQueue({
       {monitored?.error && <p role="status">Refresh failed. Showing saved results.</p>}
       {pulls.length > 0 && (
         <section className="pr-queue" aria-label="Monitored pull requests">
-          {pulls.map(({ url: pr, pull: p }) => {
+          {pulls.map(({ url, pull }) => (
             // An answer for this PR may be running while another PR is open.
-            const run = workingPrs.get(pr);
-            const working = run
-              ? run === 'summary'
-                ? 'Summarising'
-                : run === 'review'
-                  ? 'Reviewing'
-                  : 'Answering a question in'
-              : null;
-            return (
-              <div
-                key={p.number}
-                className="monitored-pr"
-                data-approved={p.approved || undefined}
-                data-new={p.unseen || undefined}
-                data-working={!!run || undefined}
-              >
-                <PrNumberLink url={pr} onError={onError} />
-                <button className="monitored-open" onClick={() => open(pr)}>
-                  <strong>{p.title}</strong>
-                  <small>@{p.author}</small>
-                  {p.isDraft && <DraftLabel />}
-                  {p.unseen && <b className="monitored-new">New</b>}
-                </button>
-                <span className="monitored-actions">
-                  {working ? (
-                    <span
-                      className="monitored-working"
-                      role="status"
-                      aria-label={working + ' pull request #' + p.number}
-                      title={working + ' this PR. Open it to follow or cancel.'}
-                    >
-                      <LoaderCircle className="spin" size={14} aria-hidden />
-                    </span>
-                  ) : (
-                    <>
-                      <button
-                        aria-label={'Review pull request #' + p.number}
-                        title="Review this PR for findings"
-                        onClick={() => open(pr, 'review')}
-                      >
-                        <ListChecks size={14} />
-                      </button>
-                      <button
-                        aria-label={'Summarise pull request #' + p.number}
-                        title="Summarise this PR"
-                        onClick={() => open(pr, 'summarise')}
-                      >
-                        <Sparkles size={14} />
-                      </button>
-                    </>
-                  )}
-                  <button
-                    aria-label={
-                      (p.approved ? 'Approved. Review' : 'Approve') + ' pull request #' + p.number
-                    }
-                    title={
-                      p.approved
-                        ? 'You approved this PR. Review it again'
-                        : 'Approve this PR. You confirm before it is sent'
-                    }
-                    onClick={() => open(pr, 'approve')}
-                  >
-                    <CircleCheck size={14} />
-                  </button>
-                </span>
-              </div>
-            );
-          })}
+            <PullRequestRow
+              key={pull.number}
+              url={url}
+              pull={pull}
+              run={workingPrs.get(url)}
+              open={open}
+              onError={onError}
+            />
+          ))}
         </section>
       )}
       {saved.length > 0 && (

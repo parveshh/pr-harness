@@ -79,6 +79,13 @@ export function assistantStore(db: DatabaseSync) {
       ),
     }));
   }
+  function unseenPulls() {
+    return repositories().flatMap((r) =>
+      r.pulls
+        .filter((p) => p.unseen && r.watching.includes(p.author))
+        .map((p) => 'https://github.com/' + r.name + '/pull/' + p.number),
+    );
+  }
   // `first` is the harness to use until the reviewer picks one.
   function chosen(first: AgentId): Selection {
     const row = db.prepare('SELECT agent,model,provider FROM agent_selection WHERE id=1').get();
@@ -146,12 +153,9 @@ export function assistantStore(db: DatabaseSync) {
     },
     // New PRs from authors still being watched, across every repository.
     unseen() {
-      return repositories().reduce(
-        (count, r) =>
-          count + r.pulls.filter((p) => p.unseen && r.watching.includes(p.author)).length,
-        0,
-      );
+      return unseenPulls().length;
     },
+    unseenPulls,
     failure(name: string, error: string) {
       db.prepare('UPDATE repositories SET error=? WHERE name=?').run(error, name);
     },

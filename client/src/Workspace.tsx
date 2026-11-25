@@ -29,6 +29,8 @@ import { LocalReviewStart } from './LocalReview.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 import { groupReviews, reviewRepository } from '../../shared/repository-groups.js';
 import { PullRequestQueue } from './PullRequestQueue.js';
+import { ReviewRequests } from './ReviewRequests.js';
+import type { ReviewRequestInbox } from '../../shared/review-requests.js';
 import { Reader, type PrCommand } from './Reader.js';
 
 const emptyInbox: ReplyInbox = {
@@ -153,6 +155,68 @@ export function Workspace({
   const [repos, setRepos] = useState<Repository[] | null>(null);
   const [chosenRepo, setChosenRepo] = useState<string | null>(null);
   const [newReview, setNewReview] = useState(false);
+  // Which list the main pane shows while no review is open.
+  const [queue, setQueue] = useState<'repository' | 'requests'>('repository');
+  const [requests, setRequests] = useState<ReviewRequestInbox | null>(null);
+  const [requestsBusy, setRequestsBusy] = useState(false);
+  const [requestEpoch, setRequestEpoch] = useState(0);
+  useEffect(() => {
+    let alive = true,
+      running = false,
+      last = 0;
+    async function poll(force: boolean) {
+      if (running || (!force && Date.now() - last < 115000)) return;
+      running = true;
+      last = Date.now();
+      try {
+        // The saved list is shown at once and stays if GitHub cannot be reached.
+        const saved = await window.reviewer.reviewRequests();
+        if (alive) setRequests(saved);
+        const next = await window.reviewer.syncReviewRequests();
+        if (alive) setRequests(next);
+      } catch (e) {
+        const message = readableError(e);
+        if (alive)
+          setRequests((current) =>
+            current?.state === 'listed'
+              ? { ...current, error: message }
+              : { state: 'unavailable', message },
+          );
+      } finally {
+        running = false;
+        if (alive) setRequestsBusy(false);
+      }
+    }
+    void poll(true);
+    const timer = window.setInterval(() => void poll(false), 120000);
+    const focus = () => void poll(false);
+    window.addEventListener('focus', focus);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', focus);
+    };
+  }, [requestEpoch]);
+  const refreshRequests = useCallback(() => {
+    setRequestsBusy(true);
+    setRequestEpoch((n) => n + 1);
+  }, []);
+  // Opening a PR clears its new mark in the main process, so read the saved list again.
+  useEffect(() => {
+    let alive = true;
+    window.reviewer
+      .reviewRequests()
+      .then((saved) => {
+        if (alive) setRequests((current) => (current === null ? current : saved));
+      })
+      .catch(() => {
+        /* The regular refresh reports list errors. */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeUrl]);
+  const listedRequests = requests?.state === 'listed' ? requests.requests : null;
   const groups = useMemo(() => groupReviews(repos ?? [], reviews ?? []), [repos, reviews]);
   const selectedRepo = activeUrl
     ? reviewRepository(activeUrl, reviews?.find((item) => item.url === activeUrl)?.local)
@@ -337,10 +401,17 @@ export function Workspace({
 
   function openSaved(pr: string) {
     setRepliesOpen(false);
+    setQueue('repository');
     select(pr);
   }
   function chooseRepository(key: string) {
     setChosenRepo(key);
+    setQueue('repository');
+    setRepliesOpen(false);
+    select(null);
+  }
+  function chooseRequests() {
+    setQueue('requests');
     setRepliesOpen(false);
     select(null);
   }
@@ -369,7 +440,8 @@ export function Workspace({
       .finally(() => setBusy(false));
   }
 
-  function openMonitored(pr: string, kind: PrCommand['kind'] | null = null) {
+  // `origin` is the list that Back returns to.
+  function openPull(pr: string, kind: PrCommand['kind'] | null, origin: typeof queue) {
     const request = ++navigation.current;
     window.reviewer
       .saveReview(pr)
@@ -377,6 +449,7 @@ export function Workspace({
         if (request !== navigation.current) return;
         setReviews(items);
         setChosenRepo(reviewRepository(pr));
+        setQueue(origin);
         setRepliesOpen(false);
         select(pr, kind, request);
       })
@@ -384,6 +457,8 @@ export function Workspace({
         if (request === navigation.current) setError(readableError(e));
       });
   }
+  const openMonitored = (pr: string, kind: PrCommand['kind'] | null = null) =>
+    openPull(pr, kind, 'repository');
   // A notification about a new pull request opens it when clicked.
   const openFromAlert = useEffectEvent((pr: string) => {
     openMonitored(pr);
@@ -432,8 +507,12 @@ export function Workspace({
             groups={[...groups.values()]}
             openSaved={openSaved}
             openMonitored={openMonitored}
-            selectedRepo={selectedRepo}
+            selectedRepo={queue === 'requests' && !activeUrl ? null : selectedRepo}
             chooseRepository={chooseRepository}
+            requestCount={listedRequests?.length ?? null}
+            newRequests={listedRequests?.filter((request) => request.unseen).length ?? 0}
+            requestsSelected={queue === 'requests' && !activeUrl && !repliesOpen}
+            chooseRequests={chooseRequests}
             activeUrl={activeUrl}
             refresh={reviewEpoch}
             refreshSavedStatuses={refresh}
@@ -457,7 +536,10 @@ export function Workspace({
               type={type}
               chooseType={chooseType}
               onLoginStart={invalidateInbox}
-              onConnected={refresh}
+              onConnected={() => {
+                refresh();
+                refreshRequests();
+              }}
               close={() => setSettingsOpen(false)}
               error={appearanceError}
             />
@@ -489,9 +571,11 @@ export function Workspace({
             <div className="shell queue-page">
               <header className="home-bar">
                 <h1>
-                  {reviews?.some((item) => item.local?.path === selectedRepo)
-                    ? 'Local reviews'
-                    : 'Pull requests'}
+                  {queue === 'requests'
+                    ? 'Review requests'
+                    : reviews?.some((item) => item.local?.path === selectedRepo)
+                      ? 'Local reviews'
+                      : 'Pull requests'}
                 </h1>
                 <button
                   className="open-review"
@@ -505,7 +589,16 @@ export function Workspace({
               </header>
               <main>
                 {error && !newReview && <p role="alert">{error}</p>}
-                {(repos === null && !selectedRepo) || reviews === null ? (
+                {queue === 'requests' ? (
+                  <ReviewRequests
+                    inbox={requests}
+                    busy={requestsBusy}
+                    refresh={refreshRequests}
+                    open={(pr, kind) => openPull(pr, kind ?? null, 'requests')}
+                    openSettings={() => setSettingsOpen(true)}
+                    onError={setError}
+                  />
+                ) : (repos === null && !selectedRepo) || reviews === null ? (
                   <p role="status">{error ? 'Workspace unavailable.' : 'Loading workspace…'}</p>
                 ) : selectedGroup ? (
                   <PullRequestQueue
@@ -558,6 +651,7 @@ export function Workspace({
                     onStarted={(started, items) => {
                       setReviews(items);
                       setNewReview(false);
+                      setQueue('repository');
                       setChosenRepo(
                         reviewRepository(
                           started,

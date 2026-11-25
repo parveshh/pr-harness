@@ -19,13 +19,14 @@ import {
 import { readerMigration, readerStore } from './reader-store.js';
 import { pullRequestUrl, reviewList } from '../shared/reviews.js';
 import { ensureLocalReviewSchema, localReviewMigration, localStore } from './local-store.js';
+import { reviewRequestMigration, reviewRequestStore } from './review-requests.js';
 
 export function openStore(filename: string) {
   const db = new DatabaseSync(filename);
   try {
     db.exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version < 0 || version > 25)
+    if (typeof version !== 'number' || version < 0 || version > 26)
       throw new Error('This workspace requires a newer Local Reviewer.');
     if (version === 0) {
       db.exec(`CREATE TABLE saved_reviews (url TEXT PRIMARY KEY, saved_at TEXT NOT NULL) STRICT;
@@ -94,6 +95,7 @@ export function openStore(filename: string) {
         WHEN 'large' THEN '18' WHEN 'larger' THEN '20' ELSE font_size END;
         PRAGMA user_version=25;`);
     }
+    if (version < 26) db.exec(reviewRequestMigration);
     ensureLocalReviewSchema(db);
     if (version === 0)
       db.prepare('UPDATE workspace SET appearance=?, accent=? WHERE id=1').run('ink', 'green');
@@ -207,6 +209,7 @@ export function openStore(filename: string) {
     assistant: assistantStore(db),
     reader,
     local: localStore(db),
+    reviewRequests: reviewRequestStore(db),
     list: listReviews,
     save(input: unknown) {
       const url = pullRequestUrl.parse(input);

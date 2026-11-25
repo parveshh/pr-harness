@@ -14,6 +14,7 @@ import { login, readableError, repoName, type Repository } from '../../shared/as
 
 import {
   Folder,
+  Inbox,
   FolderOpen,
   ChevronRight,
   ChevronDown,
@@ -43,6 +44,10 @@ export function RepositorySidebar({
   openMonitored,
   selectedRepo,
   chooseRepository,
+  requestCount,
+  newRequests,
+  requestsSelected,
+  chooseRequests,
   refresh,
   refreshSavedStatuses,
   activeUrl,
@@ -60,6 +65,11 @@ export function RepositorySidebar({
   openMonitored: (url: string) => void;
   selectedRepo: string | null;
   chooseRepository: (name: string) => void;
+  // Null until a list of review requests is available.
+  requestCount: number | null;
+  newRequests: number;
+  requestsSelected: boolean;
+  chooseRequests: () => void;
   refresh: number;
   refreshSavedStatuses: () => void;
   activeUrl: string | null;
@@ -200,6 +210,33 @@ export function RepositorySidebar({
         </button>
       </nav>
       <div className="sidebar-contents" hidden={!!repliesPane}>
+        <div
+          className="repository-row review-requests-row"
+          data-selected={requestsSelected || undefined}
+        >
+          <Inbox size={16} className="requests-icon" aria-hidden="true" />
+          <button
+            className="repo-link"
+            aria-label={
+              'Review requests' +
+              (requestCount === null ? '' : ', ' + requestCount + ' open') +
+              (newRequests > 0 ? ', ' + newRequests + ' new' : '')
+            }
+            aria-current={requestsSelected ? 'page' : undefined}
+            onClick={chooseRequests}
+          >
+            <span>Review requests</span>
+          </button>
+          {requestCount !== null && (
+            <span
+              className="request-count"
+              data-new={newRequests > 0 || undefined}
+              aria-hidden="true"
+            >
+              {requestCount}
+            </span>
+          )}
+        </div>
         <nav aria-label="Repositories">
           <div className="sidebar-title">
             <h2>

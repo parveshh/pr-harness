@@ -54,6 +54,7 @@ import { buildAgentContext, citationInstruction, citedAnswer } from './evidence.
 import { replyMonitor } from './replies.js';
 import { githubLogin } from './account.js';
 import { monitor } from './monitor.js';
+import { requestsToAnnounce, reviewRequestMonitor } from './review-requests.js';
 import { chatRuns } from './chat-runs.js';
 import { pipelineReader } from './pipelines.js';
 import type { PrAlerts } from './pr-alerts.js';
@@ -70,12 +71,23 @@ export function registerWorkspace(
   const check = monitor(data, shutdown.signal, undefined, undefined, (repo, pulls) =>
     alerts.announce(repo, pulls),
   );
+  const requests = reviewRequestMonitor(
+    store.reviewRequests,
+    shutdown.signal,
+    undefined,
+    // `requested` shows nothing for an empty list.
+    (arrived) => alerts.requested(requestsToAnnounce(arrived, store.reader.active())),
+  );
   // The app icon counts new pull requests, so refresh it whenever the list may have changed.
   const badge = () => {
     // The PR on screen has been seen, even if a check has only just listed it as new.
     const open = store.reader.active();
-    if (open) data.seen(open);
-    alerts.badge(data.unseen());
+    if (open) {
+      data.seen(open);
+      store.reviewRequests.seen(open);
+    }
+    // A monitored PR that also requests the reviewer counts once.
+    alerts.badge(new Set([...data.unseenPulls(), ...requests.unseen()]).size);
   };
   const sync = async (...input: Parameters<typeof check>) => {
     try {
@@ -232,6 +244,7 @@ export function registerWorkspace(
   handle('settings:save-type', (_, value) => store.saveTypography(value));
   handle('account:start', () => {
     replies.invalidate();
+    requests.invalidate();
     return account.start();
   });
   handle('account:progress', () => account.progress());
@@ -243,6 +256,17 @@ export function registerWorkspace(
     const inbox = await replies.sync();
     badge();
     return inbox;
+  });
+  handle('requests:list', () => requests.state());
+  handle('requests:sync', async () => {
+    if (account.progress().state === 'waiting') return requests.state();
+    try {
+      await requests.sync();
+    } finally {
+      badge();
+    }
+    // Read after the badge refresh, which clears the mark of a PR that is open on screen.
+    return requests.state();
   });
   handle('replies:read', async (_, value) => {
     const name = login.parse(value);
@@ -723,6 +747,7 @@ export function registerWorkspace(
     // Opening a PR clears its new mark.
     seen(url: string) {
       data.seen(url);
+      store.reviewRequests.seen(url);
       badge();
     },
     cancel: () => {

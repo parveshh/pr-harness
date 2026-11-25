@@ -10,6 +10,7 @@ import type { AssistantBridge, CitedSourceKey } from './assistant.js';
 import type { Checkpoint, FileKey, ReaderView, reviewUpdate } from './reader.js';
 import type { MatchingHunk, SearchRequest } from './diff-search.js';
 import type { LocalBridge } from './local.js';
+import type { ReviewRequestBridge } from './review-requests.js';
 
 // Store a single canonical URL even when a reviewer copies a link from the Files tab.
 export const pullRequestUrl = z
@@ -88,7 +89,8 @@ export interface ReviewerBridge
     WorkspaceBridge,
     PipelineBridge,
     CrossPrBridge,
-    LocalBridge {
+    LocalBridge,
+    ReviewRequestBridge {
   readonly integratedTitleBar: boolean;
   getSidebarVibrancy(): Promise<boolean>;
   saveSidebarVibrancy(enabled: boolean): Promise<void>;
