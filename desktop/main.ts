@@ -300,6 +300,14 @@ function startWorkspace() {
       throw error;
     }
   });
+  ipcMain.handle('shortcuts:get', (event) => {
+    verifySender(event);
+    return store.getSingleKeyShortcuts();
+  });
+  ipcMain.handle('shortcuts:save', (event, value: unknown) => {
+    verifySender(event);
+    store.saveSingleKeyShortcuts(z.boolean().parse(value));
+  });
   ipcMain.handle('appearance:get', (event) => {
     verifySender(event);
     return store.getAppearance();

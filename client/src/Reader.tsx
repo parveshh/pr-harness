@@ -9,6 +9,15 @@ import { PinnedQuestions, QuestionLinks, type QuestionPanel } from './PinnedQues
 import { RevisionChanges, revisionQueue } from './RevisionChanges.js';
 import { InlineComments } from './InlineComments.js';
 import { Activity, Fragment } from 'react';
+import { useShortcuts } from './useShortcuts.js';
+import { WorkspaceDialog } from './components/WorkspaceDialog.js';
+import {
+  adjacentFile,
+  firstChangedLine,
+  shortcutHelp,
+  stepHunk,
+  type ShortcutAction,
+} from '../../shared/shortcuts.js';
 import { DiffSearch } from './DiffSearch.js';
 import {
   scanHunk,
@@ -55,6 +64,7 @@ import {
   MessageSquarePlus,
   MessageSquare,
   FolderGit2,
+  Keyboard,
 } from 'lucide-react';
 import { FullFile, type FileFocus } from './FullFile.js';
 import { usePrDiscussions, discussionsByLine } from './PrDiscussions.js';
@@ -83,6 +93,7 @@ export function Reader({
   onSnapshotSaved,
   accountEpoch,
   local: localInfo,
+  singleKeyShortcuts,
 }: {
   layout: ReviewLayout;
   url: string;
@@ -95,6 +106,8 @@ export function Reader({
   onPublished: () => void;
   onSnapshotSaved: () => void;
   accountEpoch: string | null;
+  // The Single-key shortcuts setting.
+  singleKeyShortcuts: boolean;
 }) {
   const [fullFile, setFullFile] = useState(false);
   const [fullFocus, setFullFocus] = useState<(FileFocus & { path: string }) | null>(null);
@@ -476,6 +489,159 @@ export function Reader({
   const nextUnread = [...files.slice(index + 1), ...files.slice(0, index)].find(
     (file) => !file.reviewed,
   );
+  function chooseFileView(full: boolean) {
+    if (!selected) return;
+    if (!full) {
+      setFullFile(false);
+      return;
+    }
+    if (selected.kind === 'binary') return;
+    const pane = diffPanel.current?.querySelector('.diff-scroll');
+    const top = pane?.getBoundingClientRect().top ?? 0;
+    const row = pane
+      ? Array.from(pane.querySelectorAll<HTMLElement>('.diff-line')).find(
+          (r) => r.getBoundingClientRect().bottom > top,
+        )
+      : undefined;
+    const focus =
+      selection ??
+      (row?.dataset.newLine
+        ? { side: 'new' as const, line: Number(row.dataset.newLine) }
+        : row?.dataset.oldLine
+          ? { side: 'old' as const, line: Number(row.dataset.oldLine) }
+          : null);
+    setFullFocus(focus ? { ...focus, path: selected.path } : null);
+    setFullFile(true);
+  }
+  // Keyboard shortcuts drive the same handlers as the on-screen controls.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
+  const hunkControl = useRef<HunkControl | null>(null);
+  const hunkFocus = useRef<{ path: string; hunk: number; until: number } | null>(null);
+  const hunkCounts = useRef(new Map<string, number>());
+  const navigation = useRef(0);
+  useEffect(
+    () => () => {
+      // A hunk lookup that finishes after the revision changed or the review closed is stale.
+      navigation.current += 1;
+    },
+    [view?.revision],
+  );
+  const claimHunkFocus = useCallback((path: string, hunk: number) => {
+    const wanted = hunkFocus.current;
+    if (!wanted || wanted.path !== path || wanted.hunk !== hunk) return false;
+    hunkFocus.current = null;
+    return wanted.until > Date.now();
+  }, []);
+  async function countHunks(file: ReaderFile) {
+    if (!view || (file.kind !== 'text' && file.kind !== 'partial')) return 0;
+    const key = view.revision + '\0' + file.path;
+    const known = hunkCounts.current.get(key);
+    if (known !== undefined) return known;
+    const count = splitHunks(
+      await window.reviewer.filePatch({ url, revision: view.revision, path: file.path }),
+    ).length;
+    hunkCounts.current.set(key, count);
+    return count;
+  }
+  function goTo(file: ReaderFile, hunk: number, hunkCount: number | null) {
+    const hasHunks = file.kind === 'text' || file.kind === 'partial';
+    hunkFocus.current =
+      hasHunks && !fullFile ? { path: file.path, hunk, until: Date.now() + 5000 } : null;
+    move(file, file.hunk === hunk ? {} : { hunk, scroll: 0 });
+    setAnnouncement(
+      file.path +
+        ', file ' +
+        (files.indexOf(file) + 1) +
+        ' of ' +
+        files.length +
+        (hunkCount ? ', hunk ' + (hunk + 1) + ' of ' + hunkCount : ''),
+    );
+  }
+  async function stepBy(direction: 1 | -1) {
+    if (!view || !selected) return;
+    if (showFullFile) {
+      setAnnouncement('Switch to Diff only to move between hunks.');
+      return;
+    }
+    const token = ++navigation.current;
+    try {
+      const target = await stepHunk(
+        files.length,
+        { index, hunk: selected.hunk },
+        direction,
+        (i) => {
+          const file = files[i];
+          return file ? countHunks(file) : 0;
+        },
+      );
+      if (token !== navigation.current) return;
+      const file = target && files[target.index];
+      if (!target || !file) {
+        setAnnouncement(direction === 1 ? 'This is the last hunk.' : 'This is the first hunk.');
+        return;
+      }
+      goTo(file, target.hunk, await countHunks(file));
+    } catch (cause) {
+      if (token === navigation.current) setSaveError(message(cause));
+    }
+  }
+  function stepFile(direction: 1 | -1) {
+    const target = adjacentFile(files.length, index, direction);
+    const file = target === null ? undefined : files[target];
+    if (file) goTo(file, file.hunk, null);
+    else setAnnouncement(direction === 1 ? 'This is the last file.' : 'This is the first file.');
+  }
+  function runShortcut(action: ShortcutAction) {
+    if (action === 'show-help') {
+      setShortcutsOpen(true);
+      return;
+    }
+    if (!view || !selected || section !== 'Changes' || since || source) return;
+    switch (action) {
+      case 'next-hunk':
+        void stepBy(1);
+        return;
+      case 'previous-hunk':
+        void stepBy(-1);
+        return;
+      case 'next-file':
+        stepFile(1);
+        return;
+      case 'previous-file':
+        stepFile(-1);
+        return;
+      case 'next-unread':
+        if (nextUnread) goTo(nextUnread, nextUnread.hunk, null);
+        else setAnnouncement('There are no other unread files.');
+        return;
+      case 'toggle-reviewed':
+        move(selected, { reviewed: !selected.reviewed });
+        setAnnouncement(
+          selected.path + (selected.reviewed ? ' marked unread' : ' marked reviewed'),
+        );
+        return;
+      case 'comment':
+        // Keep text already typed in an open editor rather than replacing it.
+        if (editor) document.getElementById('inline-comment-body')?.focus();
+        else hunkControl.current?.comment();
+        return;
+      case 'ask':
+        if (selection) openChat();
+        else setAnnouncement('Select a line to ask the assistant about it.');
+        return;
+      case 'toggle-full-file':
+        if (selected.kind === 'binary') return;
+        chooseFileView(!showFullFile);
+        setAnnouncement(showFullFile ? 'Diff only' : 'Full file');
+        return;
+      default: {
+        const unreachable: never = action;
+        return unreachable;
+      }
+    }
+  }
+  useShortcuts(singleKeyShortcuts && hasView, runShortcut);
   const chatFile = queue ? files.find((file) => file.path === queue.path) : selected;
   const fileTree = view && (
     <ChangedFiles
@@ -593,6 +759,47 @@ export function Reader({
   );
   return (
     <div className="reader review-studio" ref={readerElement}>
+      <div role="status" aria-live="polite" className="visually-hidden">
+        {announcement}
+      </div>
+      {shortcutsOpen && (
+        <WorkspaceDialog
+          title="Keyboard shortcuts"
+          icon={<Keyboard size={20} />}
+          onClose={() => setShortcutsOpen(false)}
+        >
+          <table className="shortcut-list">
+            <caption className="visually-hidden">Reader shortcuts</caption>
+            <thead>
+              <tr>
+                <th scope="col">Keys</th>
+                <th scope="col">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shortcutHelp.map((entry) => (
+                <tr key={entry.keys.join(' ')}>
+                  <th scope="row">
+                    {entry.keys.map((key, i) => (
+                      <Fragment key={key}>
+                        {i > 0 && ' or '}
+                        <kbd>{key}</kbd>
+                      </Fragment>
+                    ))}
+                  </th>
+                  <td>{entry.action}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p>
+            Shortcuts apply while reading changes, and not while you type or a dialog is open.
+            {singleKeyShortcuts
+              ? ' Turn single-key shortcuts off in Settings.'
+              : ' Single-key shortcuts are off. Turn them on in Settings.'}
+          </p>
+        </WorkspaceDialog>
+      )}
       {lessonThread && (
         <LessonEditor
           thread={lessonThread}
@@ -684,6 +891,14 @@ export function Reader({
                 }}
               >
                 <RotateCw size={14} /> Refresh
+              </button>
+              <button
+                className="secondary"
+                aria-haspopup="dialog"
+                title="Keyboard shortcuts (?)"
+                onClick={() => setShortcutsOpen(true)}
+              >
+                <Keyboard size={14} /> Keyboard shortcuts
               </button>
               {questions.length > 0 && (
                 <button
@@ -994,30 +1209,13 @@ export function Reader({
                       <span className="minus">−{selected.deletions}</span>
                     </p>
                     <div className="file-view-toggle" role="group" aria-label="File view">
-                      <button aria-pressed={!showFullFile} onClick={() => setFullFile(false)}>
+                      <button aria-pressed={!showFullFile} onClick={() => chooseFileView(false)}>
                         Diff only
                       </button>
                       <button
                         aria-pressed={showFullFile}
                         disabled={selected.kind === 'binary'}
-                        onClick={() => {
-                          const pane = diffPanel.current?.querySelector('.diff-scroll');
-                          const top = pane?.getBoundingClientRect().top ?? 0;
-                          const row = pane
-                            ? Array.from(pane.querySelectorAll<HTMLElement>('.diff-line')).find(
-                                (r) => r.getBoundingClientRect().bottom > top,
-                              )
-                            : undefined;
-                          const focus =
-                            selection ??
-                            (row?.dataset.newLine
-                              ? { side: 'new' as const, line: Number(row.dataset.newLine) }
-                              : row?.dataset.oldLine
-                                ? { side: 'old' as const, line: Number(row.dataset.oldLine) }
-                                : null);
-                          setFullFocus(focus ? { ...focus, path: selected.path } : null);
-                          setFullFile(true);
-                        }}
+                        onClick={() => chooseFileView(true)}
                       >
                         Full file
                       </button>
@@ -1062,6 +1260,8 @@ export function Reader({
                       revision={view.revision}
                       file={selected}
                       ask={openChat}
+                      controlRef={hunkControl}
+                      claimFocus={claimHunkFocus}
                       codeLessons={codeLessons}
                       pinnedLinks={
                         <QuestionLinks
@@ -1204,6 +1404,8 @@ function Patch({
   local,
   codeLessons,
   ask,
+  controlRef,
+  claimFocus,
   pinnedLinks,
   url,
   revision,
@@ -1222,6 +1424,8 @@ function Patch({
   revision: string;
   file: ReaderFile;
   ask: () => void;
+  controlRef: RefObject<HunkControl | null>;
+  claimFocus: (path: string, hunk: number) => boolean;
   codeLessons: (lines: string[]) => ReactNode;
   pinnedLinks: ReactNode;
   drafts: Draft[];
@@ -1303,6 +1507,9 @@ function Patch({
       <Hunk
         searchHit={searchHit}
         ask={ask}
+        controlRef={controlRef}
+        claimFocus={claimFocus}
+        index={file.hunk}
         key={file.hunk}
         notes={notes}
         published={published}
@@ -1337,9 +1544,16 @@ function Patch({
   );
 }
 
+// What the reader's keyboard shortcuts can ask of the hunk on screen.
+interface HunkControl {
+  comment(): void;
+}
 function Hunk({
   searchHit,
   ask,
+  controlRef,
+  claimFocus,
+  index,
   text,
   path,
   offset,
@@ -1353,6 +1567,9 @@ function Hunk({
   onScroll,
 }: {
   ask: () => void;
+  controlRef: RefObject<HunkControl | null>;
+  claimFocus: (path: string, hunk: number) => boolean;
+  index: number;
   searchHit: SearchHit | null;
   text: string;
   path: string;
@@ -1419,6 +1636,32 @@ function Hunk({
   }, [drafts]);
   const { heading, lines } = useMemo(() => diffLines(text), [text]);
   const syntax = useMemo(() => highlightRows(lines, languageFor(path)), [lines, path]);
+  useEffect(() => {
+    const api: HunkControl = {
+      comment() {
+        if (!onComment) return;
+        if (selection) {
+          const row = lines.find(
+            (l) => (selection.side === 'old' ? l.oldLine : l.newLine) === selection.line,
+          );
+          if (row) onComment(selection.side, selection.line, row.text);
+          return;
+        }
+        const first = firstChangedLine(lines);
+        if (first) onComment(first.side, first.line, first.text);
+      },
+    };
+    controlRef.current = api;
+    return () => {
+      if (controlRef.current === api) controlRef.current = null;
+    };
+  }, [controlRef, onComment, selection, lines]);
+  useLayoutEffect(() => {
+    // Moving here by keyboard puts focus on the hunk so assistive technology follows.
+    if (!claimFocus(path, index)) return;
+    pane.current?.focus({ preventScroll: true });
+    pane.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [claimFocus, path, index]);
   return (
     <div
       ref={pane}

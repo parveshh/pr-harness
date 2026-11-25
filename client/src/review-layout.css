@@ -1128,3 +1128,38 @@
 .layout-preview [data-pane='diff'] {
   flex: 1.6;
 }
+
+.settings-hint {
+  display: block;
+  margin: -10px 0 18px;
+  color: var(--muted);
+}
+.shortcut-list {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.shortcut-list th,
+.shortcut-list td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--edge);
+  text-align: left;
+  font-weight: normal;
+  vertical-align: top;
+}
+.shortcut-list thead th {
+  color: var(--muted);
+}
+.shortcut-list tbody th {
+  white-space: nowrap;
+}
+.shortcut-list kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 1px 6px;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: var(--raised);
+  font-family: inherit;
+  text-align: center;
+}

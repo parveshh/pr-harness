@@ -94,6 +94,8 @@ export interface ReviewerBridge
   readonly integratedTitleBar: boolean;
   getSidebarVibrancy(): Promise<boolean>;
   saveSidebarVibrancy(enabled: boolean): Promise<void>;
+  getSingleKeyShortcuts(): Promise<boolean>;
+  saveSingleKeyShortcuts(enabled: boolean): Promise<void>;
   getAppearance(): Promise<Appearance>;
   saveAppearance(value: Appearance): Promise<void>;
   getAccent(): Promise<Accent>;

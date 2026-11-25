@@ -42,11 +42,13 @@ const emptyInbox: ReplyInbox = {
 };
 export function Workspace({
   initialVibrancy,
+  initialShortcuts,
   initialTheme,
   initialAccent,
   initialType,
 }: {
   initialVibrancy: boolean;
+  initialShortcuts: boolean;
   initialTheme: Appearance;
   initialAccent: Accent;
   initialType: Typography;
@@ -71,6 +73,20 @@ export function Workspace({
         setAppearanceError('Could not save sidebar vibrancy. Please try again.');
       })
       .finally(() => setSavingVibrancy(false));
+  }
+  const [shortcuts, setShortcuts] = useState(initialShortcuts);
+  const [savingShortcuts, setSavingShortcuts] = useState(false);
+  function chooseShortcuts(enabled: boolean) {
+    setSavingShortcuts(true);
+    setShortcuts(enabled);
+    window.reviewer
+      .saveSingleKeyShortcuts(enabled)
+      .then(() => setAppearanceError(''))
+      .catch(() => {
+        setShortcuts(!enabled);
+        setAppearanceError('Could not save the shortcuts setting. Please try again.');
+      })
+      .finally(() => setSavingShortcuts(false));
   }
   function chooseTheme(next: Appearance) {
     window.reviewer
@@ -531,6 +547,9 @@ export function Workspace({
               vibrancy={vibrancy}
               savingVibrancy={savingVibrancy}
               chooseVibrancy={chooseVibrancy}
+              shortcuts={shortcuts}
+              savingShortcuts={savingShortcuts}
+              chooseShortcuts={chooseShortcuts}
               accent={accent}
               chooseAccent={chooseAccent}
               type={type}
@@ -552,6 +571,7 @@ export function Workspace({
               layout={layout}
               accountEpoch={inbox.account}
               agentPicker={agentPicker}
+              singleKeyShortcuts={shortcuts}
               agents={agents}
               command={command?.url === activeUrl ? command : null}
               local={reviews?.find((item) => item.url === activeUrl)?.local ?? null}

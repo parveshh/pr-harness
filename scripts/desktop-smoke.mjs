@@ -405,6 +405,13 @@ try {
       } else {
         assert.equal(await vibrancy.count(), 0);
       }
+      // Single-key shortcuts are on by default and the choice is saved.
+      const shortcutSetting = settingsPane.getByRole('checkbox', { name: 'Single-key shortcuts' });
+      assert.equal(await shortcutSetting.isChecked(), true);
+      await shortcutSetting.uncheck();
+      await page.waitForFunction(async () => !(await globalThis.reviewer.getSingleKeyShortcuts()));
+      await shortcutSetting.check();
+      await page.waitForFunction(() => globalThis.reviewer.getSingleKeyShortcuts());
       await checkMacFrame(app, 'light');
       await capture(page, 'light-settings');
       await settingsPane.getByText('Green', { exact: true }).click();
@@ -1430,8 +1437,13 @@ try {
         .click();
       await page.getByLabel('Review summary').fill('Grouped review summary');
       await page.getByRole('button', { name: 'Save and close' }).click();
-      await page.getByRole('button', { name: 'Next hunk' }).click();
+      // j moves to the next hunk, as Next hunk does, and focuses it for screen readers.
+      await page.getByRole('dialog', { name: 'Review drafts' }).waitFor({ state: 'detached' });
+      await page.keyboard.press('j');
       await region.getByText('+new line 60', { exact: true }).waitFor({ state: 'attached' });
+      await page.waitForFunction(
+        () => globalThis.document.activeElement?.getAttribute('aria-label') === 'File diff',
+      );
       await page.getByRole('button', { name: 'Select new line 42', exact: true }).click();
       await page
         .getByRole('button', { name: 'Select new line 40', exact: true })
@@ -1970,6 +1982,55 @@ try {
       await localDialog.getByRole('button', { name: 'Start review' }).click();
       await changedFiles(page).waitFor();
       await page.getByRole('button', { name: 'Ask about branch' }).waitFor();
+      assert.equal(await page.getByRole('region', { name: 'Review chat' }).count(), 0);
+      // Single-key shortcuts work in a local review: j reports the last hunk, v marks the file
+      // reviewed, c opens the comment editor, and Esc closes it and returns focus to the hunk.
+      const shortcutDiff = page.getByRole('region', { name: 'File diff' });
+      await shortcutDiff.waitFor();
+      const shortcutStatus = page.getByRole('status').filter({ hasText: 'This is the last hunk.' });
+      await page.keyboard.press('j');
+      await shortcutStatus.first().waitFor({ state: 'attached' });
+      const markReviewed = page.getByRole('button', { name: /^(Mark reviewed|Reviewed ✓)$/ });
+      const wasReviewed = (await markReviewed.textContent())?.includes('✓') ?? false;
+      await page.keyboard.press('v');
+      await page
+        .getByRole('button', { name: wasReviewed ? 'Mark reviewed' : 'Reviewed ✓', exact: true })
+        .waitFor();
+      await page.keyboard.press('v');
+      await page
+        .getByRole('button', { name: wasReviewed ? 'Reviewed ✓' : 'Mark reviewed', exact: true })
+        .waitFor();
+      await page.keyboard.press('c');
+      const shortcutEditor = shortcutDiff.getByRole('form', { name: 'Draft line comment' });
+      await shortcutEditor.waitFor();
+      // Typing in the editor never triggers a shortcut.
+      await page.keyboard.type('jkvc?');
+      assert.equal(
+        await shortcutEditor.getByLabel('Comment', { exact: true }).inputValue(),
+        'jkvc?',
+      );
+      assert.equal(await page.getByRole('dialog', { name: 'Keyboard shortcuts' }).count(), 0);
+      await page.keyboard.press('Escape');
+      await shortcutEditor.getByText('Press Esc again to discard this comment.').waitFor();
+      await page.keyboard.press('Escape');
+      await shortcutEditor.waitFor({ state: 'detached' });
+      await page.waitForFunction(() => {
+        const active = globalThis.document.activeElement;
+        return (
+          !!active?.getAttribute('aria-label')?.startsWith('Select ') &&
+          !!active.closest('.diff-scroll')
+        );
+      });
+      // ? lists the shortcuts, and nothing else reacts while the dialog is open.
+      await page.keyboard.press('Shift+Slash');
+      const shortcutDialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+      await shortcutDialog.waitFor();
+      await page.keyboard.press('v');
+      await page.keyboard.press('Escape');
+      await shortcutDialog.waitFor({ state: 'detached' });
+      await page
+        .getByRole('button', { name: wasReviewed ? 'Reviewed ✓' : 'Mark reviewed', exact: true })
+        .waitFor();
       assert.equal(await page.getByRole('region', { name: 'Review chat' }).count(), 0);
       await page.getByRole('button', { name: 'Local reviews', exact: true }).click();
       await page.getByRole('heading', { name: 'Local reviews', exact: true }).waitFor();

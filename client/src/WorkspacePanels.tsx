@@ -44,6 +44,9 @@ export function SettingsPane({
   vibrancy,
   savingVibrancy,
   chooseVibrancy,
+  shortcuts,
+  savingShortcuts,
+  chooseShortcuts,
   accent,
   chooseAccent,
   type,
@@ -57,6 +60,9 @@ export function SettingsPane({
   vibrancy: boolean;
   savingVibrancy: boolean;
   chooseVibrancy: (enabled: boolean) => void;
+  shortcuts: boolean;
+  savingShortcuts: boolean;
+  chooseShortcuts: (enabled: boolean) => void;
   chooseTheme: (v: Appearance) => void;
   accent: Accent;
   chooseAccent: (v: Accent) => void;
@@ -191,6 +197,20 @@ export function SettingsPane({
             />
           </div>
         )}
+        <div className="settings-line">
+          <label htmlFor="single-key-shortcuts">Single-key shortcuts</label>
+          <input
+            id="single-key-shortcuts"
+            type="checkbox"
+            checked={shortcuts}
+            aria-describedby="single-key-shortcuts-hint"
+            disabled={savingShortcuts}
+            onChange={(event) => chooseShortcuts(event.target.checked)}
+          />
+        </div>
+        <small id="single-key-shortcuts-hint" className="settings-hint">
+          Reader keys such as j, k and v. Press ? while reading a review to list them.
+        </small>
         <div className="settings-line">
           <label htmlFor="ui-font">Interface font</label>
           <select

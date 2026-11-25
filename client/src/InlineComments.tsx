@@ -29,6 +29,10 @@ export function InlineComments({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const field = useRef<HTMLTextAreaElement>(null);
+  // Esc closes the editor. Typed text survives one stray Esc: it asks for a second press.
+  const [discardAsked, setDiscardAsked] = useState(false);
+  const saved = editor?.id ? bundle.comments.find((c) => c.id === editor.id)?.body : undefined;
+  const unsaved = !!editor && editor.body.trim() !== '' && editor.body !== (saved ?? '');
   async function edit(request: Edit) {
     setBusy(true);
     setError('');
@@ -107,7 +111,16 @@ export function InlineComments({
               rows={3}
               maxLength={60000}
               value={editor.body}
-              onChange={(e) => setEditor({ ...editor, body: e.target.value })}
+              onChange={(e) => {
+                setDiscardAsked(false);
+                setEditor({ ...editor, body: e.target.value });
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Escape' || e.nativeEvent.isComposing || busy) return;
+                e.preventDefault();
+                if (unsaved && !discardAsked) setDiscardAsked(true);
+                else onClose();
+              }}
               placeholder="Write a review comment…"
             />
           </label>
@@ -121,6 +134,7 @@ export function InlineComments({
               textarea={field}
               onBody={(body) => setEditor({ ...editor, body })}
             />
+            {discardAsked && <small role="status">Press Esc again to discard this comment.</small>}
             <button type="button" disabled={busy} onClick={onClose}>
               Cancel
             </button>

@@ -17,7 +17,9 @@ void Promise.all([
   window.reviewer.typography().catch(() => defaultTypography),
   window.reviewer.getAccent().catch(() => 'green' as const),
   window.reviewer.getSidebarVibrancy().catch(() => false),
-]).then(([theme, type, accent, vibrancy]) => {
+  // Single-key shortcuts default to on when the setting cannot be read.
+  window.reviewer.getSingleKeyShortcuts().catch(() => true),
+]).then(([theme, type, accent, vibrancy, shortcuts]) => {
   document.documentElement.classList.toggle('sidebar-vibrancy', vibrancy);
   document.documentElement.dataset.palette = theme;
   document.documentElement.dataset.accent = accent;
@@ -26,6 +28,7 @@ void Promise.all([
     <StrictMode>
       <Workspace
         initialVibrancy={vibrancy}
+        initialShortcuts={shortcuts}
         initialTheme={theme}
         initialType={type}
         initialAccent={accent}

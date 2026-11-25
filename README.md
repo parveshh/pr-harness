@@ -114,9 +114,27 @@ Questions saved in earlier versions are available under **Pinned questions** and
 
 After you open an update, select a question to compare the original evidence with the current hunk. You can expand the full hunks or jump to the code. If a match is uncertain, the question retains its original evidence and identifies the uncertainty. Choose **Mark addressed** when satisfied. Addressed questions stay in the local list and can be reopened.
 
+## Keyboard shortcuts
+
+While you read a review, single keys drive the controls you would otherwise click. They work in pull request and local branch reviews, and ignore a key while you type in a field, while a dialog or menu is open, and when Ctrl, Meta or Alt is held. Press **?** or choose **Keyboard shortcuts** in the reader header to see the list.
+
+| Key | Action |
+| --- | --- |
+| **j** / **k** | Next or previous hunk, continuing into the next or previous file that has hunks. Focus moves to the hunk. |
+| **]** or **n** / **[** or **p** | Next or previous file, in the order of the file list. |
+| **u** | Next unread file, as **Next unread →** does. |
+| **v** | Mark the file reviewed, or clear the mark. |
+| **c** | Open the comment editor on the selected line or range, or on the first added line of the hunk. For a hunk that only deletes, it uses the first removed line. **Esc** closes the editor and returns focus to the line. If you have typed text, press **Esc** twice to discard it. |
+| **a** | Ask the assistant about the selected line or range, as **Ask assistant** does. |
+| **f** | Switch between **Full file** and **Diff only**. |
+
+Hunk, file, comment, reviewed and view shortcuts apply on **Changes** while reading the full PR diff, not in **Since my last review** or a cited source file. Moves are announced for screen readers. **Ctrl+F** (**⌘F**), **F3** and **Esc** in diff search are unchanged.
+
+Because single-character shortcuts can be triggered by accident, **Single-key shortcuts** in **Settings** turns them all off. It is on by default and saved in SQLite. The **Keyboard shortcuts** button still opens the list when it is off.
+
 ## Workspace settings and reply alerts
 
-At the bottom left, the bell opens **Review alerts** and the gear below it opens **Settings**. Close alerts to return to the repository list. Choose a theme, including **Light**, an accent colour for buttons and highlights, an interface font, a code font, and a base font size in pixels. Settings is the only place the theme changes. Diffs and code blocks use the selected code font. JetBrains Mono, Fira Code, and IBM Plex Mono are included in the app for offline use. Appearance is saved in SQLite.
+At the bottom left, the bell opens **Review alerts** and the gear below it opens **Settings**. Close alerts to return to the repository list. Choose a theme, including **Light**, an accent colour for buttons and highlights, an interface font, a code font, and a base font size in pixels. Settings is the only place the theme changes. Diffs and code blocks use the selected code font. JetBrains Mono, Fira Code, and IBM Plex Mono are included in the app for offline use. Appearance and the **Single-key shortcuts** choice are saved in SQLite.
 
 **Connect account** starts GitHub CLI browser sign-in for github.com. Complete the authorization on GitHub. Settings displays the active CLI account, and **Switch account** starts another sign-in.
 

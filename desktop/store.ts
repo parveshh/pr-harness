@@ -26,7 +26,7 @@ export function openStore(filename: string) {
   try {
     db.exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version < 0 || version > 26)
+    if (typeof version !== 'number' || version < 0 || version > 27)
       throw new Error('This workspace requires a newer Local Reviewer.');
     if (version === 0) {
       db.exec(`CREATE TABLE saved_reviews (url TEXT PRIMARY KEY, saved_at TEXT NOT NULL) STRICT;
@@ -96,6 +96,17 @@ export function openStore(filename: string) {
         PRAGMA user_version=25;`);
     }
     if (version < 26) db.exec(reviewRequestMigration);
+    if (version < 27) {
+      if (
+        !db
+          .prepare("SELECT 1 FROM pragma_table_info('workspace') WHERE name='single_key_shortcuts'")
+          .get()
+      )
+        db.exec(
+          'ALTER TABLE workspace ADD COLUMN single_key_shortcuts INTEGER NOT NULL DEFAULT 1 CHECK (single_key_shortcuts IN (0,1))',
+        );
+      db.exec('PRAGMA user_version=27');
+    }
     ensureLocalReviewSchema(db);
     if (version === 0)
       db.prepare('UPDATE workspace SET appearance=?, accent=? WHERE id=1').run('ink', 'green');
@@ -187,6 +198,12 @@ export function openStore(filename: string) {
       db.prepare('SELECT sidebar_vibrancy FROM workspace WHERE id=1').get()?.sidebar_vibrancy === 1,
     saveSidebarVibrancy(enabled: boolean) {
       db.prepare('UPDATE workspace SET sidebar_vibrancy=? WHERE id=1').run(Number(enabled));
+    },
+    getSingleKeyShortcuts: () =>
+      db.prepare('SELECT single_key_shortcuts FROM workspace WHERE id=1').get()
+        ?.single_key_shortcuts !== 0,
+    saveSingleKeyShortcuts(enabled: boolean) {
+      db.prepare('UPDATE workspace SET single_key_shortcuts=? WHERE id=1').run(Number(enabled));
     },
     getAccent: () =>
       accent.parse(db.prepare('SELECT accent FROM workspace WHERE id=1').get()?.accent),

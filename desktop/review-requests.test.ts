@@ -436,6 +436,6 @@ await test('upgrading a version 25 workspace adds review requests and keeps save
   upgraded.close();
   const check = new DatabaseSync(path);
   t.after(() => check.close());
-  assert.equal(check.prepare('PRAGMA user_version').get()?.user_version, 26);
+  assert.equal(check.prepare('PRAGMA user_version').get()?.user_version, 27);
   assert.equal(check.prepare('SELECT approved FROM review_requests').get()?.approved, 1);
 });

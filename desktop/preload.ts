@@ -83,6 +83,10 @@ const reviewer: ReviewerBridge = {
   saveSidebarVibrancy: async (enabled) => {
     await ipcRenderer.invoke('appearance:save-sidebar-vibrancy', enabled);
   },
+  getSingleKeyShortcuts: async () => z.boolean().parse(await ipcRenderer.invoke('shortcuts:get')),
+  saveSingleKeyShortcuts: async (enabled) => {
+    await ipcRenderer.invoke('shortcuts:save', enabled);
+  },
   getAppearance: async () => appearance.parse(await ipcRenderer.invoke('appearance:get')),
   saveAppearance: async (value) => {
     await ipcRenderer.invoke('appearance:save', value);

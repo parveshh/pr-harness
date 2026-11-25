@@ -272,10 +272,10 @@ await test('opening a newer schema preserves its version and contents', (t) => {
   const db = new DatabaseSync(path);
   t.after(() => db.close());
   db.exec(
-    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=27",
+    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=28",
   );
   assert.throws(() => openStore(path), /newer Local Reviewer/);
-  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 27);
+  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 28);
   assert.equal(db.prepare('SELECT value FROM future').get()?.value, 'preserve');
 });
 
@@ -297,6 +297,39 @@ await test('upgrading a version 22 workspace adds opt-in sidebar vibrancy', (t) 
   const reopened = openStore(path);
   t.after(() => reopened.close());
   assert.equal(reopened.getSidebarVibrancy(), true);
+});
+
+await test('upgrading a version 26 workspace turns single-key shortcuts on and keeps settings', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'reviewer-shortcuts-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'workspace.sqlite');
+  const original = openStore(path);
+  const reviews = original.save('https://github.com/org/repo/pull/3');
+  original.saveAppearance('light');
+  original.saveSidebarVibrancy(true);
+  original.saveTypography({ font: 'humanist', size: '17', codeFont: 'fira-code' });
+  assert.equal(original.getSingleKeyShortcuts(), true);
+  original.close();
+  const old = new DatabaseSync(path);
+  old.exec('ALTER TABLE workspace DROP COLUMN single_key_shortcuts; PRAGMA user_version=26');
+  old.close();
+  const upgraded = openStore(path);
+  assert.deepEqual(upgraded.list(), reviews);
+  assert.equal(upgraded.getSingleKeyShortcuts(), true);
+  assert.equal(upgraded.getAppearance(), 'light');
+  assert.equal(upgraded.getSidebarVibrancy(), true);
+  assert.deepEqual(upgraded.typography(), { font: 'humanist', size: '17', codeFont: 'fira-code' });
+  upgraded.saveSingleKeyShortcuts(false);
+  upgraded.close();
+  const reopened = openStore(path);
+  t.after(() => reopened.close());
+  assert.equal(reopened.getSingleKeyShortcuts(), false);
+  assert.equal(reopened.getAppearance(), 'light');
+  reopened.saveSingleKeyShortcuts(true);
+  assert.equal(reopened.getSingleKeyShortcuts(), true);
+  const raw = new DatabaseSync(path);
+  t.after(() => raw.close());
+  assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 27);
 });
 
 await test('an unknown saved palette opens with Ink and can be replaced in Settings', (t) => {
