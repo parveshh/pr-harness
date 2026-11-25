@@ -1,3 +1,5 @@
+import { saveDraftStatus, savePullState } from './review-activity.js';
+import { setImmediate } from 'node:timers/promises';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   checkpoint,
@@ -7,7 +9,14 @@ import {
   splitHunks,
   type ReaderView,
 } from '../shared/reader.js';
-import { pullRequestUrl } from '../shared/reviews.js';
+import {
+  diffSearchRequest,
+  scanHunk,
+  searchTimeSlice,
+  literalPattern,
+  type MatchingHunk,
+} from '../shared/diff-search.js';
+import { reviewKey, type PullState } from '../shared/reviews.js';
 import { questionStore } from './questions.js';
 import { revisionStore } from './revisions.js';
 import type { HeadComparison, Snapshot } from './github.js';
@@ -27,13 +36,13 @@ export function readerStore(db: DatabaseSync) {
   const questions = questionStore(db);
   const revisions = revisionStore(db);
   const active = () =>
-    pullRequestUrl
-      .nullable()
-      .parse(db.prepare('SELECT active FROM workspace WHERE id=1').get()?.active);
+    reviewKey.nullable().parse(db.prepare('SELECT active FROM workspace WHERE id=1').get()?.active);
   function read(input: unknown): ReaderView | null {
-    const url = pullRequestUrl.parse(input);
+    const url = reviewKey.parse(input);
     const snapshot = db
-      .prepare('SELECT meta,selected,revision FROM snapshots WHERE url=?')
+      .prepare(
+        'SELECT meta,selected,revision,draft FROM snapshots LEFT JOIN pull_draft_status USING(url) WHERE url=?',
+      )
       .get(url);
     if (!snapshot) return null;
     const files = db
@@ -44,7 +53,10 @@ export function readerStore(db: DatabaseSync) {
     return {
       ...revisions.info(url),
       questions: questions.list(url),
-      meta: metadata.parse(JSON.parse(String(snapshot.meta))),
+      meta: {
+        ...metadata.parse(JSON.parse(String(snapshot.meta))),
+        ...(snapshot.draft == null ? {} : { isDraft: snapshot.draft === 1 }),
+      },
       selected: typeof snapshot.selected === 'string' ? snapshot.selected : null,
       revision: String(snapshot.revision),
       files: files.map((row) => ({
@@ -58,8 +70,23 @@ export function readerStore(db: DatabaseSync) {
   }
   return {
     active,
+    observePullState: (url: string, state: PullState | undefined, updatedAt: string | undefined) =>
+      savePullState(db, url, state, updatedAt),
+    observeRemoteHead(url: string, head: string, commitCount: number | undefined) {
+      // A network read can advance sidebar status even while the reader stays on its pinned revision.
+      db.prepare(
+        `INSERT INTO pull_review_status(url,head,commit_count)
+        SELECT url,?,? FROM reply_targets WHERE url=?
+        ON CONFLICT(url) DO UPDATE SET head=excluded.head,
+          commit_count=COALESCE(excluded.commit_count,CASE WHEN head=excluded.head THEN commit_count END),
+          approval_stage=CASE WHEN head=excluded.head THEN approval_stage END`,
+      ).run(head, commitCount ?? null, url);
+    },
+    setDraft(url: string, isDraft: boolean | undefined) {
+      saveDraftStatus(db, url, isDraft);
+    },
     select(input: unknown) {
-      const url = pullRequestUrl.nullable().parse(input);
+      const url = reviewKey.nullable().parse(input);
       db.prepare('UPDATE workspace SET active=? WHERE id=1').run(url);
     },
     read,
@@ -83,6 +110,7 @@ export function readerStore(db: DatabaseSync) {
           `INSERT INTO snapshots VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET
           revision=excluded.revision,meta=excluded.meta,selected=excluded.selected`,
         ).run(url, snapshot.revision, JSON.stringify(snapshot.meta), selected);
+        saveDraftStatus(db, url, snapshot.meta.isDraft);
         revisions.begin(url, snapshot.revision);
         const old = new Map(
           db
@@ -184,6 +212,25 @@ export function readerStore(db: DatabaseSync) {
         throw error;
       }
       return read(url);
+    },
+    async searchDiff(input: unknown, signal?: AbortSignal) {
+      const { url, revision, paths, query, filter } = diffSearchRequest.parse(input);
+      const lookup = db.prepare(
+        'SELECT patch FROM review_files JOIN snapshots USING(url) WHERE url=? AND revision=? AND path=?',
+      );
+      const result: MatchingHunk[] = [];
+      const pattern = literalPattern(query);
+      const pause = searchTimeSlice(setImmediate, signal);
+      for (const path of paths) {
+        const patch = lookup.get(url, revision, path)?.patch;
+        if (typeof patch !== 'string')
+          throw Error('This saved diff changed. Run the search again.');
+        for (const [hunk, text] of splitHunks(patch).entries()) {
+          const { count } = await scanHunk(text, pattern, filter, pause);
+          if (count) result.push({ path, hunk, count });
+        }
+      }
+      return result;
     },
     patch(input: unknown) {
       const { url, revision, path } = fileKey.parse(input);

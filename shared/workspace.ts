@@ -9,10 +9,26 @@ import { z } from 'zod';
 import { pullRequestUrl } from './reviews.js';
 export const typography = z.object({
   font: z.enum(['system', 'humanist', 'serif', 'mono']),
-  size: z.enum(['small', 'standard', 'large', 'larger']),
+  size: z.enum([
+    '12',
+    '13',
+    '14',
+    '14.4',
+    '15',
+    '16',
+    '17',
+    '18',
+    '19',
+    '20',
+    '21',
+    '22',
+    '23',
+    '24',
+  ]),
+  codeFont: z.enum(['system', 'jetbrains-mono', 'fira-code', 'ibm-plex-mono']),
 });
 export type Typography = z.infer<typeof typography>;
-export const defaultTypography: Typography = { font: 'system', size: 'standard' };
+export const defaultTypography: Typography = { font: 'system', size: '16', codeFont: 'system' };
 export const signIn = z.discriminatedUnion('state', [
   z.object({ state: z.literal('idle') }),
   z.object({ state: z.literal('waiting'), code: z.string().nullable() }),
@@ -29,9 +45,21 @@ export const reply = z.object({
   created: z.string(),
   unread: z.boolean(),
 });
+export const reviewChange = z.object({
+  id: z.number().int().positive(),
+  kind: z.enum(['dismissed', 'push']),
+  url: pullRequestUrl,
+  head: z.string(),
+  created: z.iso.datetime(),
+  unread: z.boolean(),
+});
+export type ReviewChange = z.infer<typeof reviewChange>;
+export const reviewChangeTitle = (kind: ReviewChange['kind']) =>
+  kind === 'push' ? 'New push after your review' : 'Your review was dismissed';
 export const inbox = z.object({
   account: z.string().nullable(),
   items: reply.array(),
+  changes: reviewChange.array(),
   error: z.string().nullable(),
   added: z.number().int().nonnegative(),
 });
@@ -49,6 +77,7 @@ export interface WorkspaceBridge {
   saveTypography(value: Typography): Promise<Typography>;
   syncReplies(): Promise<Inbox>;
   readReplies(account: string): Promise<Inbox>;
+  readReviewChange(account: string, id: number): Promise<Inbox>;
   openReply(account: string, id: number): Promise<Inbox>;
   startLogin(): Promise<SignIn>;
   loginProgress(): Promise<SignIn>;

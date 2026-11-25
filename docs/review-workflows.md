@@ -4,9 +4,22 @@ Open a saved pull request to read its changes, compare it with another open PR, 
 
 ## Read a change and follow its evidence
 
-Use **Overview** for the PR description, **Changes** to navigate the diff, and **Discussion** for published conversations. Filter the file tree by path, select a file, and move between hunks. Switch to **Full file** when you need the surrounding implementation. In a narrow window, the **Files**, **Diff**, and **Chat** controls switch panes.
+Use **Overview** for the PR description, **Changes** to navigate the diff, and **Discussion** for published conversations. Open the filename picker above the diff, filter by path, and select a file. Use the hunk controls to move within the diff. Switch to **Full file** when you need the surrounding implementation. Opening a PR shows review chat beside the diff, or below it in a narrow window. **Ask about PR** focuses the chat. Return to the pull-request list to leave the review.
+
+Move without the mouse. **j** and **k** step through hunks across files, **]** and **[** (or **n** and **p**) change file, **u** opens the next unread file, **v** marks the file reviewed, **c** starts a comment and **f** switches between **Full file** and **Diff only**. **?** lists every shortcut. Single-key shortcuts pause while you type or a dialog is open, and **Single-key shortcuts** in Settings turns them off. They work for local branch reviews too. See [Keyboard shortcuts](../README.md#keyboard-shortcuts).
+
+Choose **Search diff** or press **Ctrl+F** (**⌘F** on Mac) to find text in the saved PR diff. Search includes added and removed lines by default. Use the filter to search either side. In the search field, **Enter** and **Shift+Enter** move to the next and previous occurrence, wrapping across files. **F3** and **Shift+F3** also work from the diff. **Esc** closes the search from its controls. Partial diffs contribute their available lines.
 
 Select a line or range to ask a question in **Review chat**. **Focused** context uses the selected evidence. Choose **Full PR** when a question depends on another file, such as a caller or test. Follow a filename and line in the answer to inspect its evidence. When several citations sit together, open **sources** and choose the one you want. **Back to changes** returns from a cited source file.
+
+## Review a local branch before it is a pull request
+
+1. Choose **Review local branch** on the Workspace page and pick the top-level folder of a local clone where a coding agent has been working. Check the repository and current branch, pick a base branch, and choose **Start review**.
+2. Read the changes as you would a pull request. The diff runs from the merge base with the base branch to the working tree, so committed, staged, unstaged and untracked files all appear. **Uncommitted changes** in the header marks work that is not committed yet.
+3. Draft comments and ask questions in **Review chat**. When the agent changes the clone, **Open update** loads the new revision and **Since my last review** shows what changed.
+4. Open **Finish review** and choose **Preview brief**. **Copy for agent** or **Save as file…** hands the comments back to the agent as Markdown, with each file, line, excerpt and comment. Then choose **Save review checkpoint** so the next update compares against what you reviewed.
+
+The app only reads the clone. It has no GitHub discussions, checks, approvals or lessons for a local review.
 
 ## Remember a lesson from a resolved discussion
 
@@ -21,7 +34,7 @@ Choose **Save lesson**. On a later PR, the reminder appears beside the matching 
 
 ## Compare two open pull requests
 
-1. Expand the repository sidebar and choose **Compare pull requests** beside a monitored repository. Pick the first PR, then a second open PR targeting the same base branch. Both are selectable regardless of which authors you watch.
+1. Open **Manage authors** beside the repository and choose **Compare pull requests**. Pick the first PR, then a second open PR targeting the same base branch. Both are selectable regardless of which authors you watch.
 2. Choose **Compare revisions**. The report identifies each head and merge base. Expand a shared path to inspect sampled changes from both sides.
 3. Choose **Investigate with selected agent** to look for interactions across files. For example, one PR might rename an emitted field while another starts reading the old name. The report pairs each inferred consequence with an excerpt from each PR. Select a filename and line to inspect that revision on GitHub. Removed lines open at the merge base.
 4. Read **Evidence limits** alongside the findings. An empty result means the agent found no interaction in the evidence it inspected. If a PR changes, use **Compare latest revisions** to rebuild the report. **Refresh PR list** updates which open PRs and base branches are available for selection.

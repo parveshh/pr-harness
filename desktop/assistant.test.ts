@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { defaultPrompt, type Citation, type Selection } from '../shared/assistant.js';
+import {
+  defaultPrompt,
+  defaultSummaryPrompt,
+  type Citation,
+  type Selection,
+} from '../shared/assistant.js';
 import type { ReaderView } from '../shared/reader.js';
 import { buildAgentContext, citedAnswer } from './evidence.js';
 import { monitor } from './monitor.js';
@@ -31,6 +36,14 @@ await test('one harness and model apply to every PR while prompts fall back thro
     scope: 'default',
     settings: { ...chosen, prompt: 'app' },
   });
+  assert.equal(data.summaryPreferences(url).prompt, defaultSummaryPrompt);
+  data.savePrompt(url, 'default', 'Summarise briefly.', 'summary');
+  data.savePrompt(url, 'repository', 'Summarise by caller.', 'summary');
+  assert.equal(data.summaryPreferences(url).prompt, 'Summarise by caller.');
+  assert.equal(data.summaryPreferences(other).prompt, 'Summarise briefly.');
+  data.clearPrompt(url, 'repository', 'summary');
+  assert.equal(data.summaryPreferences(url).prompt, 'Summarise briefly.');
+  assert.equal(data.preferences(url, 'claude').settings.prompt, 'review');
   data.clearPrompt(url, 'review');
   assert.equal(data.preferences(url, 'claude').scope, 'repository');
   data.saveSelection({ agent: 'claude', model: 'b', provider: 'default' });
@@ -171,7 +184,14 @@ await test('repository monitoring filters issues and other authors, pages result
           viewer: { login: 'Reviewer' },
           repository: {
             ['p' + nextPr]: {
-              latestOpinionatedReviews: { nodes: [...nodes, { author: null, state: 'APPROVED' }] },
+              headRefOid: 'a'.repeat(40),
+              commits: { totalCount: 3 },
+              reviewDecision: 'REVIEW_REQUIRED',
+              isDraft: nextPr === 4,
+              latestOpinionatedReviews: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [...nodes, { author: null, state: 'COMMENTED' }],
+              },
             },
           },
         },
@@ -216,9 +236,10 @@ await test('repository monitoring filters issues and other authors, pages result
   );
   assert.equal(data.unseen(), 0);
   assert.deepEqual(queries.at(-1), [
-    'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){p4:pullRequest(number:4){latestOpinionatedReviews(first:100){nodes{author{login} state}}}}}',
+    'query($owner:String!,$name:String!){viewer{login} repository(owner:$owner,name:$name){p4:pullRequest(number:4){isDraft headRefOid commits(first:1){totalCount} reviewDecision latestOpinionatedReviews(first:100){nodes{author{login} state} pageInfo{hasNextPage endCursor}}}}}',
     { owner: 'example', name: 'project' },
   ]);
+  assert.equal(data.repositories()[0]?.pulls[0]?.isDraft, true);
   nextPr = 10;
   const approved = () => data.repositories()[0]?.pulls.map((p) => [p.number, p.approved]);
   for (const [state, expected] of [
@@ -240,6 +261,14 @@ await test('repository monitoring filters issues and other authors, pages result
     reviews = state instanceof Error ? state : state.map(([login, s]) => [login, s]);
     await sync(repo, false);
     assert.deepEqual(approved(), [[10, expected]]);
+    const pull = data.repositories()[0]?.pulls[0];
+    assert.equal(pull?.commitCount, 3);
+    assert.equal(
+      pull?.approvalStage,
+      state instanceof Error || state.some(([, decision]) => decision === 'APPROVED')
+        ? 'partial'
+        : 'none',
+    );
     assert.equal(data.repositories()[0]?.error, null);
   }
   // PR 10 appeared after the list was first read: announced once and marked until opened.

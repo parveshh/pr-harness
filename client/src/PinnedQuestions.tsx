@@ -3,6 +3,7 @@ import { Pin } from 'lucide-react';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 import { readableError } from '../../shared/assistant.js';
 import type { PinnedQuestion, QuestionEvidence } from '../../shared/questions.js';
+import { shortRevision } from '../../shared/reader.js';
 
 export type QuestionPanel =
   | { kind: 'new'; id: string; revision: string; path: string; hunk: number }
@@ -18,7 +19,7 @@ const statusLabels: Record<PinnedQuestion['status'], string> = {
   unavailable: 'Incomplete evidence',
   unmatched: 'Hunk could not be located',
 };
-const shortHead = (revision: string) => revision.split('...').at(-1)?.slice(0, 8);
+const shortHead = (revision: string) => shortRevision(revision);
 const location = (anchor: { path: string; hunk: number }) =>
   anchor.path + ' · hunk ' + (anchor.hunk + 1);
 

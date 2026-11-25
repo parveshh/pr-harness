@@ -1,6 +1,8 @@
+import type { Turn } from './assistant.js';
+import type { DraftFindings } from './findings.js';
 import { z } from 'zod';
 import { lineRange } from './assistant.js';
-import { pullRequestUrl } from './reviews.js';
+import { pullRequestUrl, reviewKey } from './reviews.js';
 
 export const decision = z.enum(['COMMENT', 'APPROVE', 'REQUEST_CHANGES']);
 const text = z.string().max(60000);
@@ -37,6 +39,8 @@ export const editRequest = z.discriminatedUnion('action', [
   z.object({ action: z.literal('discard'), id: z.uuid() }),
   reviewDetails.extend({ action: z.literal('details') }),
 ]);
+// Drafts belong to any review. Publishing and receipts are GitHub-only.
+export const draftKey = z.object({ url: reviewKey, version: z.number().int().nonnegative() });
 export const bundleKey = z.object({ url: pullRequestUrl, version: z.number().int().nonnegative() });
 export const publishKey = bundleKey.extend({ revision: z.string(), actor: z.string().min(1) });
 export type Draft = z.infer<typeof draft>;
@@ -45,6 +49,7 @@ export type Edit = z.infer<typeof editRequest>;
 export type PublishKey = z.infer<typeof publishKey>;
 export type Pending = z.infer<typeof pendingReview>;
 export interface PublishBridge {
+  draftFindings(request: DraftFindings): Promise<{ turn: Turn; bundle: Bundle }>;
   reviewDrafts(url: string): Promise<Bundle>;
   editDrafts(url: string, version: number, edit: Edit): Promise<Bundle>;
   reviewIdentity(): Promise<string>;

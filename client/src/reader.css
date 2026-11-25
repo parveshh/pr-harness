@@ -27,7 +27,7 @@
 }
 .repo {
   font:
-    0.8125rem ui-monospace,
+    0.8125rem var(--code-font, ui-monospace),
     monospace;
   overflow-wrap: anywhere;
 }
@@ -110,14 +110,14 @@
 }
 .file-path {
   font:
-    0.75rem/1.5 ui-monospace,
+    0.75rem/1.5 var(--code-font, ui-monospace),
     monospace;
   overflow-wrap: anywhere;
   flex: 1;
 }
 .change-tag {
   font:
-    600 0.6875rem ui-monospace,
+    600 0.6875rem var(--code-font, ui-monospace),
     monospace;
   color: var(--muted);
   background: var(--raised);
@@ -168,7 +168,7 @@
   min-width: 100%;
   width: max-content;
   font:
-    0.75rem/1.65 ui-monospace,
+    0.75rem/1.65 var(--code-font, ui-monospace),
     monospace;
   tab-size: 4;
 }
@@ -461,7 +461,7 @@
 }
 .reader .file-heading h2 {
   font:
-    550 0.8125rem/1.4 ui-monospace,
+    550 0.8125rem/1.4 var(--code-font, ui-monospace),
     monospace;
   word-break: break-word;
 }
@@ -472,7 +472,7 @@
 .reader .file-heading .plus,
 .reader .file-heading .minus {
   font:
-    600 0.6875rem ui-monospace,
+    600 0.6875rem var(--code-font, ui-monospace),
     monospace;
 }
 .reader .hunk-nav,
@@ -501,7 +501,7 @@
 }
 .diff-content {
   font:
-    0.75rem/1.85 ui-monospace,
+    0.75rem/1.85 var(--code-font, ui-monospace),
     'SFMono-Regular',
     Menlo,
     monospace;
@@ -582,4 +582,13 @@
 .lesson-editor {
   padding: 1rem;
   overflow-wrap: anywhere;
+}
+/* A long hunk renders only the rows near the viewport. This row is never visible: it keeps
+   the pane as wide as the longest line, so the horizontal scrollbar holds still. */
+.diff-sizer {
+  display: flex;
+  white-space: pre;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
 }

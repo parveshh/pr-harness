@@ -1,3 +1,6 @@
+import { findingsInstructions, readFindings } from './pr-findings.js';
+import { assessFinding, draftFindings } from '../shared/findings.js';
+import { promptPurpose } from '../shared/assistant.js';
 import {
   attemptKey,
   failureKey,
@@ -19,14 +22,20 @@ import { UnconfirmedReply } from './github.js';
 import { discussionReply, resolveRequest } from '../shared/discussions.js';
 import { listDiscussions, resolveDiscussion, sendDiscussionReply } from './discussions.js';
 import type { SourceCitation } from '../shared/assistant.js';
-import { fileKey, type ReaderView } from '../shared/reader.js';
+import { fileKey, revisionHead, type ReaderView } from '../shared/reader.js';
 import { join } from 'node:path';
-import { lookupInstructions, prLookups, runWithPrLookups } from './full-pr.js';
+import {
+  localLookupInstructions,
+  lookupInstructions,
+  prLookups,
+  runWithPrLookups,
+} from './full-pr.js';
+import { localReviewSource, pinnedRevision } from './local-branch.js';
 import { pinnedSource } from './pr-source.js';
 import { webLink } from '../shared/workspace.js';
 import { shell, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import { reviewPublisher } from './publish.js';
-import { bundleKey, editRequest, publishKey } from '../shared/publish.js';
+import { bundleKey, draftKey, editRequest, publishKey } from '../shared/publish.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -39,12 +48,13 @@ import {
   chatRequest,
   citedSourceKey,
 } from '../shared/assistant.js';
-import { pullRequestUrl } from '../shared/reviews.js';
+import { isLocalReview, pullRequestUrl, reviewKey } from '../shared/reviews.js';
 import { discover, runAgent } from './agents.js';
 import { buildAgentContext, citationInstruction, citedAnswer } from './evidence.js';
 import { replyMonitor } from './replies.js';
 import { githubLogin } from './account.js';
 import { monitor } from './monitor.js';
+import { requestsToAnnounce, reviewRequestMonitor } from './review-requests.js';
 import { chatRuns } from './chat-runs.js';
 import { pipelineReader } from './pipelines.js';
 import type { PrAlerts } from './pr-alerts.js';
@@ -61,12 +71,23 @@ export function registerWorkspace(
   const check = monitor(data, shutdown.signal, undefined, undefined, (repo, pulls) =>
     alerts.announce(repo, pulls),
   );
+  const requests = reviewRequestMonitor(
+    store.reviewRequests,
+    shutdown.signal,
+    undefined,
+    // `requested` shows nothing for an empty list.
+    (arrived) => alerts.requested(requestsToAnnounce(arrived, store.reader.active())),
+  );
   // The app icon counts new pull requests, so refresh it whenever the list may have changed.
   const badge = () => {
     // The PR on screen has been seen, even if a check has only just listed it as new.
     const open = store.reader.active();
-    if (open) data.seen(open);
-    alerts.badge(data.unseen());
+    if (open) {
+      data.seen(open);
+      store.reviewRequests.seen(open);
+    }
+    // A monitored PR that also requests the reviewer counts once.
+    alerts.badge(new Set([...data.unseenPulls(), ...requests.unseen()]).size);
   };
   const sync = async (...input: Parameters<typeof check>) => {
     try {
@@ -85,7 +106,11 @@ export function registerWorkspace(
   }
   async function config(url: string) {
     const installed = await agents();
-    return { agents: installed, ...data.preferences(url, installed[0]?.id ?? 'codex') };
+    return {
+      agents: installed,
+      summary: data.summaryPreferences(url),
+      ...data.preferences(url, installed[0]?.id ?? 'codex'),
+    };
   }
   const runs = chatRuns();
   const handle = (name: string, fn: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown) => {
@@ -203,24 +228,58 @@ export function registerWorkspace(
     if (z.uuid().parse(input) === pair?.run) endPair();
   });
   const account = githubLogin();
-  const replies = replyMonitor(store.replies, shutdown.signal);
+  const replies = replyMonitor(
+    store.replies,
+    shutdown.signal,
+    undefined,
+    undefined,
+    undefined,
+    (changes, account) =>
+      alerts.reviewChanges(changes, async (events) => {
+        await replies.verify(account);
+        for (const event of events) store.replies.markChange(account, event.id);
+      }),
+  );
   handle('settings:type', () => store.typography());
   handle('settings:save-type', (_, value) => store.saveTypography(value));
   handle('account:start', () => {
     replies.invalidate();
+    requests.invalidate();
     return account.start();
   });
   handle('account:progress', () => account.progress());
   handle('account:cancel', () => account.cancel());
   handle('chat:open-link', (_, value) => shell.openExternal(webLink.parse(value)));
   handle('account:device', () => shell.openExternal('https://github.com/login/device'));
-  handle('replies:sync', () =>
-    account.progress().state === 'waiting' ? replies.state() : replies.sync(),
-  );
+  handle('replies:sync', async () => {
+    if (account.progress().state === 'waiting') return replies.state();
+    const inbox = await replies.sync();
+    badge();
+    return inbox;
+  });
+  handle('requests:list', () => requests.state());
+  handle('requests:sync', async () => {
+    if (account.progress().state === 'waiting') return requests.state();
+    try {
+      await requests.sync();
+    } finally {
+      badge();
+    }
+    // Read after the badge refresh, which clears the mark of a PR that is open on screen.
+    return requests.state();
+  });
   handle('replies:read', async (_, value) => {
     const name = login.parse(value);
     await replies.verify(name);
     store.replies.mark(name);
+    store.replies.markChange(name);
+    return replies.state();
+  });
+  handle('replies:read-change', async (_, value, key) => {
+    const name = login.parse(value);
+    const id = z.number().int().positive().parse(key);
+    await replies.verify(name);
+    store.replies.markChange(name, id);
     return replies.state();
   });
   handle('replies:open', async (_, value, key) => {
@@ -236,6 +295,17 @@ export function registerWorkspace(
     if (store.reader.active() !== url) throw Error('Reopen this pull request to view its source.');
     const ref = data.citedSource(url, run, id);
     if (!ref) throw Error('This source is unavailable in the saved answer.');
+    if (isLocalReview(url)) {
+      const turn = data.history(url).find((t) => t.run === run);
+      if (!turn) throw Error('This source is unavailable in the saved answer.');
+      // Committed content is read from Git objects. Uncommitted content is served only while
+      // the working tree still matches the revision the answer was written for.
+      return localReviewSource(store.local, url, {
+        revision: turn.revision,
+        head: ref.commit,
+        mergeBase: ref.commit,
+      }).text(ref.commit, ref.path, shutdown.signal, ref.side);
+    }
     try {
       return await pinnedSource(join(userData, 'pr-source'), url).text(
         ref.commit,
@@ -258,6 +328,11 @@ export function registerWorkspace(
     if (file.kind === 'binary') throw Error('Binary files have no text view.');
     if (file.kind === 'text' && (file.status === 'added' || file.status === 'removed'))
       return store.reader.patch(key);
+    if (isLocalReview(key.url))
+      return localReviewSource(store.local, key.url, pinnedRevision(view)).fullFile(
+        file,
+        shutdown.signal,
+      );
     try {
       return await pinnedSource(join(userData, 'pr-source'), key.url).fullFile(
         view.meta.head,
@@ -455,9 +530,9 @@ export function registerWorkspace(
     if (session === failure?.key.session) closeFailure();
   });
   const publisher = reviewPublisher(store, undefined, undefined, shutdown.signal);
-  handle('drafts:list', (_, url) => store.drafts.get(pullRequestUrl.parse(url)));
+  handle('drafts:list', (_, url) => store.drafts.get(reviewKey.parse(url)));
   handle('drafts:edit', (_, input, request) => {
-    const { url, version } = bundleKey.parse(input);
+    const { url, version } = draftKey.parse(input);
     return publisher.edit(url, version, editRequest.parse(request));
   });
   handle('publish:identity', () => publisher.identity());
@@ -497,7 +572,7 @@ export function registerWorkspace(
     badge();
     return data.repositories();
   });
-  handle('agent:config', (_, url) => config(pullRequestUrl.parse(url)));
+  handle('agent:config', (_, url) => config(reviewKey.parse(url)));
   async function chosen() {
     const installed = await agents();
     return { agents: installed, selection: data.selection(installed[0]?.id ?? 'codex') };
@@ -507,14 +582,19 @@ export function registerWorkspace(
     data.saveSelection(selection.parse(value));
     return chosen();
   });
-  handle('agent:save-prompt', async (_, value, target, text) => {
-    const url = pullRequestUrl.parse(value);
-    data.savePrompt(url, scope.parse(target), reviewPrompt.parse(text));
+  handle('agent:save-prompt', async (_, value, target, text, purpose) => {
+    const url = reviewKey.parse(value);
+    data.savePrompt(
+      url,
+      scope.parse(target),
+      reviewPrompt.parse(text),
+      promptPurpose.parse(purpose),
+    );
     return config(url);
   });
-  handle('agent:clear-prompt', async (_, value, target) => {
-    const url = pullRequestUrl.parse(value);
-    data.clearPrompt(url, scope.parse(target));
+  handle('agent:clear-prompt', async (_, value, target, purpose) => {
+    const url = reviewKey.parse(value);
+    data.clearPrompt(url, scope.parse(target), promptPurpose.parse(purpose));
     return config(url);
   });
   handle('agent:choose', async (_, value) => {
@@ -540,17 +620,34 @@ export function registerWorkspace(
     const changedEvidence = new Set(
       paths.filter((path) => store.reader.revisions.citationChanged(url, msg.revision, path)),
     );
+    const local = isLocalReview(url);
     for (const ref of msg.sourceCitations ?? []) {
       if (ref.commit !== (ref.side === 'head' ? current?.meta.head : current?.meta.mergeBase))
+        changedEvidence.add(ref.path);
+      // A local head can stay on one commit while its uncommitted files change.
+      else if (
+        local &&
+        ref.side === 'head' &&
+        (!current || revisionHead(msg.revision) !== revisionHead(current.revision))
+      )
         changedEvidence.add(ref.path);
     }
     return { ...msg, changedEvidence: [...changedEvidence] };
   }
+  handle('chat:new-conversation', (_, value) => {
+    const url = reviewKey.parse(value);
+    if (store.reader.active() !== url) throw Error('Reopen this review to start a conversation.');
+    if (runs.isRunning(url))
+      throw Error('Wait for the answer or cancel it before starting a new conversation.');
+    data.newConversation(url);
+  });
   handle('chat:history', (_, value) => {
-    const url = pullRequestUrl.parse(value);
+    const url = reviewKey.parse(value);
     const snapshot = store.reader.read(url);
     return data.history(url).map((msg) => annotated(url, msg, snapshot));
   });
+  handle('chat:assess-finding', (_, value) => store.findings.assess(assessFinding.parse(value)));
+  handle('chat:draft-findings', (_, value) => store.findings.draft(draftFindings.parse(value)));
   handle('chat:cancel', (_, id) => runs.cancel(z.uuid().parse(id)));
   handle('chat:ask', async (event, value) => {
     const req = chatRequest.parse(value);
@@ -559,19 +656,33 @@ export function registerWorkspace(
       throw new Error('Reopen this revision before asking a question.');
     const signal = runs.begin(req.url, req.run);
     try {
-      const { agents, settings } = await config(req.url);
+      const generation = data.generation(req.url);
+      const configForRun = await config(req.url);
+      const { agents } = configForRun;
+      const settings =
+        req.kind === 'summary'
+          ? { ...configForRun.settings, prompt: configForRun.summary.prompt }
+          : configForRun.settings;
       const agent = agents.find((a) => a.id === settings.agent);
       if (!agent) throw new Error('Select an installed agent first.');
       signal.throwIfAborted();
       const patch = (path: string) =>
         store.reader.patch({ url: req.url, path, revision: req.revision });
-      const { sources, context } = buildAgentContext(view, req, data.history(req.url), patch);
-      const full = req.contextMode === 'full-pr';
+      const { sources, context } = buildAgentContext(
+        view,
+        req,
+        data.history(req.url, generation),
+        patch,
+      );
+      const full = req.kind === 'review' || req.kind === 'summary' || req.contextMode === 'full-pr';
+      const local = isLocalReview(req.url);
       const sourceLines: SourceCitation[] = [];
       const instructions = [
         settings.prompt,
         citationInstruction,
         ...(full ? [lookupInstructions] : []),
+        ...(full && local ? [localLookupInstructions] : []),
+        ...(req.kind === 'review' ? [findingsInstructions] : []),
       ].join('\n\n');
       const progress = (text: string) => {
         if (!event.sender.isDestroyed()) event.sender.send('chat:activity', { run: req.run, text });
@@ -601,19 +712,23 @@ export function registerWorkspace(
               view,
               patch,
               sources,
-              pinnedSource(join(userData, 'pr-source'), req.url),
+              local
+                ? localReviewSource(store.local, req.url, pinnedRevision(view))
+                : pinnedSource(join(userData, 'pr-source'), req.url),
               sourceLines,
-              { url: req.url, load: (signal) => listDiscussions(req.url, signal) },
+              local ? null : { url: req.url, load: (signal) => listDiscussions(req.url, signal) },
             ),
             signal,
             progress,
           )
         : await ask(JSON.stringify(context));
       signal.throwIfAborted();
-      const answer = citedAnswer(output.answer, sources, sourceLines);
+      const review = req.kind === 'review' ? readFindings(output.answer, sources, patch) : null;
+      const answer = citedAnswer(review?.coverage ?? output.answer, sources, sourceLines);
       const result = {
         ...answer,
-        contextMode: req.contextMode ?? 'focused',
+        ...(review && { findings: review.findings }),
+        contextMode: full ? ('full-pr' as const) : ('focused' as const),
         run: req.run,
         revision: req.revision,
         path: req.path,
@@ -622,8 +737,8 @@ export function registerWorkspace(
         reportedModel: output.reportedModel,
         promptVersion: createHash('sha256').update(instructions).digest('hex').slice(0, 12),
       };
-      data.append(req.url, result);
-      return annotated(req.url, result, store.reader.read(req.url));
+      const saved = data.append(req.url, result, generation);
+      return annotated(req.url, saved, store.reader.read(req.url));
     } finally {
       runs.end(req.url, req.run);
     }
@@ -632,6 +747,7 @@ export function registerWorkspace(
     // Opening a PR clears its new mark.
     seen(url: string) {
       data.seen(url);
+      store.reviewRequests.seen(url);
       badge();
     },
     cancel: () => {

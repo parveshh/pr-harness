@@ -1,0 +1,38 @@
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono/JetBrainsMono.ttf') format('truetype');
+  font-weight: 100 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Fira Code';
+  src: url('/fonts/fira-code/FiraCode.ttf') format('truetype');
+  font-weight: 300 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/ibm-plex-mono/IBMPlexMono-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-display: swap;
+}
+:root[data-code-font='jetbrains-mono'] {
+  --code-font: 'JetBrains Mono';
+}
+:root[data-code-font='fira-code'] {
+  --code-font: 'Fira Code';
+}
+:root[data-code-font='ibm-plex-mono'] {
+  --code-font: 'IBM Plex Mono';
+}
+pre,
+kbd,
+samp {
+  font-family: var(--code-font, monospace);
+}

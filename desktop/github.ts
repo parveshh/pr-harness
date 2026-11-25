@@ -9,12 +9,28 @@ const run = promisify(execFile);
 const ref = z.object({ sha: z.string(), ref: z.string() });
 const pr = z.object({
   title: z.string(),
+  created_at: z.iso.datetime().optional(),
+  draft: z.boolean().optional(),
+  state: z.enum(['open', 'closed']).optional(),
+  merged_at: z.iso.datetime().nullish(),
+  updated_at: z.iso.datetime().optional(),
   body: z.string().nullable(),
   user: z.object({ login: z.string() }).nullable(),
   base: ref,
   head: ref,
+  commits: z.number().int().nonnegative().optional(),
   changed_files: z.number().int().nonnegative(),
 });
+function lifecycle(prInfo: z.infer<typeof pr>) {
+  const state = prInfo.merged_at
+    ? 'MERGED'
+    : prInfo.state === 'closed'
+      ? 'CLOSED'
+      : prInfo.state === 'open'
+        ? 'OPEN'
+        : undefined;
+  return { state, updatedAt: prInfo.updated_at } as const;
+}
 const entry = z.object({
   filename: z.string(),
   previous_filename: z.string().optional(),
@@ -28,6 +44,10 @@ type Entry = z.infer<typeof entry>;
 export type SnapshotFile = { info: FileInfo; patch: string; signature: string };
 export type Snapshot = { meta: ReviewMeta; revision: string; files: SnapshotFile[] };
 type Api = (endpoint: string, signal: AbortSignal, diff?: boolean) => Promise<string>;
+
+// Failures that only connecting an account or installing the CLI can fix.
+export const missingCliMessage = 'Install GitHub CLI (gh) and reopen Local Reviewer.';
+export const signInMessage = 'Sign in with gh auth login, then retry.';
 
 export function githubEnvironment() {
   return {
@@ -86,11 +106,10 @@ async function runGh(args: string[], signal: AbortSignal, env: NodeJS.ProcessEnv
     const details = z
       .object({ code: z.union([z.string(), z.number()]).optional(), stderr: z.string().optional() })
       .safeParse(error).data;
-    if (details?.code === 'ENOENT')
-      throw new Error('Install GitHub CLI (gh) and reopen Local Reviewer.', { cause: error });
+    if (details?.code === 'ENOENT') throw new Error(missingCliMessage, { cause: error });
     const reason = details?.stderr ?? '';
     if (/auth login|HTTP 401|authentication token/i.test(reason))
-      throw new Error('Sign in with gh auth login, then retry.', { cause: error });
+      throw new Error(signInMessage, { cause: error });
     if (/rate limit/i.test(reason))
       throw new Error('GitHub rate limit reached. Retry after the limit resets.', { cause: error });
     if (/HTTP (403|404)/i.test(reason))
@@ -181,7 +200,7 @@ function completePatch(patch: string, file: Entry) {
 }
 
 // Git surrounds non-ASCII and control bytes with C-style quotes in raw diff headers.
-function gitPath(path: string) {
+export function gitPath(path: string) {
   const escapes: Record<number, string> = {
     7: 'a',
     8: 'b',
@@ -249,7 +268,7 @@ export async function fetchSnapshot(
   url: string,
   signal: AbortSignal,
   api: Api = githubApi,
-): Promise<Snapshot> {
+): Promise<Snapshot & ReturnType<typeof lifecycle>> {
   const [owner, repo, , number] = new URL(pullRequestUrl.parse(url)).pathname.slice(1).split('/');
   const endpoint = `repos/${owner}/${repo}/pulls/${number}`;
   const readMeta = async () => pr.parse(JSON.parse(await api(endpoint, signal)));
@@ -293,8 +312,11 @@ export async function fetchSnapshot(
     throw new Error('The PR changed during the fetch. Retry to load the new revision.');
   }
   return {
+    ...lifecycle(end),
     meta: {
       title: end.title,
+      openedAt: end.created_at,
+      isDraft: end.draft,
       author: end.user?.login ?? 'Unknown author',
       description: end.body ?? '',
       base: end.base.sha,
@@ -303,6 +325,7 @@ export async function fetchSnapshot(
       baseBranch: end.base.ref,
       headBranch: end.head.ref,
       totalFiles: end.changed_files,
+      commitCount: end.commits,
     },
     revision: end.base.sha + '...' + end.head.sha,
     files: entries.map((file) => makeFile(file, raw.get(file.filename))),
@@ -400,6 +423,8 @@ export async function probeRevision(
   const body = boundary ? stdout.slice(boundary.index + boundary[0].length) : stdout;
   const result = pr.parse(JSON.parse(body));
   return {
+    ...lifecycle(result),
+    isDraft: result.draft,
     baseBranch: result.base.ref,
     revision: result.base.sha + '...' + result.head.sha,
     etag: /^etag:\s*(.+)$/im.exec(headers)?.[1]?.trim(),

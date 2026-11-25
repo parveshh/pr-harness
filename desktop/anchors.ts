@@ -2,7 +2,7 @@ import { diffLines } from '../shared/diff.js';
 import { splitHunks } from '../shared/reader.js';
 import type { CommentAnchor, Draft } from '../shared/publish.js';
 
-export function excerpt(patch: string, anchor: CommentAnchor) {
+export function excerpt(patch: string, anchor: CommentAnchor, maxChars = Infinity) {
   const hunk = splitHunks(patch)[anchor.hunk];
   if (hunk === undefined) return undefined;
   const start = anchor.startLine ?? anchor.line;
@@ -16,6 +16,11 @@ export function excerpt(patch: string, anchor: CommentAnchor) {
     (anchor.side === 'old' && (range[0]?.kind !== 'deletion' || range.at(-1)?.kind !== 'deletion'))
   )
     return undefined;
+  let length = range.length - 1;
+  for (const row of range) {
+    length += row.text.length;
+    if (length > maxChars) return undefined;
+  }
   return range.map((row) => row.text).join('\n');
 }
 

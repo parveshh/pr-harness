@@ -2,7 +2,9 @@ import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import {
   defaultPrompt,
-  repoOf,
+  defaultSummaryPrompt,
+  type PromptPurpose,
+  githubRepoOf,
   reviewPrompt,
   selection,
   repository,
@@ -20,14 +22,23 @@ CREATE TABLE agent_paths(agent TEXT PRIMARY KEY,path TEXT NOT NULL) STRICT;
 CREATE TABLE conversation(id INTEGER PRIMARY KEY,run TEXT NOT NULL UNIQUE,url TEXT NOT NULL REFERENCES saved_reviews(url),data TEXT NOT NULL) STRICT;
 CREATE INDEX conversation_pr ON conversation(url,id);
 PRAGMA user_version=3;`;
+const fileOverviewPrompt =
+  'Answer the reviewer’s question directly. When asked for a file overview, describe what a newly added file introduces and how it fits into the PR, or explain how an existing file’s behaviour changed. Cite the file and lines for each material claim. For a possible defect, describe the triggering conditions and the effect on the caller. If the answer depends on missing evidence, name what you would inspect. Treat the author’s stated intent as a claim to check. Keep routine changes brief.';
 // Choosing an agent or model in earlier versions also saved a copy of the built-in prompt.
-export function migrateDefaultPrompt(db: DatabaseSync) {
+export function migrateFileOverviewPrompt(db: DatabaseSync) {
   const previous =
     'Explain the behaviour before and after the change. Cite the file and lines for each material claim. For a possible defect, describe the triggering conditions and the effect on the caller. If the answer depends on missing evidence, name what you would inspect. Treat the author’s stated intent as a claim to check. Keep routine changes brief.';
+  replaceStoredPrompt(db, previous, fileOverviewPrompt);
+  db.exec('PRAGMA user_version=11');
+}
+export function migrateDetailedReviewPrompt(db: DatabaseSync) {
+  replaceStoredPrompt(db, fileOverviewPrompt, defaultPrompt);
+  db.exec('PRAGMA user_version=15');
+}
+function replaceStoredPrompt(db: DatabaseSync, previous: string, replacement: string) {
   db.prepare(
     "UPDATE agent_preferences SET settings=json_set(settings,'$.prompt',?) WHERE CASE WHEN json_valid(settings) THEN json_extract(settings,'$.prompt') END = ?",
-  ).run(defaultPrompt, previous);
-  db.exec('PRAGMA user_version=11');
+  ).run(replacement, previous);
 }
 // Earlier versions stored a harness and model with every prompt scope. The app default
 // becomes the single app-wide choice. Scoped rows keep supplying their prompt.
@@ -41,7 +52,7 @@ PRAGMA user_version=12;`);
 }
 const scopedPrompt = z.object({ prompt: reviewPrompt });
 export function assistantStore(db: DatabaseSync) {
-  function repositories() {
+  function cachedRepositories() {
     return db
       .prepare('SELECT * FROM repositories ORDER BY name')
       .all()
@@ -54,6 +65,27 @@ export function assistantStore(db: DatabaseSync) {
         }),
       );
   }
+  function repositories() {
+    const inactive = new Set(
+      db
+        .prepare("SELECT url FROM pull_lifecycle WHERE state IN ('CLOSED','MERGED')")
+        .all()
+        .map((row) => row.url),
+    );
+    return cachedRepositories().map((repo) => ({
+      ...repo,
+      pulls: repo.pulls.filter(
+        (pull) => !inactive.has('https://github.com/' + repo.name + '/pull/' + pull.number),
+      ),
+    }));
+  }
+  function unseenPulls() {
+    return repositories().flatMap((r) =>
+      r.pulls
+        .filter((p) => p.unseen && r.watching.includes(p.author))
+        .map((p) => 'https://github.com/' + r.name + '/pull/' + p.number),
+    );
+  }
   // `first` is the harness to use until the reviewer picks one.
   function chosen(first: AgentId): Selection {
     const row = db.prepare('SELECT agent,model,provider FROM agent_selection WHERE id=1').get();
@@ -61,8 +93,29 @@ export function assistantStore(db: DatabaseSync) {
       selection.safeParse(row).data ?? { agent: first, model: '', provider: 'default' as const }
     );
   }
-  const key = (url: string, scope: Scope) =>
-    scope === 'review' ? url : scope === 'repository' ? repoOf(url) : 'default';
+  // A local branch review has no GitHub repository, so it has no repository scope.
+  function key(url: string, scope: Scope, purpose: PromptPurpose) {
+    const target =
+      scope === 'review' ? url : scope === 'repository' ? githubRepoOf(url) : 'default';
+    return target === null ? null : (purpose === 'summary' ? 'summary:' : '') + target;
+  }
+  function scopeKey(url: string, scope: Scope, purpose: PromptPurpose) {
+    const value = key(url, scope, purpose);
+    if (value === null) throw Error('Save instructions for this review or as the app default.');
+    return value;
+  }
+  function preferences(url: string, purpose: PromptPurpose) {
+    for (const scope of ['review', 'repository', 'default'] as const) {
+      const scoped = key(url, scope, purpose);
+      if (scoped === null) continue;
+      const row = db.prepare('SELECT settings FROM agent_preferences WHERE scope=?').get(scoped);
+      if (row) return { scope, ...scopedPrompt.parse(JSON.parse(String(row.settings))) };
+    }
+    return {
+      scope: 'default' as const,
+      prompt: purpose === 'summary' ? defaultSummaryPrompt : defaultPrompt,
+    };
+  }
   return {
     repositories,
     add(name: string) {
@@ -87,9 +140,10 @@ export function assistantStore(db: DatabaseSync) {
     },
     // Opening a PR clears its new mark. Returns whether anything changed.
     seen(url: string) {
-      const name = repoOf(url),
-        number = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
-      const repo = repositories().find((r) => r.name === name);
+      const name = githubRepoOf(url);
+      if (name === null) return false;
+      const number = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
+      const repo = cachedRepositories().find((r) => r.name === name);
       if (!repo?.pulls.some((p) => p.number === number && p.unseen)) return false;
       db.prepare('UPDATE repositories SET pulls=? WHERE name=?').run(
         JSON.stringify(repo.pulls.map((p) => (p.number === number ? { ...p, unseen: false } : p))),
@@ -99,12 +153,9 @@ export function assistantStore(db: DatabaseSync) {
     },
     // New PRs from authors still being watched, across every repository.
     unseen() {
-      return repositories().reduce(
-        (count, r) =>
-          count + r.pulls.filter((p) => p.unseen && r.watching.includes(p.author)).length,
-        0,
-      );
+      return unseenPulls().length;
     },
+    unseenPulls,
     failure(name: string, error: string) {
       db.prepare('UPDATE repositories SET error=? WHERE name=?').run(error, name);
     },
@@ -117,27 +168,20 @@ export function assistantStore(db: DatabaseSync) {
       );
     },
     preferences(url: string, first: AgentId) {
-      const agent = chosen(first);
-      for (const scope of ['review', 'repository', 'default'] as const) {
-        const row = db
-          .prepare('SELECT settings FROM agent_preferences WHERE scope=?')
-          .get(key(url, scope));
-        if (row)
-          return {
-            scope,
-            settings: { ...agent, ...scopedPrompt.parse(JSON.parse(String(row.settings))) },
-          };
-      }
-      return { scope: 'default' as const, settings: { ...agent, prompt: defaultPrompt } };
+      const { scope, prompt } = preferences(url, 'review');
+      return { scope, settings: { ...chosen(first), prompt } };
     },
-    savePrompt(url: string, scope: Scope, prompt: string) {
+    summaryPreferences(url: string) {
+      return preferences(url, 'summary');
+    },
+    savePrompt(url: string, scope: Scope, prompt: string, purpose: PromptPurpose = 'review') {
       db.prepare('INSERT OR REPLACE INTO agent_preferences VALUES(?,?)').run(
-        key(url, scope),
+        scopeKey(url, scope, purpose),
         JSON.stringify({ prompt }),
       );
     },
-    clearPrompt(url: string, scope: Scope) {
-      db.prepare('DELETE FROM agent_preferences WHERE scope=?').run(key(url, scope));
+    clearPrompt(url: string, scope: Scope, purpose: PromptPurpose = 'review') {
+      db.prepare('DELETE FROM agent_preferences WHERE scope=?').run(scopeKey(url, scope, purpose));
     },
     executable(agent: AgentId) {
       const value = db.prepare('SELECT path FROM agent_paths WHERE agent=?').get(agent)?.path;
@@ -153,18 +197,44 @@ export function assistantStore(db: DatabaseSync) {
         turn.parse(JSON.parse(String(row.data))).sourceCitations?.find((ref) => ref.id === id)
       );
     },
-    history(url: string) {
-      return db
-        .prepare('SELECT data FROM conversation WHERE url=? ORDER BY id')
-        .all(url)
-        .map((row) => turn.parse(JSON.parse(String(row.data))));
+    newConversation(url: string) {
+      db.prepare(
+        `INSERT INTO chat_sessions(url,generation) VALUES (?,1)
+        ON CONFLICT(url) DO UPDATE SET generation=generation+1`,
+      ).run(url);
     },
-    append(url: string, msg: Turn) {
-      db.prepare('INSERT INTO conversation(url,run,data) VALUES(?,?,?)').run(
-        url,
-        msg.run,
-        JSON.stringify(msg),
+    generation(url: string) {
+      return Number(
+        db.prepare('SELECT generation FROM chat_sessions WHERE url=?').get(url)?.generation ?? 0,
       );
+    },
+    history(url: string, generation?: number): Turn[] {
+      const rows =
+        generation === undefined
+          ? db
+              .prepare(
+                `SELECT data, conversation.generation <> COALESCE(chat_sessions.generation,0) AS archived
+            FROM conversation LEFT JOIN chat_sessions USING(url) WHERE url=? ORDER BY id`,
+              )
+              .all(url)
+          : db
+              .prepare(
+                'SELECT data, 0 AS archived FROM conversation WHERE url=? AND generation=? ORDER BY id',
+              )
+              .all(url, generation);
+      return rows.map((row): Turn => {
+        const msg = turn.parse(JSON.parse(String(row.data)));
+        return row.archived === 1 ? { ...msg, archived: true } : msg;
+      });
+    },
+    append(url: string, msg: Turn, generation: number): Turn {
+      const row = db
+        .prepare(
+          `INSERT INTO conversation(url,run,data,generation) VALUES(?,?,?,?)
+        RETURNING generation <> COALESCE((SELECT generation FROM chat_sessions WHERE url=?),0) AS archived`,
+        )
+        .get(url, msg.run, JSON.stringify(msg), generation, url);
+      return row?.archived === 1 ? { ...msg, archived: true } : msg;
     },
   };
 }

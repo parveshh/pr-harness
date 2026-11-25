@@ -15,12 +15,13 @@ const request = (url: string, run: string, question: string): ChatRequest => ({
   extra: null,
   question,
 });
-function harness() {
+function harness(newConversation: (url: string) => Promise<void> = () => Promise.resolve()) {
   const pending = new Map<string, { resolve: (turn: Turn) => void; reject: (e: Error) => void }>();
   const cancels: string[] = [];
   let activity: (event: { run: string; text: string }) => void = () => {};
   const runs = createChatRuns(
     {
+      newConversation,
       ask: (req) => new Promise((resolve, reject) => pending.set(req.run, { resolve, reject })),
       cancelAsk: (run) => {
         cancels.push(run);
@@ -124,7 +125,14 @@ await test('a failed or cancelled run reports on its own PR and frees it for ano
   await settled();
   assert.deepEqual(
     { ...runs.get(prA), completed: runs.get(prA).completed.length },
-    { active: null, completed: 0, error: 'Review cancelled.', draft: 'Explain' },
+    {
+      active: null,
+      completed: 0,
+      resetting: false,
+      generation: 0,
+      error: 'Review cancelled.',
+      draft: 'Explain',
+    },
   );
   assert.equal(runs.get(prB).error, '');
   // Starting again clears the error.
@@ -153,4 +161,42 @@ await test('work before asking can fail or be cancelled without calling the agen
   await settled();
   assert.equal(runs.get(prA).error, 'Review cancelled.');
   assert.equal(pending.size, 0);
+});
+
+await test('starting fresh is isolated to its PR, serializes with runs, and preserves the chat if the reset fails', async () => {
+  let finish!: () => void, fail!: (error: Error) => void;
+  const { runs, answer, pending, settled } = harness(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      }),
+  );
+  const a = request(prA, first, 'Earlier question');
+  runs.start(a, 'question');
+  assert.equal(await runs.newConversation(prA), false);
+  await settled();
+  pending.get(first)?.resolve(answer(a));
+  await settled();
+  runs.setDraft(prA, 'My draft');
+  runs.setDraft(prB, 'Other draft');
+  const attempt = runs.newConversation(prA);
+  assert.equal(runs.start(a, 'question'), false);
+  assert.equal(await runs.newConversation(prA), false);
+  fail(new Error('Could not save conversation'));
+  assert.equal(await attempt, false);
+  assert.equal(runs.get(prA).draft, 'My draft');
+  assert.equal(runs.get(prA).completed.length, 1);
+  const retry = runs.newConversation(prA);
+  finish();
+  assert.equal(await retry, true);
+  assert.deepEqual(runs.get(prA), {
+    generation: 1,
+    resetting: false,
+    active: null,
+    completed: [],
+    error: '',
+    draft: '',
+  });
+  assert.equal(runs.get(prB).draft, 'Other draft');
 });

@@ -1,6 +1,6 @@
 {
   "name": "local-reviewer",
-  "version": "0.1.1",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "engines": {
@@ -16,7 +16,8 @@
     "test": "node --import tsx --test desktop/*.test.ts",
     "build": "npm run typecheck && electron-vite build",
     "test:desktop": "node scripts/desktop-smoke.mjs",
-    "package:mac": "npm run build && electron-builder --mac dmg --universal --publish never",
+    "bench:large": "node scripts/large-pr-bench.mjs",
+    "package:mac": "npm run build && electron-builder --mac dmg --arm64 --publish never",
     "package:win": "npm run build && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
@@ -52,6 +53,9 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.73.0",
     "vite": "8.3.8"
+  },
+  "overrides": {
+    "minimatch@>=7.0.0 <11.0.1": "11.0.9"
   },
   "productName": "Local Reviewer",
   "main": "dist/main/main.js",

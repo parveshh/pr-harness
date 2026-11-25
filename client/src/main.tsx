@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import './fonts.css';
 import './workspace.css';
 import { applyTypography } from './WorkspacePanels.js';
 import { defaultTypography } from '../../shared/workspace.js';
@@ -15,13 +16,23 @@ void Promise.all([
   window.reviewer.getAppearance().catch(() => 'ink' as const),
   window.reviewer.typography().catch(() => defaultTypography),
   window.reviewer.getAccent().catch(() => 'green' as const),
-]).then(([theme, type, accent]) => {
+  window.reviewer.getSidebarVibrancy().catch(() => false),
+  // Single-key shortcuts default to on when the setting cannot be read.
+  window.reviewer.getSingleKeyShortcuts().catch(() => true),
+]).then(([theme, type, accent, vibrancy, shortcuts]) => {
+  document.documentElement.classList.toggle('sidebar-vibrancy', vibrancy);
   document.documentElement.dataset.palette = theme;
   document.documentElement.dataset.accent = accent;
   applyTypography(type);
   app.render(
     <StrictMode>
-      <Workspace initialTheme={theme} initialType={type} initialAccent={accent} />
+      <Workspace
+        initialVibrancy={vibrancy}
+        initialShortcuts={shortcuts}
+        initialTheme={theme}
+        initialType={type}
+        initialAccent={accent}
+      />
     </StrictMode>,
   );
 });

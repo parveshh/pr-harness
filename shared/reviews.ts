@@ -7,7 +7,10 @@ import type { Accent, Appearance } from './appearance.js';
 import { z } from 'zod';
 import type { PublishBridge } from './publish.js';
 import type { AssistantBridge, CitedSourceKey } from './assistant.js';
-import type { Checkpoint, FileKey, ReaderView } from './reader.js';
+import type { Checkpoint, FileKey, ReaderView, reviewUpdate } from './reader.js';
+import type { MatchingHunk, SearchRequest } from './diff-search.js';
+import type { LocalBridge } from './local.js';
+import type { ReviewRequestBridge } from './review-requests.js';
 
 // Store a single canonical URL even when a reviewer copies a link from the Files tab.
 export const pullRequestUrl = z
@@ -24,12 +27,75 @@ export const pullRequestUrl = z
       .replace(/\/(?:files|commits|checks)\/?$|\/$/i, '')
       .toLowerCase();
   });
-export const savedReview = z.object({ url: pullRequestUrl, savedAt: z.iso.datetime() });
+// A local branch review has an opaque key so that filesystem paths stay out of keys, logs and
+// agent prompts. The repository location is stored separately in local_reviews.
+export const localReviewKey = z
+  .string()
+  .trim()
+  .regex(
+    /^local:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    'Choose a saved local review.',
+  )
+  .transform((value) => value.toLowerCase());
+// Operations that make sense for both kinds of review accept either key. GitHub-only
+// operations keep `pullRequestUrl`, so a local key fails validation there.
+export const reviewKey = z.union([pullRequestUrl, localReviewKey]);
+export function isLocalReview(key: string) {
+  return key.startsWith('local://');
+}
+export const localReviewInfo = z.object({
+  repository: z.string(),
+  branch: z.string().nullable(),
+  baseBranch: z.string(),
+  path: z.string(),
+});
+export type LocalReviewInfo = z.infer<typeof localReviewInfo>;
+export const approvalStage = z.enum([
+  'none',
+  'approval-recorded',
+  'partial',
+  'approved',
+  'changes-requested',
+  'mixed',
+]);
+export type ApprovalStage = z.infer<typeof approvalStage>;
+export const pullSidebarFields = {
+  openedAt: z.iso.datetime().optional(),
+  head: z.string().min(1).optional(),
+  commitCount: z.number().int().nonnegative().optional(),
+  approvalStage: approvalStage.optional(),
+};
+export const pullState = z.enum(['OPEN', 'CLOSED', 'MERGED']);
+export type PullState = z.infer<typeof pullState>;
+export function isInactivePull(state: PullState | undefined) {
+  return state === 'CLOSED' || state === 'MERGED';
+}
+export const savedReview = z.object({
+  url: reviewKey,
+  savedAt: z.iso.datetime(),
+  state: pullState.optional(),
+  ...pullSidebarFields,
+  author: z.string().optional(),
+  title: z.string().optional(),
+  isDraft: z.boolean().optional(),
+  local: localReviewInfo.optional(),
+});
 export const reviewList = z.array(savedReview);
 export type SavedReview = z.infer<typeof savedReview>;
 export interface ReviewerBridge
-  extends AssistantBridge, PublishBridge, WorkspaceBridge, PipelineBridge, CrossPrBridge {
+  extends
+    AssistantBridge,
+    PublishBridge,
+    WorkspaceBridge,
+    PipelineBridge,
+    CrossPrBridge,
+    LocalBridge,
+    ReviewRequestBridge {
   readonly integratedTitleBar: boolean;
+  getSidebarVibrancy(): Promise<boolean>;
+  saveSidebarVibrancy(enabled: boolean): Promise<void>;
+  getSingleKeyShortcuts(): Promise<boolean>;
+  saveSingleKeyShortcuts(enabled: boolean): Promise<void>;
   getAppearance(): Promise<Appearance>;
   saveAppearance(value: Appearance): Promise<void>;
   getAccent(): Promise<Accent>;
@@ -44,7 +110,7 @@ export interface ReviewerBridge
     since: boolean,
     path: string | null,
   ): Promise<void>;
-  checkUpdate(url: string): Promise<string | null>;
+  checkUpdate(url: string): Promise<z.infer<typeof reviewUpdate>>;
   openUpdate(url: string, revision: string): Promise<ReaderView>;
   finishRevision(url: string, revision: string): Promise<ReaderView>;
   markComparisonFile(key: FileKey, reviewed: boolean): Promise<ReaderView>;
@@ -54,6 +120,7 @@ export interface ReviewerBridge
   questionEvidence(key: QuestionKey): Promise<QuestionEvidence>;
   citedSource(key: CitedSourceKey): Promise<string>;
   fullFile(key: FileKey): Promise<string>;
+  searchDiff(request: SearchRequest): Promise<MatchingHunk[]>;
   filePatch(key: FileKey): Promise<string>;
   remember(checkpoint: Checkpoint): Promise<void>;
   listReviews(): Promise<SavedReview[]>;

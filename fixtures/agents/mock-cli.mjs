@@ -58,7 +58,7 @@ if (args.includes('--version')) {
       stdin = JSON.stringify(review);
     }
   }
-  const { task, evidence, question, selected, lookups } = JSON.parse(stdin);
+  const { task, evidence, question, selected, lookups, conversation } = JSON.parse(stdin);
   const emit = (data) => console.log(JSON.stringify(data));
   async function respond(answer) {
     if (args.includes('exec')) {
@@ -77,6 +77,8 @@ if (args.includes('--version')) {
   if (args.includes('invalid-model')) {
     console.error('model not available');
     process.exitCode = 1;
+  } else if (question === 'Check fresh conversation context') {
+    await respond('Prior exchanges received: ' + conversation.length);
   } else if (task === 'compare-pull-requests') {
     const producer = evidence.left.find((row) => row.text.includes('customerId: account.id'));
     const consumer = evidence.right.find((row) => row.text.includes('event.accountId'));
@@ -93,6 +95,30 @@ if (args.includes('--version')) {
               ]
             : [],
         gaps: [],
+      }),
+    );
+  } else if (question?.startsWith('Review this whole pull request')) {
+    const rows = selected.addedFile?.lines ?? evidence;
+    const end = rows.find((row) => row.side === 'new') ?? rows[0];
+    await respond(
+      JSON.stringify({
+        coverage: 'Checked the changed diff lines.',
+        findings: [
+          {
+            title: 'Retry loses its update',
+            priority: 'high',
+            comment: 'Persist the result before returning so a retry can recover it.',
+            startId: end.id,
+            endId: end.id,
+          },
+          {
+            title: 'Unconfirmed caller',
+            priority: 'low',
+            comment: 'Verify the caller contract.',
+            startId: null,
+            endId: null,
+          },
+        ],
       }),
     );
   } else if (lookups?.length === 0) {

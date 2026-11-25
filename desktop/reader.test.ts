@@ -41,6 +41,9 @@ await test('load and migrate a saved PR, preserve matching file checkpoints, rej
   const snapshot = await fetchSnapshot(url, signal, api);
   store.reader.select(url);
   const initial = store.reader.install(url, snapshot);
+  assert.equal(store.list()[0]?.title, snapshot.meta.title);
+  assert.equal(store.list()[0]?.author, snapshot.meta.author);
+
   assert.deepEqual(
     initial?.files.map((f) => [f.status, f.kind]),
     [
@@ -86,6 +89,38 @@ await test('load and migrate a saved PR, preserve matching file checkpoints, rej
   const changed = { ...next, files: next.files.map((f) => ({ ...f, signature: 'changed' })) };
   assert.equal(store.reader.install(url, changed)?.files[1]?.reviewed, false);
 });
+await test('search a pinned diff across files, counting literal occurrences on the requested sides', async (t) => {
+  const store = openStore(':memory:');
+  t.after(() => store.close());
+  store.save(url);
+  const snapshot = await fetchSnapshot(url, signal, api);
+  const [first, second] = snapshot.files;
+  assert.ok(first && second);
+  first.patch = '@@ -1,2 +1,2 @@ foo.bar\n foo.bar\n-Foo.bar FooXbar\n+foo.BAR foo.bar';
+  second.patch = '@@ -1 +1 @@\n-before\n+after\n@@ -10 +11 @@\n-foo.bar\n+change';
+  store.reader.install(url, snapshot);
+  const paths = [first.info.path, second.info.path];
+  const request = { url, revision: snapshot.revision, paths, query: 'foo.bar' };
+  const before = store.reader.read(url);
+  assert.deepEqual(await store.reader.searchDiff({ ...request, filter: 'both' }), [
+    { path: first.info.path, hunk: 0, count: 3 },
+    { path: second.info.path, hunk: 1, count: 1 },
+  ]);
+  assert.deepEqual(await store.reader.searchDiff({ ...request, filter: 'added' }), [
+    { path: first.info.path, hunk: 0, count: 2 },
+  ]);
+  assert.deepEqual(await store.reader.searchDiff({ ...request, filter: 'removed' }), [
+    { path: first.info.path, hunk: 0, count: 1 },
+    { path: second.info.path, hunk: 1, count: 1 },
+  ]);
+  assert.deepEqual(await store.reader.searchDiff({ ...request, query: '+', filter: 'both' }), []);
+  await assert.rejects(
+    () => store.reader.searchDiff({ ...request, revision: 'obsolete', filter: 'both' }),
+    /saved diff changed/,
+  );
+  assert.deepEqual(store.reader.read(url), before);
+});
+
 await test('separate sides of a diff have independent line numbers', () => {
   assert.deepEqual(
     diffLines('@@ -4,2 +8,2 @@\n same\n-old\n+new').lines.map((line) => [
@@ -131,4 +166,45 @@ await test('paginate file lists and refuse a snapshot that changed while loading
     }),
     /changed during the fetch/,
   );
+});
+
+await test('opening a staged revision offline preserves a newer observed approval', async (t) => {
+  const store = openStore(':memory:');
+  t.after(() => store.close());
+  store.save(url);
+  const snapshot = await fetchSnapshot(url, signal, api);
+  store.reader.install(url, snapshot);
+  // Opening an older staged snapshot must preserve a newer remote head and its approval.
+  const staged = {
+    ...snapshot,
+    revision: snapshot.meta.base + '...' + 'b'.repeat(40),
+    meta: { ...snapshot.meta, head: 'b'.repeat(40) },
+  };
+  const comparison = { ancestry: 'ahead' as const, partial: false, files: [] };
+  store.reader.revisions.stage(url, staged, comparison, snapshot.revision);
+  const remoteHead = 'c'.repeat(40);
+  const target = store.replies.targets().find((row) => row.url === url);
+  assert.ok(target);
+  store.replies.observe(
+    'reader',
+    url,
+    target.registered,
+    {
+      state: 'OPEN',
+      headRefOid: remoteHead,
+      isDraft: false,
+      commitCount: 5,
+      approvalStage: 'partial',
+      latest: { nodes: [] },
+      dismissed: { totalCount: 0 },
+    },
+    new Date().toISOString(),
+  );
+  const pending = store.reader.revisions.pending(url, staged.revision);
+  store.reader.install(url, pending.snapshot, pending.heads);
+  assert.equal(store.list()[0]?.head, remoteHead);
+  assert.equal(store.list()[0]?.approvalStage, 'partial');
+  store.reader.observeRemoteHead(url, snapshot.meta.head, 4);
+  assert.equal(store.list()[0]?.approvalStage, undefined);
+  assert.equal(store.list()[0]?.commitCount, 4);
 });

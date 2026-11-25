@@ -1,13 +1,16 @@
 import { UserRound } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Bundle, Draft, Edit } from '../../shared/publish.js';
 import { readableError } from '../../shared/assistant.js';
 import { locationLabel, type DraftEditor } from './DraftReview.js';
+import { DraftBody, SuggestChangeButton } from './components/SuggestedChange.js';
+import { newSideLines } from '../../shared/suggestions.js';
 
 export function InlineComments({
   url,
   bundle,
   comments,
+  hunk,
   editor,
   setEditor,
   onChange,
@@ -16,6 +19,8 @@ export function InlineComments({
   url: string;
   bundle: Bundle;
   comments: Draft[];
+  // The diff hunk these comments sit in, for the new-side text of a suggestion.
+  hunk: string;
   editor: DraftEditor | null;
   setEditor: (e: DraftEditor) => void;
   onChange: (b: Bundle) => void;
@@ -23,6 +28,11 @@ export function InlineComments({
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const field = useRef<HTMLTextAreaElement>(null);
+  // Esc closes the editor. Typed text survives one stray Esc: it asks for a second press.
+  const [discardAsked, setDiscardAsked] = useState(false);
+  const saved = editor?.id ? bundle.comments.find((c) => c.id === editor.id)?.body : undefined;
+  const unsaved = !!editor && editor.body.trim() !== '' && editor.body !== (saved ?? '');
   async function edit(request: Edit) {
     setBusy(true);
     setError('');
@@ -51,7 +61,7 @@ export function InlineComments({
               <strong>You</strong>
               <small title={locationLabel(c)}>Draft · Local</small>
             </div>
-            <p>{c.body}</p>
+            <DraftBody draft={c} />
             <div>
               <button
                 disabled={busy || !!bundle.pending}
@@ -95,17 +105,36 @@ export function InlineComments({
             Comment
             <textarea
               id="inline-comment-body"
+              ref={field}
               aria-label="Comment"
               autoFocus
               rows={3}
               maxLength={60000}
               value={editor.body}
-              onChange={(e) => setEditor({ ...editor, body: e.target.value })}
+              onChange={(e) => {
+                setDiscardAsked(false);
+                setEditor({ ...editor, body: e.target.value });
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Escape' || e.nativeEvent.isComposing || busy) return;
+                e.preventDefault();
+                if (unsaved && !discardAsked) setDiscardAsked(true);
+                else onClose();
+              }}
               placeholder="Write a review comment…"
             />
           </label>
           <footer>
             <small>{locationLabel(editor.location)}</small>
+            <SuggestChangeButton
+              side={editor.location.side}
+              source={newSideLines(hunk, editor.location)}
+              unavailable="The commented lines are not shown in this hunk."
+              body={editor.body}
+              textarea={field}
+              onBody={(body) => setEditor({ ...editor, body })}
+            />
+            {discardAsked && <small role="status">Press Esc again to discard this comment.</small>}
             <button type="button" disabled={busy} onClick={onClose}>
               Cancel
             </button>

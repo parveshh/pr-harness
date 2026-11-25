@@ -1,3 +1,4 @@
+import { reviewChangeTitle } from '../../shared/workspace.js';
 import { useEffect, useState } from 'react';
 import {
   Bell,
@@ -26,19 +27,26 @@ const fonts: Record<Typography['font'], string> = {
   serif: 'Serif',
   mono: 'Monospace',
 };
-const sizes: Record<Typography['size'], string> = {
-  small: 'Small',
-  standard: 'Default',
-  large: 'Large',
-  larger: 'Larger',
+const codeFonts: Record<Typography['codeFont'], string> = {
+  system: 'System monospace',
+  'jetbrains-mono': 'JetBrains Mono',
+  'fira-code': 'Fira Code',
+  'ibm-plex-mono': 'IBM Plex Mono',
 };
 export function applyTypography(settings: Typography) {
   document.documentElement.dataset.font = settings.font;
-  document.documentElement.dataset.textSize = settings.size;
+  document.documentElement.style.fontSize = settings.size + 'px';
+  document.documentElement.dataset.codeFont = settings.codeFont;
 }
 export function SettingsPane({
   theme,
   chooseTheme,
+  vibrancy,
+  savingVibrancy,
+  chooseVibrancy,
+  shortcuts,
+  savingShortcuts,
+  chooseShortcuts,
   accent,
   chooseAccent,
   type,
@@ -49,6 +57,12 @@ export function SettingsPane({
   error,
 }: {
   theme: Appearance;
+  vibrancy: boolean;
+  savingVibrancy: boolean;
+  chooseVibrancy: (enabled: boolean) => void;
+  shortcuts: boolean;
+  savingShortcuts: boolean;
+  chooseShortcuts: (enabled: boolean) => void;
   chooseTheme: (v: Appearance) => void;
   accent: Accent;
   chooseAccent: (v: Accent) => void;
@@ -171,6 +185,32 @@ export function SettingsPane({
             </label>
           ))}
         </fieldset>
+        {window.reviewer.integratedTitleBar && (
+          <div className="settings-line">
+            <label htmlFor="sidebar-vibrancy">Sidebar vibrancy</label>
+            <input
+              id="sidebar-vibrancy"
+              type="checkbox"
+              checked={vibrancy}
+              disabled={savingVibrancy}
+              onChange={(event) => chooseVibrancy(event.target.checked)}
+            />
+          </div>
+        )}
+        <div className="settings-line">
+          <label htmlFor="single-key-shortcuts">Single-key shortcuts</label>
+          <input
+            id="single-key-shortcuts"
+            type="checkbox"
+            checked={shortcuts}
+            aria-describedby="single-key-shortcuts-hint"
+            disabled={savingShortcuts}
+            onChange={(event) => chooseShortcuts(event.target.checked)}
+          />
+        </div>
+        <small id="single-key-shortcuts-hint" className="settings-hint">
+          Reader keys such as j, k and v. Press ? while reading a review to list them.
+        </small>
         <div className="settings-line">
           <label htmlFor="ui-font">Interface font</label>
           <select
@@ -185,21 +225,38 @@ export function SettingsPane({
             ))}
           </select>
         </div>
-        <fieldset className="type-size">
-          <legend>Text size</legend>
-          {typography.shape.size.options.map((size) => (
-            <label key={size}>
-              <input
-                type="radio"
-                name="text-size"
-                value={size}
-                checked={size === type.size}
-                onChange={() => chooseType({ size })}
-              />
-              <span>{sizes[size]}</span>
-            </label>
-          ))}
-        </fieldset>
+        <div className="settings-line">
+          <label htmlFor="code-font">Code font</label>
+          <select
+            id="code-font"
+            value={type.codeFont}
+            onChange={(event) =>
+              chooseType({ codeFont: typography.shape.codeFont.parse(event.target.value) })
+            }
+          >
+            {typography.shape.codeFont.options.map((font) => (
+              <option key={font} value={font}>
+                {codeFonts[font]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="settings-line">
+          <label htmlFor="base-font-size">Base font size</label>
+          <select
+            id="base-font-size"
+            value={type.size}
+            onChange={(event) =>
+              chooseType({ size: typography.shape.size.parse(event.target.value) })
+            }
+          >
+            {typography.shape.size.options.map((size) => (
+              <option key={size} value={size}>
+                {size} px
+              </option>
+            ))}
+          </select>
+        </div>
       </section>
       <section className="settings-group">
         <h3>GitHub account</h3>
@@ -255,6 +312,7 @@ export function SettingsPane({
   );
 }
 export function RepliesPane({
+  openPr,
   inbox,
   busy,
   refresh,
@@ -263,6 +321,7 @@ export function RepliesPane({
   settings,
 }: {
   inbox: Inbox;
+  openPr: (url: string) => void;
   busy: boolean;
   refresh: () => void;
   close: () => void;
@@ -270,13 +329,24 @@ export function RepliesPane({
   settings: () => void;
 }) {
   const [error, setError] = useState('');
-  const unread = inbox.items.filter((i) => i.unread).length;
-  function act(task: Promise<Inbox>) {
+  const items = [...inbox.items, ...inbox.changes].sort(
+    (a, b) =>
+      Number(b.unread) - Number(a.unread) ||
+      Date.parse(b.created) - Date.parse(a.created) ||
+      b.id - a.id,
+  );
+  const unread = items.filter((item) => item.unread).length;
+  function act(task: Promise<Inbox>, done?: (next: Inbox) => void) {
     setError('');
-    task.then(update).catch((e) => {
-      setError(readableError(e));
-      refresh();
-    });
+    task
+      .then((next) => {
+        update(next);
+        done?.(next);
+      })
+      .catch((e) => {
+        setError(readableError(e));
+        refresh();
+      });
   }
   return (
     <section
@@ -285,8 +355,13 @@ export function RepliesPane({
       aria-labelledby="replies-heading"
     >
       <div className="sidebar-title">
-        <h2 id="replies-heading">Review replies</h2>
-        <button aria-label="Close review replies" title="Hide review replies" onClick={close}>
+        <h2 id="replies-heading">Review alerts</h2>
+        <button
+          autoFocus
+          aria-label="Close review alerts"
+          title="Hide review alerts"
+          onClick={close}
+        >
           <ChevronLeft size={16} />
         </button>
       </div>
@@ -296,7 +371,7 @@ export function RepliesPane({
             ? '@' + inbox.account + ' · ' + unread + ' unread'
             : 'GitHub review threads'}
         </small>
-        <button className="quiet" disabled={busy} aria-label="Refresh replies" onClick={refresh}>
+        <button className="quiet" disabled={busy} aria-label="Refresh alerts" onClick={refresh}>
           <RefreshCw size={15} />
         </button>
         {unread > 0 && inbox.account && (
@@ -312,28 +387,35 @@ export function RepliesPane({
       </div>
       {(error || inbox.error) && <p role="status">{error || inbox.error}</p>}
       {!inbox.account && !busy && <button onClick={settings}>GitHub account settings</button>}
-      {!inbox.items.length && (
+      {!inbox.items.length && !inbox.changes.length && (
         <div className="inbox-empty">
           <Bell size={24} />
-          <h3>{busy ? 'Checking for replies…' : 'No new replies'}</h3>
-          <p>New replies to review comments on saved and monitored pull requests appear here.</p>
+          <h3>{busy ? 'Checking for alerts…' : 'No review alerts'}</h3>
+          <p>
+            Replies, dismissed reviews and pushes after your review appear here for saved and
+            monitored pull requests.
+          </p>
         </div>
       )}
       <div className="inbox-list">
-        {inbox.items.map((item) => (
+        {items.map((item) => (
           <button
-            key={item.id}
+            key={('kind' in item ? 'change-' : 'reply-') + item.id}
             className="reply-item"
             data-unread={item.unread}
             onClick={() => {
-              if (inbox.account) act(window.reviewer.openReply(inbox.account, item.id));
+              if (!inbox.account) return;
+              if ('kind' in item) {
+                act(window.reviewer.readReviewChange(inbox.account, item.id), (next) => {
+                  const opened = next.changes.find((change) => change.id === item.id);
+                  if (opened) openPr(opened.url);
+                });
+              } else act(window.reviewer.openReply(inbox.account, item.id));
             }}
           >
-            <span className="visually-hidden">
-              {item.unread ? 'Unread reply. ' : 'Read reply. '}
-            </span>
+            <span className="visually-hidden">{item.unread ? 'Unread. ' : 'Read. '}</span>
             <span className="reply-by">
-              <strong>@{item.author}</strong>
+              <strong>{'kind' in item ? reviewChangeTitle(item.kind) : '@' + item.author}</strong>
               <time dateTime={item.created}>
                 {new Date(item.created).toLocaleString(undefined, {
                   month: 'short',
@@ -344,9 +426,12 @@ export function RepliesPane({
               </time>
             </span>
             <small>
-              {new URL(item.url).pathname.slice(1).replace('/pull/', ' #')} · {item.path}
+              {new URL(item.url).pathname.slice(1).replace('/pull/', ' #')} ·{' '}
+              {'kind' in item ? item.head.slice(0, 8) : item.path}
             </small>
-            <span className="reply-body">{item.body || 'Open review reply'}</span>
+            {'body' in item && (
+              <span className="reply-body">{item.body || 'Open review reply'}</span>
+            )}
           </button>
         ))}
       </div>

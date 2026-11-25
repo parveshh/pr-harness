@@ -1,8 +1,21 @@
+import { finding, type AssessFinding } from './findings.js';
 import { z } from 'zod';
-import { pullRequestUrl } from './reviews.js';
+import { isLocalReview, pullRequestUrl, pullSidebarFields, reviewKey } from './reviews.js';
 
-export const defaultPrompt =
-  'Answer the reviewer’s question directly. When asked for a file overview, describe what a newly added file introduces and how it fits into the PR, or explain how an existing file’s behaviour changed. Cite the file and lines for each material claim. For a possible defect, describe the triggering conditions and the effect on the caller. If the answer depends on missing evidence, name what you would inspect. Treat the author’s stated intent as a claim to check. Keep routine changes brief.';
+export const defaultPrompt = `Answer the reviewer’s question directly. Match the scope to the request. For a line or file explanation, start with what the selected code does. For a new file, explain its responsibility and where it is used. For a whole PR review, lead with the findings that would most affect the decision to merge.
+
+Understand the change. Identify the behaviour the author intends and check it against the pinned diff. Trace a representative input from the entry point through the changed code to the value returned, state saved, or action the user sees. Compare that path before and after the change. Follow relevant callers, types, and tests when the supplied evidence allows it. Pay attention to removed checks and to unchanged callers that rely on the old contract.
+
+Check where the behaviour can break. Choose cases that follow from this change. For example, if a write can be retried after a timeout, trace what happens when the first write succeeded. For a schema or API change, consider existing records and callers. At a permissions boundary, check who may perform the action and on whose data. Consider resource use when work grows with input size. Raise a concern when you can describe a realistic trigger and an observable consequence.
+
+Read the tests as a caller would. Identify the setup, the action, and the outcome the assertions actually verify. For a bug fix, ask whether that assertion would have caught the old behaviour. If an important path is uncovered, describe one specific case and the outcome it should assert. Distinguish reading a test from observing it pass.
+
+Report each distinct finding once, highest impact first. Give it a short title naming the failure. Explain who or what triggers it, which changed line causes it, and the effect on the caller or user. Cite the relevant lines using the supplied evidence IDs. Suggest a focused correction or verification step when it helps. If evidence is incomplete, identify the missing caller, source, or test and explain which conclusion depends on it. If you find no actionable defect, say so plainly and mention any material gap in coverage. Keep routine changes brief.`;
+export const defaultSummaryPrompt = `Help a reviewer understand this pull request before reading it. Start with its purpose and the observable behaviour before and after the change. Group related changes by behaviour, name the entry points and files that explain them, and give a short reading order for the most consequential changes. Describe what the tests cover and identify any material gaps in the available evidence. Cite the pinned evidence for factual claims and distinguish the author’s stated intent from what the diff shows. Keep routine changes brief.`;
+export const promptPurpose = z.enum(['review', 'summary']);
+export type PromptPurpose = z.infer<typeof promptPurpose>;
+export const prReviewQuestion =
+  'Review this whole pull request for actionable defects. Trace affected callers and tests, report the impact of each finding, and propose a concise inline comment suitable for the author. State any material gaps in coverage.';
 export const repoName = z
   .string()
   .trim()
@@ -44,7 +57,12 @@ export const agentInfo = z.object({
   models: z.array(z.string()),
 });
 export const scope = z.enum(['default', 'repository', 'review']);
-export const config = z.object({ agents: z.array(agentInfo), settings: prefs, scope });
+export const config = z.object({
+  agents: z.array(agentInfo),
+  settings: prefs,
+  scope,
+  summary: z.object({ scope, prompt: reviewPrompt }),
+});
 export const agentCatalog = z.object({ agents: z.array(agentInfo), selection });
 export const agentNames: Record<AgentId, string> = {
   codex: 'Codex CLI',
@@ -74,16 +92,17 @@ export const sourceCitation = z.object({
   url: z.string(),
 });
 export const citedSourceKey = z.object({
-  url: pullRequestUrl,
+  url: reviewKey,
   run: z.uuid(),
   id: z.number().int().positive(),
 });
 export type CitedSourceKey = z.infer<typeof citedSourceKey>;
 export type SourceCitation = z.infer<typeof sourceCitation>;
 export const chatRequest = z.object({
+  kind: z.enum(['question', 'summary', 'review']).optional(),
   contextMode: contextMode.optional(),
   run: z.uuid(),
-  url: pullRequestUrl,
+  url: reviewKey,
   revision: z.string(),
   path: z.string(),
   hunk: z.number().int().nonnegative(),
@@ -92,6 +111,8 @@ export const chatRequest = z.object({
   question: z.string().trim().min(1).max(8000),
 });
 export const turn = z.object({
+  archived: z.literal(true).optional(),
+  findings: finding.array().optional(),
   contextMode: contextMode.optional(),
   run: z.uuid(),
   revision: z.string(),
@@ -107,11 +128,13 @@ export const turn = z.object({
 });
 export const activity = z.object({ run: z.uuid(), text: z.string() });
 export const watchPr = z.object({
+  ...pullSidebarFields,
   number: z.number().int().positive(),
   title: z.string(),
   author: login,
   // Whether the signed-in reviewer's latest review on GitHub approves the PR.
   approved: z.boolean().default(false),
+  isDraft: z.boolean().optional(),
   // Appeared since the last check and not opened yet.
   unseen: z.boolean().default(false),
 });
@@ -146,13 +169,19 @@ export interface AssistantBridge {
   agentSelection(): Promise<AgentCatalog>;
   saveSelection(value: Selection): Promise<AgentCatalog>;
   agentConfig(url: string): Promise<Config>;
-  savePrompt(url: string, scope: Scope, prompt: string): Promise<Config>;
-  clearPrompt(url: string, target: Scope): Promise<Config>;
+  savePrompt(url: string, scope: Scope, prompt: string, purpose?: PromptPurpose): Promise<Config>;
+  clearPrompt(url: string, target: Scope, purpose?: PromptPurpose): Promise<Config>;
+  assessFinding(value: AssessFinding): Promise<Turn>;
   chooseExecutable(agent: AgentId): Promise<boolean>;
+  newConversation(url: string): Promise<void>;
   history(url: string): Promise<Turn[]>;
   ask(request: ChatRequest): Promise<Turn>;
   cancelAsk(run: string): Promise<void>;
   onActivity(callback: (event: z.infer<typeof activity>) => void): () => void;
+}
+// Local branch reviews have no GitHub repository, so repository-scoped settings do not apply.
+export function githubRepoOf(url: string) {
+  return isLocalReview(url) ? null : repoOf(url);
 }
 export function repoOf(url: string) {
   return repoName.parse(

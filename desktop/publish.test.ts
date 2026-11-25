@@ -233,3 +233,157 @@ await test('a lost receipt locks the drafts until the review GitHub accepted is 
   assert.equal(published.comments.length, 0);
   assert.equal(posts, 1);
 });
+
+// A pull request whose patch and head can change between installs, with a recording publisher.
+async function suggestionFixture(
+  t: { after(fn: () => void): void },
+  number: number,
+  firstPatch: string,
+) {
+  const url = 'https://github.com/example/project/pull/' + number;
+  const db = openStore(':memory:');
+  t.after(() => db.close());
+  let patch = firstPatch,
+    head = 'head1';
+  const api = (path: string) =>
+    Promise.resolve(
+      JSON.stringify(
+        path === 'user'
+          ? { login: 'reviewer' }
+          : path.includes('/files?')
+            ? [
+                {
+                  filename: 'f.ts',
+                  status: 'modified',
+                  sha: 'blob' + patch.length,
+                  additions: 1,
+                  deletions: 1,
+                  patch,
+                },
+              ]
+            : {
+                title: 'Test',
+                body: '',
+                user: { login: 'author' },
+                base: { sha: 'base', ref: 'main' },
+                head: { sha: head, ref: 'feature' },
+                changed_files: 1,
+              },
+      ),
+    );
+  db.save(url);
+  db.reader.select(url);
+  const install = async () => {
+    const snapshot = await fetchSnapshot(url, new AbortController().signal, api);
+    db.reader.install(url, snapshot);
+    return snapshot;
+  };
+  const snapshot = await install();
+  const sent: string[] = [];
+  const publisher = reviewPublisher(db, api, (_, payload) => {
+    sent.push(...payload.comments.map((c) => c.body));
+    return Promise.resolve(9);
+  });
+  const draftOn = (side: 'old' | 'new', line: number, body: string) =>
+    publisher.edit(url, db.drafts.get(url).version, {
+      action: 'draft',
+      id: null,
+      body,
+      target: { path: 'f.ts', hunk: 0, side, line, revision: snapshot.revision },
+    });
+  return {
+    url,
+    db,
+    publisher,
+    sent,
+    snapshot,
+    draftOn,
+    change(next: { patch?: string; head?: string }) {
+      patch = next.patch ?? patch;
+      head = next.head ?? head;
+      return install();
+    },
+    key: (revision = snapshot.revision) => ({
+      url,
+      version: db.drafts.get(url).version,
+      revision,
+      actor: 'reviewer',
+    }),
+  };
+}
+const fence = '```suggestion\nbetter\n```';
+
+await test('a suggestion on a removed line is rejected before anything is sent', async (t) => {
+  const f = await suggestionFixture(t, 4, '@@ -1,2 +1,2 @@\n keep\n-old\n+new');
+  const saved = f.draftOn('old', 2, 'Use this instead.\n\n' + fence);
+  const before = f.db.drafts.get(f.url);
+  await assert.rejects(f.publisher.publish(f.key()), /removed line.*only applies suggestions/);
+  assert.deepEqual(f.db.drafts.get(f.url), before);
+  assert.equal(f.sent.length, 0);
+  // Prose on the same removed line is still fine.
+  f.publisher.edit(f.url, saved.version, {
+    action: 'draft',
+    id: saved.comments[0]!.id,
+    body: 'Why remove this?',
+    target: null,
+  });
+  await f.publisher.publish(f.key());
+  assert.deepEqual(f.sent, ['Why remove this?']);
+});
+
+await test('a suggestion moved to different code is refused, and a normal one is sent unchanged', async (t) => {
+  const f = await suggestionFixture(t, 5, '@@ -1,2 +1,3 @@\n keep\n-old\n+new\n+tail');
+  const body = 'Prefer this.\r\n\r\n````suggestion\r\nbetter ```\r\n````\r\n';
+  const saved = f.draftOn('new', 2, body);
+  // Reattaching to other lines without rewriting the suggestion cannot make it current.
+  assert.throws(
+    () =>
+      f.publisher.edit(f.url, saved.version, {
+        action: 'draft',
+        id: saved.comments[0]!.id,
+        body,
+        target: { path: 'f.ts', hunk: 0, side: 'new', line: 3, revision: f.snapshot.revision },
+      }),
+    /written against different code/,
+  );
+  assert.deepEqual(f.db.drafts.get(f.url), saved);
+  // The snapshot is later served with other text on that line: the stored excerpt no longer matches.
+  await f.change({ patch: '@@ -1,2 +1,3 @@\n keep\n-old\n+changed\n+tail' });
+  await assert.rejects(f.publisher.publish(f.key()), /suggestion on f\.ts line 2.*different code/);
+  assert.equal(f.sent.length, 0);
+  // Plain comments keep the generic message.
+  const plain = f.db.drafts.get(f.url);
+  f.publisher.edit(f.url, plain.version, {
+    action: 'draft',
+    id: plain.comments[0]!.id,
+    body: 'No suggestion.',
+    target: null,
+  });
+  await assert.rejects(f.publisher.publish(f.key()), /draft location changed/);
+  // Rewriting for the new lines through a reattach is accepted and refreshes the excerpt.
+  const again = f.db.drafts.get(f.url);
+  const rewritten = f.publisher.edit(f.url, again.version, {
+    action: 'draft',
+    id: again.comments[0]!.id,
+    body,
+    target: { path: 'f.ts', hunk: 0, side: 'new', line: 2, revision: f.snapshot.revision },
+  });
+  assert.equal(rewritten.comments[0]?.excerpt, '+changed');
+  await f.publisher.publish(f.key());
+  assert.deepEqual(f.sent, [body]);
+});
+
+await test('a suggestion follows its lines when a push shifts them', async (t) => {
+  const f = await suggestionFixture(t, 6, '@@ -1,3 +1,3 @@\n one\n-two\n+three\n four');
+  const body = 'Tidy.\n\n' + fence;
+  f.draftOn('new', 2, body);
+  const next = await f.change({
+    head: 'head2',
+    patch: '@@ -1,4 +1,4 @@\n zero\n one\n-two\n+three\n four',
+  });
+  const moved = f.db.drafts.get(f.url).comments[0];
+  assert.equal(moved?.revision, next.revision);
+  assert.equal(moved?.line, 3);
+  await f.publisher.publish(f.key(next.revision));
+  assert.deepEqual(f.sent, [body]);
+});

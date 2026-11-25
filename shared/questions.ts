@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { pullRequestUrl } from './reviews.js';
+import { reviewKey } from './reviews.js';
 
-export const questionKey = z.object({ url: pullRequestUrl, revision: z.string(), id: z.uuid() });
+export const questionKey = z.object({ url: reviewKey, revision: z.string(), id: z.uuid() });
 export const hunkLocation = z.object({ path: z.string(), hunk: z.number().int().nonnegative() });
 export const pinQuestion = questionKey.extend({
   ...hunkLocation.shape,

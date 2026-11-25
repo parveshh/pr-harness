@@ -5,12 +5,15 @@ import { discussionMessage, discussions, resolveResult } from '../shared/discuss
 import { typography, signIn, inbox } from '../shared/workspace.js';
 import { accent, appearance } from '../shared/appearance.js';
 import { contextBridge, ipcRenderer } from 'electron';
-import { pullRequestUrl, reviewList, type ReviewerBridge } from '../shared/reviews.js';
+import { pullRequestUrl, reviewKey, reviewList, type ReviewerBridge } from '../shared/reviews.js';
+import { localBrief, localCandidate, localStarted } from '../shared/local.js';
 import { reviewBundle } from '../shared/publish.js';
 import { pinnedQuestion, questionEvidence } from '../shared/questions.js';
 import { changeEvidence } from '../shared/rereview.js';
-import { readerView } from '../shared/reader.js';
+import { matchingHunks } from '../shared/diff-search.js';
+import { readerView, reviewUpdate } from '../shared/reader.js';
 import { z } from 'zod';
+import { reviewRequestInbox } from '../shared/review-requests.js';
 import { pipelines, pipelineJob } from '../shared/pipelines.js';
 import { repository, config, agentCatalog, turn, activity } from '../shared/assistant.js';
 
@@ -55,9 +58,14 @@ const reviewer: ReviewerBridge = {
   saveTypography: async (value) =>
     typography.parse(await ipcRenderer.invoke('settings:save-type', value)),
   syncReplies: async () => inbox.parse(await ipcRenderer.invoke('replies:sync')),
+  readReviewChange: async (account, id) =>
+    inbox.parse(await ipcRenderer.invoke('replies:read-change', account, id)),
   readReplies: async (account) => inbox.parse(await ipcRenderer.invoke('replies:read', account)),
   openReply: async (account, id) =>
     inbox.parse(await ipcRenderer.invoke('replies:open', account, id)),
+  reviewRequests: async () => reviewRequestInbox.parse(await ipcRenderer.invoke('requests:list')),
+  syncReviewRequests: async () =>
+    reviewRequestInbox.parse(await ipcRenderer.invoke('requests:sync')),
   startLogin: async () => signIn.parse(await ipcRenderer.invoke('account:start')),
   loginProgress: async () => signIn.parse(await ipcRenderer.invoke('account:progress')),
   cancelLogin: async () => {
@@ -70,6 +78,15 @@ const reviewer: ReviewerBridge = {
     await ipcRenderer.invoke('account:device');
   },
   integratedTitleBar: process.platform === 'darwin',
+  getSidebarVibrancy: async () =>
+    z.boolean().parse(await ipcRenderer.invoke('appearance:sidebar-vibrancy')),
+  saveSidebarVibrancy: async (enabled) => {
+    await ipcRenderer.invoke('appearance:save-sidebar-vibrancy', enabled);
+  },
+  getSingleKeyShortcuts: async () => z.boolean().parse(await ipcRenderer.invoke('shortcuts:get')),
+  saveSingleKeyShortcuts: async (enabled) => {
+    await ipcRenderer.invoke('shortcuts:save', enabled);
+  },
   getAppearance: async () => appearance.parse(await ipcRenderer.invoke('appearance:get')),
   saveAppearance: async (value) => {
     await ipcRenderer.invoke('appearance:save', value);
@@ -106,16 +123,25 @@ const reviewer: ReviewerBridge = {
   },
   removeRepository: async (name) =>
     repository.array().parse(await ipcRenderer.invoke('repos:remove', name)),
+  assessFinding: async (value) =>
+    turn.parse(await ipcRenderer.invoke('chat:assess-finding', value)),
+  draftFindings: async (value) =>
+    z
+      .object({ turn, bundle: reviewBundle })
+      .parse(await ipcRenderer.invoke('chat:draft-findings', value)),
   agentConfig: async (url) => config.parse(await ipcRenderer.invoke('agent:config', url)),
   agentSelection: async () => agentCatalog.parse(await ipcRenderer.invoke('agent:selection')),
   saveSelection: async (value) =>
     agentCatalog.parse(await ipcRenderer.invoke('agent:select', value)),
-  savePrompt: async (url, scope, prompt) =>
-    config.parse(await ipcRenderer.invoke('agent:save-prompt', url, scope, prompt)),
-  clearPrompt: async (url, target) =>
-    config.parse(await ipcRenderer.invoke('agent:clear-prompt', url, target)),
+  savePrompt: async (url, scope, prompt, purpose = 'review') =>
+    config.parse(await ipcRenderer.invoke('agent:save-prompt', url, scope, prompt, purpose)),
+  clearPrompt: async (url, target, purpose = 'review') =>
+    config.parse(await ipcRenderer.invoke('agent:clear-prompt', url, target, purpose)),
   chooseExecutable: async (agent) =>
     z.boolean().parse(await ipcRenderer.invoke('agent:choose', agent)),
+  newConversation: async (url) => {
+    await ipcRenderer.invoke('chat:new-conversation', url);
+  },
   history: async (url) => turn.array().parse(await ipcRenderer.invoke('chat:history', url)),
   ask: async (req) => turn.parse(await ipcRenderer.invoke('chat:ask', req)),
   cancelAsk: async (run) => {
@@ -128,8 +154,7 @@ const reviewer: ReviewerBridge = {
       ipcRenderer.removeListener('chat:activity', listener);
     };
   },
-  activeReview: async () =>
-    pullRequestUrl.nullable().parse(await ipcRenderer.invoke('reader:active')),
+  activeReview: async () => reviewKey.nullable().parse(await ipcRenderer.invoke('reader:active')),
   selectReview: async (url) => {
     await ipcRenderer.invoke('reader:select', url);
   },
@@ -140,11 +165,7 @@ const reviewer: ReviewerBridge = {
   comparisonPosition: async (url, revision, since, path) => {
     await ipcRenderer.invoke('reader:comparison-position', { url, revision, since, path });
   },
-  checkUpdate: async (url) =>
-    z
-      .string()
-      .nullable()
-      .parse(await ipcRenderer.invoke('reader:probe', url)),
+  checkUpdate: async (url) => reviewUpdate.parse(await ipcRenderer.invoke('reader:probe', url)),
   openUpdate: async (url, revision) =>
     readerView.parse(await ipcRenderer.invoke('reader:open-update', { url, revision })),
   finishRevision: async (url, revision) =>
@@ -162,11 +183,23 @@ const reviewer: ReviewerBridge = {
   citedSource: async (key) =>
     z.string().parse(await ipcRenderer.invoke('reader:cited-source', key)),
   fullFile: async (key) => z.string().parse(await ipcRenderer.invoke('reader:full-file', key)),
+  searchDiff: async (request) =>
+    matchingHunks.parse(await ipcRenderer.invoke('reader:search', request)),
   filePatch: async (key) => z.string().parse(await ipcRenderer.invoke('reader:patch', key)),
   remember: async (value) => {
     await ipcRenderer.invoke('reader:remember', value);
   },
   listReviews: async () => reviewList.parse(await ipcRenderer.invoke('reviews:list')),
+  chooseLocalRepository: async () =>
+    localCandidate.nullable().parse(await ipcRenderer.invoke('local:choose')),
+  startLocalReview: async (id, base) =>
+    localStarted.parse(await ipcRenderer.invoke('local:start', { id, base })),
+  localBrief: async (url) => localBrief.parse(await ipcRenderer.invoke('local:brief', url)),
+  copyLocalBrief: async (url, version, revision) => {
+    await ipcRenderer.invoke('local:copy-brief', url, version, revision);
+  },
+  saveLocalBrief: async (url, version, revision) =>
+    z.boolean().parse(await ipcRenderer.invoke('local:save-brief', url, version, revision)),
   saveReview: async (url) => reviewList.parse(await ipcRenderer.invoke('reviews:save', url)),
 };
 contextBridge.exposeInMainWorld('reviewer', reviewer);

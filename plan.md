@@ -13,15 +13,31 @@ The first release should cover a complete review across **two pushes**. A polish
 | 3. Comment and publish | Draft inline or across a line range, preview and submit a grouped review, and reconcile an uncertain receipt. Read, reply to, resolve and reopen existing GitHub questions directly beside their lines. A pipeline view follows the reviewed commit's GitHub Actions runs, jobs and steps. Each file row shows its published comment count, and sidebar PR rows can start a summary or an approval and show the reviewer's approval. PR conversation holds general feedback and older threads. | Fixture submissions cover both sides of a diff, conversation replies, and lost receipts. Verify the release build on a dedicated test PR with explicit write authorization. |
 | 4. Review a second push | Detect updates, compare against a checkpoint, retain reviewed-file progress, flag old evidence, and reattach or flag drafts. Pinned questions retain their original hunk and can be marked addressed. | The desktop fixture exercises fast-forward, force-push, base changes, and an answer arriving after a push. Run the two-push reviewer trial below. |
 
-The workspace also supports repository and author monitoring with new pull request notifications and an app icon count, GitHub CLI account connection, in-app reply alerts, appearance settings, and resizable panes. [User guide](./README.md)
+The workspace also supports read-only reviews of a local branch and its uncommitted work that finish with a Markdown brief for the coding agent, repository and author monitoring with new pull request notifications and an app icon count, a list of pull requests awaiting the reviewer's review, GitHub CLI account connection, in-app reply alerts, appearance settings, and resizable panes. [User guide](./README.md)
 
 ### What is left
 
 1. **Validate the two-push workflow with reviewers.** Record whether they find a partially addressed concern, return to the right hunk, and publish the intended comment. Include a fork PR, an outdated thread, and a cold source download in the release checks.
-2. **Measure large PRs.** Time first diff, full-file loading and scrolling, and cross-file answers. The current full-file reader pages long text. Git source reads have a 2 MiB limit per file. GitHub can return an incomplete file inventory or patch.
+2. **Measure large PRs.** The diff reader and file explorer are measured and windowed (see the table below). Still to time: full-file loading and cross-file answers, and a real pull request of this size, since the numbers below come from a fixture. The current full-file reader pages long text. Git source reads have a 2 MiB limit per file. GitHub can return an incomplete file inventory or patch.
+
+   `npm run bench:large` drives the built app against a fixture PR with 3,000 files, a 50,000-line added file (one hunk) and a 5,000-row hunk carrying three drafts and a published thread. Medians of five runs on 25 November 2026, on an Apple silicon Mac with a 120 Hz display, where a frame cannot be shorter than 8.3 ms:
+
+   | Measurement | Every row rendered | Rows near the viewport rendered |
+   | --- | --- | --- |
+   | Open the saved PR to its first diff rows (small file selected) | 195 ms | 70 ms |
+   | First fetch through the fixture CLI to the first diff rows (lands on the 50,000-line file) | 4.5 s | 1.4 s |
+   | Switch to the 50,000-line file | 4.1 s | 36 ms |
+   | Switch to the 5,000-row hunk | 740 ms | 69 ms |
+   | Scroll the 50,000-line hunk, 900 px a frame for 120 frames | 433 ms median frame, 692 ms worst, 240 long tasks | 8.3 ms median, 17 ms worst, no long tasks |
+   | Scroll the 5,000-row hunk, 300 px a frame for 120 frames | 67–75 ms median frame, 217 ms worst, 121 long tasks | 8.3 ms median, 10 ms worst, no long tasks |
+   | One keystroke in the inline editor on the 5,000-row hunk | 102 ms | 8.2 ms |
+   | Filter the file explorer to one folder, then clear the filter | 31 ms, 105 ms | 7 ms, 16 ms |
+   | Diff rows and explorer rows in the DOM | 50,000 and 3,123 | 72 and 48 |
+
+   A hunk of more than 1,000 rows and an explorer of more than 300 rows render a window of rows ([windowing.ts](./shared/windowing.ts), [useRowWindow.ts](./client/src/useRowWindow.ts)). Shorter ones render as before. Syntax highlighting was left alone: it takes about 42 ms for the 5,000-row hunk, once per hunk, and stops at 150,000 characters. The benchmark scrolls by setting the scroll position each frame, so it does not show whether a fast trackpad fling can outrun rendering.
 3. **Try guided reading order and PR description checks.** These are proposed experiments. The two-push trial can use a question saved in an earlier version.
 4. **Evaluate automatic explanations and batch re-analysis.** Today reviewers request an explanation or ask a chat question. Use trial feedback and model latency before choosing a default.
-5. **Prepare signed desktop distribution.** The release build produces a universal macOS disk image and a Windows x64 installer. Developer ID signing, Apple notarization, and Windows publisher signing remain open.
+5. **Prepare signed desktop distribution.** The release build produces a macOS disk image for Apple silicon and a Windows x64 installer. Developer ID signing, Apple notarization, and Windows publisher signing remain open.
 
 ## One review from start to finish
 
@@ -59,9 +75,7 @@ Store the base, merge base, and head commit IDs for each snapshot. The full PR v
 
 **Agent integration.** Start with one working adapter, then prove portability with the second before calling the picker complete. Each adapter discovers its executable and version, reports model choices when supported, starts a review with the selected model and instructions, streams events, and cancels a run. Where model discovery is unavailable, offer the agent default and a manually entered model ID. Surface rejected choices and let the reviewer select again. Record agent, requested model, reported model when available, and prompt version with each answer. Switching agents starts a fresh run with the selected local conversation context.
 
-**Review instructions.** Offer an editable default system prompt with a local per-repository override. Preview the effective instructions and save a version with each run. Source files, PR descriptions, and comments enter as quoted review material. Give the agent read-only evidence from the pinned revision. The app owns GitHub writes. Start with this editable default:
-
-> Explain the behaviour before and after the change. Cite the file and lines for each material claim. For a possible defect, describe the triggering conditions and the effect on the caller. If the answer depends on missing evidence, name what you would inspect. Treat the author's stated intent as a claim to check. Keep routine changes brief.
+**Review instructions.** Offer an editable default system prompt with a local per-repository override. Preview the effective instructions and save a version with each run. Source files, PR descriptions, and comments enter as quoted review material. Give the agent read-only evidence from the pinned revision. The app owns GitHub writes. The [editable default prompt](./shared/assistant.ts) guides the reviewer through tracing behaviour, checking failure paths and tests, and writing findings with evidence.
 
 **Consistency.** Build each snapshot against pinned commits and check that the PR stayed on that revision while fetching mutable metadata. Key generated explanations by their input files, prompt version, agent and model. Store each draft with its original excerpt, file, side, line range and revision. Before publishing, refresh the head and validate the anchors against the current GitHub diff. If a submission times out, reconcile against the reviewer's GitHub reviews before retrying. [GitHub inline comment anchors](https://docs.github.com/en/rest/pulls/comments#create-a-review-comment-for-a-pull-request)
 
@@ -73,7 +87,7 @@ Use Electron for the first release. Its Node main process can own the database a
 
 Tauri becomes attractive if download size takes priority and the team wants a Rust backend. It uses the operating system's webview. Keeping Node as an embedded sidecar adds a binary to package for each target. [Tauri architecture](https://v2.tauri.app/concept/architecture/) · [Sidecar distribution](https://v2.tauri.app/develop/sidecar/)
 
-GPUI is a candidate if the diff viewer becomes a native editor with custom GPU rendering. Its UI is written in Rust. Before considering that investment, measure scrolling and selection on representative large PRs in the React viewer with off-screen rows virtualised. [GPUI](https://gpui.rs/)
+GPUI is a candidate if the diff viewer becomes a native editor with custom GPU rendering. Its UI is written in Rust. Before considering that investment, measure scrolling and selection on representative large PRs in the React viewer with off-screen rows virtualised. The fixture measurements under **What is left** show the windowed React viewer holding the display's frame rate on a 50,000-line hunk. [GPUI](https://gpui.rs/)
 
 ## Features worth trying with reviewers
 
