@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { pullReviewFields, pullReviewInfo, summarizePullReviews } from './pull-review-status.js';
 import { z } from 'zod';
-import { pullRequestUrl } from '../shared/reviews.js';
+import { pullRequestUrl, pullState, type PullState } from '../shared/reviews.js';
 import { reviewChange, type ReviewChange } from '../shared/workspace.js';
 import type { Graphql } from './github.js';
 
@@ -55,7 +55,8 @@ export function migratePullReviewStatus(db: DatabaseSync, version: number) {
 }
 
 const status = pullReviewInfo.extend({
-  state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
+  state: pullState,
+  updatedAt: z.iso.datetime().optional(),
   isDraft: z.boolean(),
   dismissed: z.object({ totalCount: z.number().int().nonnegative() }),
   latest: z.object({
@@ -75,7 +76,7 @@ export async function readReviewStatus(
   );
   const query = `query ReviewStatus($owner:String!,$name:String!,$author:String!){
     repository(owner:$owner,name:$name){pullRequest(number:${number}){
-      state isDraft ${pullReviewFields}
+      state updatedAt isDraft ${pullReviewFields}
       latest:reviews(last:1,author:$author,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){nodes{commit{oid}}}
       dismissed:reviews(first:1,author:$author,states:[DISMISSED]){totalCount}
     }}
@@ -94,6 +95,7 @@ export async function readReviewStatus(
   );
   return {
     state: pull.state,
+    ...(pull.updatedAt ? { updatedAt: pull.updatedAt } : {}),
     isDraft: pull.isDraft,
     headRefOid: pull.headRefOid,
     latest: pull.latest,
@@ -101,6 +103,29 @@ export async function readReviewStatus(
     commitCount: summary.commitCount,
     approvalStage: summary.approvalStage,
   };
+}
+
+// Reader and background refreshes can finish out of order. A merge is final, and
+// GitHub's update time orders close/reopen observations independently of the local clock.
+export function savePullState(
+  db: DatabaseSync,
+  url: string,
+  state: PullState | undefined,
+  updatedAt: string | undefined,
+) {
+  if (!state) return false;
+  return (
+    db
+      .prepare(
+        `INSERT INTO pull_lifecycle(url,state,updated_at)
+    SELECT url,?,? FROM reply_targets WHERE url=?
+    ON CONFLICT(url) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at
+    WHERE pull_lifecycle.state != 'MERGED' AND
+      (excluded.state='MERGED' OR excluded.updated_at >= pull_lifecycle.updated_at) AND
+      (excluded.state != pull_lifecycle.state OR excluded.updated_at != pull_lifecycle.updated_at)`,
+      )
+      .run(state, updatedAt ? new Date(updatedAt).toISOString() : '', url).changes > 0
+  );
 }
 
 export function saveDraftStatus(db: DatabaseSync, url: string, isDraft: boolean | undefined) {
@@ -145,6 +170,7 @@ export function reviewActivityStore(db: DatabaseSync) {
               unread: true,
             });
           };
+          savePullState(db, url, current.state, current.updatedAt);
           saveDraftStatus(db, url, current.isDraft);
           db.prepare(
             'INSERT OR REPLACE INTO pull_review_status(url,head,commit_count,approval_stage) VALUES(?,?,?,?)',

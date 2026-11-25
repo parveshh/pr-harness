@@ -64,9 +64,15 @@ export const pullSidebarFields = {
   commitCount: z.number().int().nonnegative().optional(),
   approvalStage: approvalStage.optional(),
 };
+export const pullState = z.enum(['OPEN', 'CLOSED', 'MERGED']);
+export type PullState = z.infer<typeof pullState>;
+export function isInactivePull(state: PullState | undefined) {
+  return state === 'CLOSED' || state === 'MERGED';
+}
 export const savedReview = z.object({
   url: reviewKey,
   savedAt: z.iso.datetime(),
+  state: pullState.optional(),
   ...pullSidebarFields,
   author: z.string().optional(),
   title: z.string().optional(),

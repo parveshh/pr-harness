@@ -191,6 +191,7 @@ await test('a push and dismissal on a reviewed PR survive restart and are announ
   store.save(url);
   let account = 'reader',
     head = 'first',
+    state = 'OPEN',
     dismissed = 1,
     reviewedHead: string | null = null,
     isDraft = true,
@@ -215,7 +216,7 @@ await test('a push and dismissal on a reviewed PR survive restart and are announ
                 data: {
                   repository: {
                     pullRequest: {
-                      state: 'OPEN',
+                      state,
                       headRefOid: head,
                       isDraft,
                       commits: { totalCount: 3 },
@@ -284,4 +285,10 @@ await test('a push and dismissal on a reviewed PR survive restart and are announ
   account = 'other';
   assert.deepEqual((await monitor.sync()).changes, []);
   assert.equal(notifications.length, 2);
+  state = 'MERGED';
+  await monitor.sync();
+  assert.equal(store.list()[0]?.state, 'MERGED');
+  store.close();
+  store = openStore(file);
+  assert.equal(store.list()[0]?.state, 'MERGED');
 });

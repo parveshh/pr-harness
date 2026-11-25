@@ -238,9 +238,12 @@ export function registerWorkspace(
   handle('account:cancel', () => account.cancel());
   handle('chat:open-link', (_, value) => shell.openExternal(webLink.parse(value)));
   handle('account:device', () => shell.openExternal('https://github.com/login/device'));
-  handle('replies:sync', () =>
-    account.progress().state === 'waiting' ? replies.state() : replies.sync(),
-  );
+  handle('replies:sync', async () => {
+    if (account.progress().state === 'waiting') return replies.state();
+    const inbox = await replies.sync();
+    badge();
+    return inbox;
+  });
   handle('replies:read', async (_, value) => {
     const name = login.parse(value);
     await replies.verify(name);

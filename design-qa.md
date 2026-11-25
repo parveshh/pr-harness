@@ -1,6 +1,6 @@
 # Repository queue and focused review
 
-The selected mockup shows two states of the same window. The repository stays selected as the reviewer moves from its pull-request list into a diff. The filename opens a searchable picker. The original comparison below records the earlier on-demand chat design. The current layout opens chat with the PR and gives each pane its own header at the top of the window.
+The selected mockup shows two states of the same window. The repository stays selected as the reviewer moves from its pull-request list into a diff. The mockup shows a filename picker. The current reader uses a persistent file explorer. The original comparison below records the earlier on-demand chat design. The current layout opens chat with the PR and gives each pane its own header at the top of the window.
 
 ## Visual comparison
 
@@ -21,6 +21,6 @@ The reference is a 1536 × 1024 image containing two desktop window excerpts. Ea
 
 ## Interaction coverage
 
-The Electron fixture exercises repository selection, opening a PR, returning to the queue, keyboard filtering and Escape in the file picker, automatic chat on open and restore, closing and reopening chat, recovering typed questions, re-reviewing a push, and reopening saved work offline. The narrow checks include a 570-pixel workspace and an 850-pixel reader. The screenshots and interactions use an isolated profile and controlled GitHub and agent responses on macOS.
+The Electron fixture exercises repository selection, opening a PR, returning to the queue, keyboard filtering, resizing, and collapsing the file explorer, automatic chat on open and restore, closing and reopening chat, recovering typed questions, re-reviewing a push, and reopening saved work offline. The narrow checks include a 570-pixel workspace and an 850-pixel reader. The screenshots and interactions use an isolated profile and controlled GitHub and agent responses on macOS.
 
 Final result: passed

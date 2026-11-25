@@ -71,7 +71,7 @@ input {
   flex: 1 1 250px;
   border: 1px solid var(--line);
   background: var(--toolbar);
-  font-family: ui-monospace, monospace;
+  font-family: var(--code-font, ui-monospace), monospace;
   font-size: 0.8125rem;
 }
 button {
@@ -115,7 +115,7 @@ h2 span,
 time,
 code {
   font:
-    0.8125rem ui-monospace,
+    0.8125rem var(--code-font, ui-monospace),
     monospace;
   color: var(--muted);
 }

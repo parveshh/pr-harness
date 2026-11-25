@@ -1,5 +1,5 @@
 import type { Repository } from './assistant.js';
-import type { LocalReviewInfo, SavedReview } from './reviews.js';
+import { isInactivePull, type LocalReviewInfo, type SavedReview } from './reviews.js';
 
 export function reviewRepository(url: string, local?: LocalReviewInfo) {
   return local?.path ?? new URL(url).pathname.split('/').slice(1, 3).join('/');
@@ -16,17 +16,23 @@ export interface RepositoryGroup {
 export function groupReviews(repositories: Repository[], reviews: SavedReview[]) {
   const groups = new Map<string, RepositoryGroup>();
   const listed = new Map<string, RepositoryGroup['pulls'][number]>();
+  const inactive = new Set(
+    reviews.filter((review) => isInactivePull(review.state)).map((review) => review.url),
+  );
   for (const monitored of repositories) {
     const key = monitored.name;
     const pulls = monitored.pulls
       .filter((pull) => monitored.watching.includes(pull.author))
-      .map((pull) => ({ url: 'https://github.com/' + key + '/pull/' + pull.number, pull }));
+      .map((pull) => ({ url: 'https://github.com/' + key + '/pull/' + pull.number, pull }))
+      .filter(({ url }) => !inactive.has(url));
     for (const row of pulls) listed.set(row.url, row);
     groups.set(key, { key, label: key.split('/')[1] ?? key, monitored, pulls, saved: [] });
   }
   for (const review of reviews) {
     const monitoredRow = listed.get(review.url);
     if (monitoredRow) {
+      if (monitoredRow.pull.isDraft === undefined && review.isDraft !== undefined)
+        monitoredRow.pull = { ...monitoredRow.pull, isDraft: review.isDraft };
       if (!monitoredRow.pull.openedAt && review.openedAt)
         monitoredRow.pull = { ...monitoredRow.pull, openedAt: review.openedAt };
       const { pull } = monitoredRow;
@@ -48,7 +54,7 @@ export function groupReviews(repositories: Repository[], reviews: SavedReview[])
       saved: [],
     };
     if (!groups.has(key)) groups.set(key, group);
-    group.saved.push(review);
+    if (!inactive.has(review.url)) group.saved.push(review);
   }
   const labels = new Set<string>();
   const ambiguous = new Set<string>();

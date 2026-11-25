@@ -20,7 +20,9 @@ import {
   useState,
   type FormEvent,
 } from 'react';
-import { pullRequestUrl, type SavedReview } from '../../shared/reviews.js';
+import { isInactivePull, pullRequestUrl, type SavedReview } from '../../shared/reviews.js';
+import { readReviewLayout } from './reviewLayouts.js';
+import { ReviewLayoutPicker } from './components/ReviewLayoutPicker.js';
 import { RepositorySidebar } from './RepositorySidebar.js';
 import { GitPullRequest, Link2, Plus } from 'lucide-react';
 import { LocalReviewStart } from './LocalReview.js';
@@ -48,6 +50,7 @@ export function Workspace({
   initialType: Typography;
 }) {
   useScrollIndicators();
+  const [layout, setLayout] = useState(readReviewLayout);
   const [theme, setTheme] = useState(initialTheme);
   const [appearanceError, setAppearanceError] = useState('');
   const [vibrancy, setVibrancy] = useState(initialVibrancy);
@@ -189,7 +192,8 @@ export function Workspace({
           const next = byUrl.get(item.url);
           return (
             next &&
-            (next.isDraft !== item.isDraft ||
+            (next.state !== item.state ||
+              next.isDraft !== item.isDraft ||
               next.title !== item.title ||
               next.author !== item.author ||
               next.openedAt !== item.openedAt ||
@@ -233,8 +237,14 @@ export function Workspace({
             const next = await window.reviewer.syncReplies();
             if (generation !== job.generation) continue;
             setInbox(next);
-            const saved = await window.reviewer.listReviews();
-            if (generation === job.generation) updateReviewLabels(saved);
+            const [saved, monitored] = await Promise.all([
+              window.reviewer.listReviews(),
+              window.reviewer.repositories().catch(() => null),
+            ]);
+            if (generation === job.generation) {
+              updateReviewLabels(saved);
+              if (monitored) setRepos(monitored);
+            }
           } catch (e) {
             if (generation === job.generation) {
               setInbox({ ...emptyInbox, error: readableError(e) });
@@ -351,7 +361,9 @@ export function Workspace({
         setReviews(items);
         setUrl('');
         setNewReview(false);
-        chooseRepository(reviewRepository(parsed.data));
+        if (isInactivePull(items.find((item) => item.url === parsed.data)?.state))
+          openSaved(parsed.data);
+        else chooseRepository(reviewRepository(parsed.data));
       })
       .catch(() => setError('Could not save this pull request. Your link is still here.'))
       .finally(() => setBusy(false));
@@ -389,6 +401,7 @@ export function Workspace({
           groupResizeBehavior="preserve-pixel-size"
         >
           <RepositorySidebar
+            layoutPicker={<ReviewLayoutPicker layout={layout} onChange={setLayout} />}
             openInbox={() => (repliesOpen ? setRepliesOpen(false) : openInbox())}
             openSettings={() => {
               setSettingsOpen(true);
@@ -423,6 +436,7 @@ export function Workspace({
             chooseRepository={chooseRepository}
             activeUrl={activeUrl}
             refresh={reviewEpoch}
+            refreshSavedStatuses={refresh}
           />
         </ResizablePanel>
         <ResizableHandle label="Resize repository sidebar" />
@@ -453,6 +467,7 @@ export function Workspace({
           {activeUrl && error && <p role="alert">{error}</p>}
           {activeUrl ? (
             <Reader
+              layout={layout}
               accountEpoch={inbox.account}
               agentPicker={agentPicker}
               agents={agents}

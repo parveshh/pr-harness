@@ -136,6 +136,9 @@ if (!live) {
       "if(update){ response.meta.head.sha=update.head; response.meta.base.sha=update.base; response.files[1].patch=response.files[1].patch.replace('+new line 1\\n','+'+update.line+'\\n'); response.files[1].sha=update.line; }",
       'const pairPulls = JSON.parse(fs.readFileSync(' + JSON.stringify(pairFixtures) + '));',
       "const endpoint = process.argv.find(a=>a.startsWith('repos/')) ?? '';",
+      "if(endpoint==='repos/example/project/pulls/14' && fs.existsSync(" +
+        JSON.stringify(join(directory, 'merged-14')) +
+        ")) {response.meta.state='closed'; response.meta.merged_at='2026-11-24T12:00:00Z';}",
       'const slowList = ' + JSON.stringify(slowList) + ';',
       "if(endpoint.includes('/pulls?state=open') && fs.existsSync(slowList)){fs.writeFileSync(slowList+'.pid',String(process.pid));setTimeout(()=>console.log('[]'),29000);return;}",
       "if(endpoint.includes('/pulls?state=open')) { console.log(JSON.stringify(pairPulls)); return; }",
@@ -251,7 +254,20 @@ async function checkMacFrame(app, theme) {
     assert.equal(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource), theme);
   }
 }
-const filePicker = (page) => page.getByRole('button', { name: /^Choose file,/ });
+async function chooseLayout(page, order) {
+  const trigger = page.getByRole('button', { name: 'Review layout', exact: true });
+  await trigger.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Review layout' });
+  if (preview && order === 'Chat → Diff → Files') await capture(page, 'layout-picker');
+  await dialog.getByRole('button', { name: order, exact: true }).press('Enter');
+  await dialog.waitFor({ state: 'hidden' });
+  await trigger.and(page.locator(':focus')).waitFor();
+}
+const paneOrder = (page) =>
+  page
+    .locator('.workbench > [data-panel]:visible')
+    .evaluateAll((panels) => panels.map((el) => el.id));
+const changedFiles = (page) => page.getByRole('navigation', { name: 'Changed files' });
 const ask = (page) => page.getByRole('button', { name: 'Ask about PR', exact: true }).click();
 const back = (page) => page.getByRole('button', { name: 'Pull requests', exact: true }).click();
 try {
@@ -271,13 +287,14 @@ try {
       await writeFile(loginRelease, '');
       await settingsPane.getByText('@fixture-reviewer', { exact: true }).waitFor();
       await settingsPane.getByLabel('Interface font').selectOption('humanist');
-      await settingsPane.getByText('Large', { exact: true }).click();
+      await settingsPane.getByLabel('Base font size').selectOption('18');
+      await settingsPane.getByLabel('Code font').selectOption({ label: 'Fira Code' });
       await settingsPane.getByText('Midnight', { exact: true }).click();
       await page.waitForFunction(
         () =>
           globalThis.document.documentElement.dataset.palette === 'midnight' &&
           globalThis.document.documentElement.dataset.font === 'humanist' &&
-          globalThis.document.documentElement.dataset.textSize === 'large',
+          globalThis.getComputedStyle(globalThis.document.documentElement).fontSize === '18px',
       );
       await capture(page, 'settings');
       // Every theme is chosen in Settings, the only place it can be changed.
@@ -368,7 +385,7 @@ try {
       await checkMacFrame(app, 'light');
       await capture(page, 'light-settings');
       await settingsPane.getByText('Green', { exact: true }).click();
-      await settingsPane.getByText('Default', { exact: true }).click();
+      await settingsPane.getByLabel('Base font size').selectOption('16');
       await settingsPane.getByRole('button', { name: 'Close' }).click();
       assert.equal(await page.getByRole('button', { name: /^Appearance/ }).count(), 0);
     }
@@ -377,7 +394,7 @@ try {
     await repositories.getByRole('heading', { name: 'Repositories' }).waitFor();
     const bell = toolsRail.getByRole('button', { name: /^Review alerts,/ });
     const gear = toolsRail.getByRole('button', { name: 'Settings', exact: true });
-    assert.equal(await toolsRail.getByRole('button').count(), 2);
+    assert.equal(await toolsRail.getByRole('button').count(), 3);
     const [bellBox, gearBox, repoBox] = await Promise.all([
       bell.boundingBox(),
       gear.boundingBox(),
@@ -625,9 +642,10 @@ try {
         .getByRole('listitem')
         .filter({ has: page.getByRole('button', { name: '#12 Tracked PR', exact: true }) });
       assert.equal(
-        await prRow.locator('.sidebar-review-meta').innerText(),
+        (await prRow.locator('.sidebar-review-meta').innerText()).replace(/\s+/g, ' '),
         '#12 · @octo · Draft · ' + opened,
       );
+      await prRow.locator('.sidebar-review-meta').getByText('Draft', { exact: true }).waitFor();
       await prRow.getByText('3 commits', { exact: false }).waitFor();
       const commit = 'https://github.com/example/project/commit/' + meta.head.sha;
       const sidebarLink = prRow.getByRole('link', { name: meta.head.sha.slice(0, 8) });
@@ -669,8 +687,8 @@ try {
       );
       await sidebarPr.click();
       await sidebarPr.and(page.locator('[aria-current="page"]')).waitFor();
-      await filePicker(page).waitFor();
-      await page.locator('.pr-heading').getByText('Draft', { exact: true }).waitFor();
+      await changedFiles(page).waitFor();
+      await page.locator('.pr-meta').getByText('Draft', { exact: true }).waitFor();
       await page.locator('.pr-meta').getByText(opened, { exact: true }).waitFor();
       const headerLink = page
         .locator('.pr-meta')
@@ -698,9 +716,7 @@ try {
       await match.filter({ hasText: /^Re$/ }).waitFor();
       await region.focus();
       await page.keyboard.press('F3');
-      await filePicker(page)
-        .and(page.getByRole('button', { name: 'Choose file, obsolete.txt' }))
-        .waitFor();
+      await page.getByRole('heading', { name: 'obsolete.txt', exact: true }).waitFor();
       assert.equal(await match.innerText(), 're');
       await page.keyboard.press('F3');
       await diffSearch.getByText('3 of 4', { exact: true }).waitFor();
@@ -714,9 +730,7 @@ try {
       });
       await page.keyboard.press('Shift+F3');
       await query.press('Shift+Enter');
-      await filePicker(page)
-        .and(page.getByRole('button', { name: 'Choose file, README.md' }))
-        .waitFor();
+      await page.getByRole('heading', { name: 'README.md', exact: true }).waitFor();
       await scope.selectOption('removed');
       await diffSearch.getByText('1 of 3', { exact: true }).waitFor();
       await query.press('Shift+Enter');
@@ -738,7 +752,6 @@ try {
         .and(page.locator(':focus'))
         .waitFor();
       assert.equal(await match.count(), 0);
-      await filePicker(page).click();
       await page.getByRole('button', { name: /^src\/reader\.ts, modified/ }).click();
       if (preview) {
         await page
@@ -955,7 +968,6 @@ try {
         .click({ trial: true });
       await rm(switchedAccount);
       // Each file shows how many published comments it has.
-      await filePicker(page).click();
       const partialRow = page.getByRole('button', {
         name: 'partial.ts, modified, 2 comments',
         exact: true,
@@ -988,7 +1000,6 @@ try {
       await discussions.getByText('Later visible line?').waitFor();
       await page.getByRole('button', { name: 'Diff only', exact: true }).click();
       await page.getByRole('button', { name: 'Changes', exact: true }).click();
-      await filePicker(page).click();
       await page.getByRole('button', { name: 'README.md, added', exact: true }).click();
       const chat = page.getByRole('region', { name: 'Review chat' });
       await ask(page);
@@ -1008,8 +1019,7 @@ try {
       await headerPicker.hover();
       assert.ok((await pickerColours()).every((colour) => colour !== transparent));
       assert.deepEqual(await headerPicker.boundingBox(), idleBounds);
-      const files = page.getByRole('navigation', { name: 'Changed files' });
-      await filePicker(page).click();
+      const files = changedFiles(page);
       const treeFolder = files.getByRole('button', { name: 'src', exact: true });
       await treeFolder.click();
       await files.getByRole('button', { name: /^src\/reader/ }).waitFor({ state: 'hidden' });
@@ -1017,11 +1027,44 @@ try {
       await files.getByRole('button', { name: /^src\/reader/ }).waitFor();
       await files.getByLabel('Filter files').fill('');
       await treeFolder.click();
-      await page.keyboard.press('Escape');
-      await filePicker(page).and(page.locator(':focus')).waitFor();
-      assert.equal(await files.count(), 0);
+      const filesDivider = page.getByRole('separator', { name: 'Resize files and diff' });
+      const filesWidth = await files.evaluate((el) => el.clientWidth);
+      await filesDivider.press('ArrowRight');
+      assert.ok((await files.evaluate((el) => el.clientWidth)) > filesWidth);
+      await filesDivider.press('ArrowLeft');
+      await files.getByRole('button', { name: 'Collapse file tree' }).click();
+      const showFiles = page.getByRole('button', { name: 'Show changed files' });
+      await showFiles.and(page.locator(':focus')).waitFor();
+      await files.waitFor({ state: 'hidden' });
+      await chooseLayout(page, 'Chat → Diff → Files');
+      await files.waitFor({ state: 'hidden' });
+      await chooseLayout(page, 'Files → Diff → Chat');
+      await showFiles.press('Enter');
+      await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
       const chatText = chat.getByLabel('Ask about the diff');
       await chatText.fill('Does this line wrap?');
+      for (const order of [
+        'Diff → Chat → Files',
+        'Files → Chat → Diff',
+        'Chat → Files → Diff',
+        'Diff → Files → Chat',
+        'Chat → Diff → Files',
+      ]) {
+        await chooseLayout(page, order);
+        assert.deepEqual(
+          await paneOrder(page),
+          order
+            .toLowerCase()
+            .split(' → ')
+            .map((name) => 'review-' + name),
+        );
+      }
+      assert.equal(await chatText.inputValue(), 'Does this line wrap?');
+      const leftDivider = page.getByRole('separator', { name: 'Resize chat and diff' });
+      const leftChatWidth = await chat.evaluate((el) => el.clientWidth);
+      await leftDivider.press('ArrowRight');
+      assert.ok((await chat.evaluate((el) => el.clientWidth)) > leftChatWidth);
+      await leftDivider.press('ArrowLeft');
       await page.getByRole('button', { name: 'Close review chat' }).click();
       await page
         .getByRole('button', { name: 'Ask about PR' })
@@ -1033,6 +1076,7 @@ try {
       await chatText.and(page.locator(':focus')).waitFor();
       assert.equal(await chatText.inputValue(), 'Does this line wrap?');
       await chat.getByText(/line 1 \(new\)/).waitFor();
+      await chooseLayout(page, 'Files → Diff → Chat');
       await chatText.fill('');
       await page.getByRole('button', { name: 'Review actions' }).click();
       await page.getByRole('menuitem', { name: 'Approve PR' }).click();
@@ -1051,11 +1095,23 @@ try {
       const chatBefore = await chat.evaluate((el) => el.clientWidth);
       await chatDivider.press('ArrowLeft');
       assert.ok((await chat.evaluate((el) => el.clientWidth)) > chatBefore);
+      // Dragging the repository divider can give the reader a fractional width.
+      const compactLimit = await page.addStyleTag({
+        content: '#workspace-page { max-width: 680px !important; }',
+      });
+      await page.locator('#review-files[inert]').waitFor({ state: 'attached' });
+      await compactLimit.evaluate((style) => {
+        style.textContent = '#workspace-page { max-width: 680.25px !important; }';
+      });
+      await files.getByLabel('Filter files').waitFor();
+      await compactLimit.evaluate((style) => style.remove());
+      await chooseLayout(page, 'Chat → Diff → Files');
       await resize(app, page, 850, 720);
       await page.getByRole('button', { name: 'Close review chat' }).click();
-      await filePicker(page).click();
-      await files.getByLabel('Filter files').waitFor();
-      await page.keyboard.press('Escape');
+      await showFiles.click();
+      await files.getByLabel('Filter files').and(page.locator(':focus')).waitFor();
+      await files.getByRole('button', { name: /^README\.md, added/ }).press('Enter');
+      await showFiles.and(page.locator(':focus')).waitFor();
       await region.waitFor();
       await ask(page);
       await headerPicker.press('Enter');
@@ -1072,6 +1128,7 @@ try {
       await region.waitFor();
       await resize(app, page, 1380, 720);
       await ask(page);
+      await chooseLayout(page, 'Files → Diff → Chat');
       await chatDivider.waitFor();
       assert.equal(await chat.getByLabel('Ask about the diff').inputValue(), 'Keep my question');
       await chat.getByLabel('Ask about the diff').fill('');
@@ -1142,7 +1199,7 @@ try {
       const lineLabel = await citedReaderLine.innerText();
       await citedReaderLine.click();
       await citedLines.waitFor({ state: 'hidden' });
-      await page.getByRole('button', { name: 'Choose file, src/reader.ts', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'src/reader.ts', exact: true }).waitFor();
       const side = lineLabel.includes('(original)') ? 'old' : 'new';
       const line = Number(lineLabel.match(/:(\d+)/)[1]);
       await region
@@ -1170,7 +1227,7 @@ try {
         await resize(app, page, 1380, 720);
       }
       await chat.locator('.cite').last().click();
-      await page.getByRole('button', { name: 'Choose file, src/reader.ts', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'src/reader.ts', exact: true }).waitFor();
       await page.locator('.diff-line[data-selected="true"]').waitFor();
       await capture(page, 'review-chat');
       await chooseHarness(page, { agent: 'claude', model: 'invalid-model' });
@@ -1213,7 +1270,7 @@ try {
         .waitFor();
       await page.getByRole('button', { name: 'Back to changes' }).click();
       await region.waitFor();
-      await page.getByRole('button', { name: 'Choose file, src/reader.ts', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'src/reader.ts', exact: true }).waitFor();
       await chat.getByLabel('Context', { exact: true }).selectOption('focused');
       await chat.getByRole('button', { name: 'Review instructions', exact: true }).click();
       const promptDialog = page.getByRole('dialog', { name: 'Review instructions' });
@@ -1313,13 +1370,10 @@ try {
       assert.equal(await away.count(), 1);
       assert.equal(await chat.getByLabel('Ask about the diff').inputValue(), '');
       assert.equal(await chat.getByRole('alert').count(), 0);
-      await filePicker(page).click();
       await page.getByRole('button', { name: /logo\.png/ }).click();
       await page.getByText('Binary file. A line diff is unavailable.').waitFor();
-      await filePicker(page).click();
       await page.getByRole('button', { name: /new name\.txt/ }).click();
       await page.getByText('old name.txt', { exact: true }).waitFor();
-      await filePicker(page).click();
       await page
         .getByRole('navigation')
         .getByRole('button', { name: /src\/reader\.ts/ })
@@ -1434,6 +1488,15 @@ try {
     }
     await page.getByRole('button', { name: 'Mark reviewed' }).click();
     await page.getByRole('button', { name: 'Reviewed ✓' }).waitFor();
+    if (!live) {
+      assert.equal(
+        await region.evaluate((el) => el.scrollTop),
+        160,
+        'checkpoint before reordering',
+      );
+      await chooseLayout(page, 'Chat → Diff → Files');
+      assert.equal(await region.evaluate((el) => el.scrollTop), 160, 'checkpoint after reordering');
+    }
   } finally {
     await app.close();
   }
@@ -1444,8 +1507,22 @@ try {
     page.setDefaultTimeout(15000);
     await resize(reopened, page, 1380, 720);
     if (!live) {
-      await filePicker(page).waitFor();
+      await changedFiles(page).waitFor();
       await page.getByRole('region', { name: 'Review chat' }).waitFor();
+      assert.deepEqual(await paneOrder(page), ['review-chat', 'review-diff', 'review-files']);
+      const restoredDiff = page.getByRole('region', { name: 'File diff' });
+      await restoredDiff.waitFor();
+      assert.equal(
+        await restoredDiff.evaluate((el) => el.scrollTop),
+        160,
+        'checkpoint after relaunch',
+      );
+      await chooseLayout(page, 'Files → Diff → Chat');
+      assert.equal(
+        await restoredDiff.evaluate((el) => el.scrollTop),
+        160,
+        'checkpoint after restoring layout',
+      );
       await ask(page);
       await page.getByRole('heading', { name: 'Review notes' }).first().waitFor();
       // The harness and model chosen before the restart still apply.
@@ -1460,6 +1537,13 @@ try {
     const region = page.getByRole('region', { name: 'File diff' });
     await region.waitFor();
     if (!live) {
+      assert.match(
+        await region
+          .locator('.code-line')
+          .first()
+          .evaluate((el) => globalThis.getComputedStyle(el).fontFamily),
+        /^"Fira Code"/,
+      );
       // The theme and font chosen in Settings survive the restart.
       await checkMacFrame(reopened, 'light');
       if (process.platform === 'darwin') {
@@ -1468,10 +1552,10 @@ try {
       }
       assert.deepEqual(
         await page.evaluate(() => {
-          const { palette, accent, font } = globalThis.document.documentElement.dataset;
-          return { palette, accent, font };
+          const { palette, accent, font, codeFont } = globalThis.document.documentElement.dataset;
+          return { palette, accent, font, codeFont };
         }),
-        { palette: 'light', accent: 'green', font: 'humanist' },
+        { palette: 'light', accent: 'green', font: 'humanist', codeFont: 'fira-code' },
       );
       await page
         .getByText(/claude · fixture-model.*Full PR/)
@@ -1486,7 +1570,7 @@ try {
       await page
         .getByRole('button', { name: 'Could concurrent retries bypass this guard?', exact: true })
         .waitFor();
-      await page.getByRole('button', { name: 'Choose file, src/reader.ts', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'src/reader.ts', exact: true }).waitFor();
       await page.getByText(/Showing the saved revision/).waitFor();
       assert.equal(await region.evaluate((el) => el.scrollTop), 160);
       await page.getByRole('button', { name: /Finish review 3/ }).click();
@@ -1519,6 +1603,7 @@ try {
       const freshRow = page.locator('.monitored-pr[data-new]');
       await freshRow.getByRole('button', { name: /Fresh PR/ }).waitFor();
       await freshRow.getByText('New', { exact: true }).waitFor();
+      assert.equal(await freshRow.getByText('Draft', { exact: true }).count(), 0);
       assert.deepEqual(await reopened.evaluate(() => globalThis.shownAlerts), [
         'New pull request in example/project|#14 Fresh PR\n@octo',
       ]);
@@ -1578,7 +1663,6 @@ try {
         .waitFor();
       await revisedPipeline.getByRole('button', { name: 'Close', exact: true }).click();
       const queue = page.getByRole('navigation', { name: 'Re-review queue' });
-      await filePicker(page).click();
       const folder = queue.getByRole('button', { name: 'src', exact: true });
       const readerFile = queue.getByRole('button', { name: /src\/reader.ts.*Needs another look/ });
       await readerFile.waitFor();
@@ -1589,9 +1673,8 @@ try {
       await queue.getByLabel('Filter files').fill('');
       await folder.click();
 
-      await page.keyboard.press('Escape');
       await resize(reopened, page, 850, 720);
-      await filePicker(page).click();
+      await page.getByRole('button', { name: 'Show changed files' }).click();
       await readerFile.click();
       await delta.getByText('+guard retries', { exact: true }).waitFor();
       await resize(reopened, page, 1380, 720);
@@ -1599,12 +1682,10 @@ try {
       assert.ok(Math.abs((await fullChat.evaluate((el) => el.clientWidth)) - fullChatWidth) < 3);
       await page.getByRole('button', { name: 'Since my last review' }).click();
       await page.getByText('1 outdated draft', { exact: true }).waitFor();
-      await filePicker(page).click();
       await page
         .getByRole('navigation', { name: 'Re-review queue' })
         .getByRole('button', { name: /src\/reader.ts.*Needs another look/ })
         .waitFor();
-      await page.keyboard.press('Escape');
       const removed = await delta.locator('.deletion').first().boundingBox();
       const added = await delta.locator('.addition').first().boundingBox();
       assert.ok(removed && added && removed.y < added.y && removed.x === added.x);
@@ -1789,7 +1870,6 @@ try {
       const freshRow = page.locator('.monitored-pr[data-new]');
       await freshRow.getByRole('button', { name: /Fresh PR/ }).click();
       await freshRow.waitFor({ state: 'detached' });
-      await filePicker(page).click();
       await page.getByRole('button', { name: /^src\/reader\.ts, modified/ }).click();
       const reminder = page.getByRole('region', { name: 'Review lessons for these changes' });
       await reminder.getByText('Check the callers before changing this behaviour.').waitFor();
@@ -1807,7 +1887,26 @@ try {
         'example/project #12|Your review was dismissed · New push after your review',
       ]);
 
+      // A saved PR must leave both open lists even while the monitored response still lists it.
+      const mergedSidebar = page
+        .getByRole('navigation', { name: 'Repositories', exact: true })
+        .getByRole('link', { name: '#14', exact: true });
+      await mergedSidebar.waitFor();
+      await writeFile(join(directory, 'merged-14'), '');
+      await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+      await mergedSidebar.waitFor({ state: 'hidden' });
       await back(page);
+      await page.getByRole('button', { name: /Tracked PR.*Draft/ }).waitFor();
+      assert.equal(await page.getByRole('link', { name: '#14', exact: true }).count(), 0);
+      await page.getByRole('button', { name: 'Open review', exact: true }).click();
+      await page
+        .getByLabel('GitHub pull request URL')
+        .fill('https://github.com/example/project/pull/14');
+      await page.getByRole('button', { name: 'Save pull request' }).click();
+      await changedFiles(page).waitFor();
+      await back(page);
+      await page.getByRole('button', { name: /Tracked PR.*Draft/ }).waitFor();
+      assert.equal(await page.getByRole('link', { name: '#14', exact: true }).count(), 0);
       // Local branch reviews use the same picker and return to their own repository queue.
       await reopened.evaluate(
         ({ dialog }, source) => {
@@ -1820,7 +1919,7 @@ try {
       const localDialog = page.getByRole('dialog', { name: 'Review local branch' });
       await localDialog.getByLabel('Base branch').selectOption({ label: 'pair-21' });
       await localDialog.getByRole('button', { name: 'Start review' }).click();
-      await filePicker(page).waitFor();
+      await changedFiles(page).waitFor();
       await page.getByRole('button', { name: 'Ask about branch' }).waitFor();
       assert.equal(await page.getByRole('region', { name: 'Review chat' }).count(), 0);
       await page.getByRole('button', { name: 'Local reviews', exact: true }).click();

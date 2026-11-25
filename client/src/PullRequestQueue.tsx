@@ -7,7 +7,7 @@ import {
   FolderGit2,
 } from 'lucide-react';
 import type { RepositoryGroup } from '../../shared/repository-groups.js';
-import { PrNumberLink } from './components/PrMetadata.js';
+import { DraftLabel, PrNumberLink } from './components/PrMetadata.js';
 import { useWorkingPrs } from './chatRuns.js';
 import type { PrCommand } from './Reader.js';
 
@@ -57,7 +57,7 @@ export function PullRequestQueue({
                 <button className="monitored-open" onClick={() => open(pr)}>
                   <strong>{p.title}</strong>
                   <small>@{p.author}</small>
-                  {p.isDraft && <small className="review-tag">Draft</small>}
+                  {p.isDraft && <DraftLabel />}
                   {p.unseen && <b className="monitored-new">New</b>}
                 </button>
                 <span className="monitored-actions">
@@ -138,7 +138,7 @@ export function PullRequestQueue({
                   <>
                     <GitPullRequest size={16} />
                     <strong>{item.title ?? repository}</strong>
-                    {item.isDraft && <span className="review-tag">Draft</span>}
+                    {item.isDraft && <DraftLabel />}
                   </>
                 )}
               </button>
@@ -150,18 +150,22 @@ export function PullRequestQueue({
         <div className="queue-empty">
           <GitPullRequest size={26} />
           <h2>
-            {!monitored?.watching.length
-              ? 'Choose authors to follow'
-              : monitored.error || !monitored.checked
-                ? 'No pull requests loaded'
-                : 'You’re all caught up'}
+            {!monitored
+              ? 'No open pull requests'
+              : !monitored.watching.length
+                ? 'Choose authors to follow'
+                : monitored.error || !monitored.checked
+                  ? 'No pull requests loaded'
+                  : 'You’re all caught up'}
           </h2>
           <p>
-            {!monitored?.watching.length
-              ? 'Use Manage authors beside the repository to choose whose pull requests appear here.'
-              : monitored.error || !monitored.checked
-                ? 'Refresh the repository from Manage authors.'
-                : 'No open pull requests from the authors you follow in ' + repository + '.'}
+            {!monitored
+              ? 'Use Open review to open a pull request by URL.'
+              : !monitored.watching.length
+                ? 'Use Manage authors beside the repository to choose whose pull requests appear here.'
+                : monitored.error || !monitored.checked
+                  ? 'Refresh the repository from Manage authors.'
+                  : 'No open pull requests from the authors you follow in ' + repository + '.'}
           </p>
         </div>
       )}

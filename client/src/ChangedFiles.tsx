@@ -1,14 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type RefObject } from 'react';
 import {
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   File,
   Folder,
   MessageSquare,
   Search,
 } from 'lucide-react';
-import { Button, DialogTrigger, Dialog, Popover } from 'react-aria-components';
 import type { ReaderFile } from '../../shared/reader.js';
 
 export type TreeFile = { path: string; detail?: string } & Partial<
@@ -20,61 +20,23 @@ function folder(): FolderNode {
   return { directories: new Map(), files: [] };
 }
 
-export function FilePicker({
+export function ChangedFiles({
   files,
   selected,
   counts,
   choose,
   changedSinceCheckpoint,
+  collapse,
+  filterRef,
 }: {
   files: TreeFile[];
   selected: string | undefined;
   counts: ReadonlyMap<string, number>;
   choose: (path: string) => void;
   changedSinceCheckpoint?: number | undefined;
+  collapse: () => void;
+  filterRef: RefObject<HTMLInputElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
-  const title = changedSinceCheckpoint === undefined ? 'Changed files' : 'Re-review queue';
-  const index = files.findIndex((file) => file.path === selected);
-  return (
-    <div className="file-picker">
-      <DialogTrigger isOpen={open} onOpenChange={setOpen}>
-        <Button className="file-picker-trigger" aria-label={'Choose file, ' + (selected ?? title)}>
-          <File size={16} />
-          <span>{selected ?? title}</span>
-          <ChevronDown size={15} />
-        </Button>
-        <Popover className="file-popover" placement="bottom start">
-          <Dialog aria-label={title}>
-            <FileTree
-              files={files}
-              selected={selected}
-              counts={counts}
-              changedSinceCheckpoint={changedSinceCheckpoint}
-              choose={(path) => {
-                choose(path);
-                setOpen(false);
-              }}
-            />
-          </Dialog>
-        </Popover>
-      </DialogTrigger>
-      {index >= 0 && (
-        <small>
-          {index + 1} of {files.length} files
-        </small>
-      )}
-    </div>
-  );
-}
-
-function FileTree({
-  files,
-  selected,
-  counts,
-  choose,
-  changedSinceCheckpoint,
-}: Parameters<typeof FilePicker>[0]) {
   const [filter, setFilter] = useState('');
   const [closed, setClosed] = useState(new Set<string>());
   const query = filter.trim().toLowerCase();
@@ -183,6 +145,14 @@ function FileTree({
       <div className="nav-heading">
         <div className="pane-title">
           <h2>{title}</h2>
+          <button
+            className="pane-toggle"
+            title="Collapse file tree"
+            aria-label="Collapse file tree"
+            onClick={collapse}
+          >
+            <ChevronLeft size={17} />
+          </button>
         </div>
         {changedSinceCheckpoint === undefined ? (
           <>
@@ -201,7 +171,7 @@ function FileTree({
         <label className="file-filter">
           <Search size={14} />
           <input
-            autoFocus
+            ref={filterRef}
             type="search"
             aria-label="Filter files"
             placeholder="Filter files…"

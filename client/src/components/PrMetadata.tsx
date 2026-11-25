@@ -1,9 +1,19 @@
+import { GitPullRequestDraft } from 'lucide-react';
 import { readableError } from '../../../shared/assistant.js';
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
 export function formatPrDate(timestamp: string) {
   return dateFormat.format(new Date(timestamp));
+}
+
+export function DraftLabel() {
+  return (
+    <span className="review-tag draft-tag">
+      <GitPullRequestDraft size={12} aria-hidden="true" />
+      Draft
+    </span>
+  );
 }
 
 export function CommitLink({

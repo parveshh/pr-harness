@@ -79,4 +79,8 @@ await test('an older monitored row uses the saved status only for the matching r
   assert.deepEqual(grouped(), { ...pull, head: 'new' });
   repo.pulls = [{ ...pull, head: 'old', approvalStage: 'none' }];
   assert.equal(grouped()?.approvalStage, 'none');
+  saved.isDraft = true;
+  assert.equal(grouped()?.isDraft, true);
+  repo.pulls = [{ ...pull, isDraft: false }];
+  assert.equal(grouped()?.isDraft, false);
 });

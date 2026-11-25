@@ -11,6 +11,9 @@ const pr = z.object({
   title: z.string(),
   created_at: z.iso.datetime().optional(),
   draft: z.boolean().optional(),
+  state: z.enum(['open', 'closed']).optional(),
+  merged_at: z.iso.datetime().nullish(),
+  updated_at: z.iso.datetime().optional(),
   body: z.string().nullable(),
   user: z.object({ login: z.string() }).nullable(),
   base: ref,
@@ -18,6 +21,16 @@ const pr = z.object({
   commits: z.number().int().nonnegative().optional(),
   changed_files: z.number().int().nonnegative(),
 });
+function lifecycle(prInfo: z.infer<typeof pr>) {
+  const state = prInfo.merged_at
+    ? 'MERGED'
+    : prInfo.state === 'closed'
+      ? 'CLOSED'
+      : prInfo.state === 'open'
+        ? 'OPEN'
+        : undefined;
+  return { state, updatedAt: prInfo.updated_at } as const;
+}
 const entry = z.object({
   filename: z.string(),
   previous_filename: z.string().optional(),
@@ -252,7 +265,7 @@ export async function fetchSnapshot(
   url: string,
   signal: AbortSignal,
   api: Api = githubApi,
-): Promise<Snapshot> {
+): Promise<Snapshot & ReturnType<typeof lifecycle>> {
   const [owner, repo, , number] = new URL(pullRequestUrl.parse(url)).pathname.slice(1).split('/');
   const endpoint = `repos/${owner}/${repo}/pulls/${number}`;
   const readMeta = async () => pr.parse(JSON.parse(await api(endpoint, signal)));
@@ -296,6 +309,7 @@ export async function fetchSnapshot(
     throw new Error('The PR changed during the fetch. Retry to load the new revision.');
   }
   return {
+    ...lifecycle(end),
     meta: {
       title: end.title,
       openedAt: end.created_at,
@@ -406,6 +420,7 @@ export async function probeRevision(
   const body = boundary ? stdout.slice(boundary.index + boundary[0].length) : stdout;
   const result = pr.parse(JSON.parse(body));
   return {
+    ...lifecycle(result),
     isDraft: result.draft,
     baseBranch: result.base.ref,
     revision: result.base.sha + '...' + result.head.sha,

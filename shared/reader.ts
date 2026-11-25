@@ -43,6 +43,7 @@ export const readerView = z.object({
   files: z.array(readerFile),
 });
 export const reviewUpdate = z.object({
+  statusChanged: z.boolean().optional(),
   incoming: z.string().nullable(),
   isDraft: z.boolean().optional(),
 });

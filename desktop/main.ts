@@ -195,6 +195,7 @@ function startWorkspace() {
     if (isLocalReview(url)) return refreshLocal(url, controller);
     const snapshot = await fetchSnapshot(url, controller.signal);
     controller.signal.throwIfAborted();
+    reader.observePullState(url, snapshot.state, snapshot.updatedAt);
     reader.observeRemoteHead(url, snapshot.meta.head, snapshot.meta.commitCount);
     snapshot.revision = reader.revisions.identify(url, snapshot.revision, snapshot.meta.baseBranch);
     const current = reader.read(url);
@@ -234,12 +235,13 @@ function startWorkspace() {
     controller.signal.throwIfAborted();
     const current = reader.read(url);
     if (!info) return { incoming: current?.incoming ?? null, isDraft: current?.meta.isDraft };
+    const statusChanged = reader.observePullState(url, info.state, info.updatedAt);
     reader.setDraft(url, info.isDraft);
     info.revision = reader.revisions.identify(url, info.revision, info.baseBranch);
     if (info.revision === current?.revision) reader.revisions.clearStage(url);
     else if (info.revision !== current?.incoming) await refresh(url, controller);
     if (info.etag) etags.set(url, info.etag);
-    return { incoming: reader.revisions.info(url).incoming, isDraft: info.isDraft };
+    return { incoming: reader.revisions.info(url).incoming, isDraft: info.isDraft, statusChanged };
   });
   ipcMain.handle('reader:open-update', (event, input: unknown) => {
     verifySender(event);

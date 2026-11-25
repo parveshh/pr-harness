@@ -9,10 +9,26 @@ import { z } from 'zod';
 import { pullRequestUrl } from './reviews.js';
 export const typography = z.object({
   font: z.enum(['system', 'humanist', 'serif', 'mono']),
-  size: z.enum(['small', 'standard', 'large', 'larger']),
+  size: z.enum([
+    '12',
+    '13',
+    '14',
+    '14.4',
+    '15',
+    '16',
+    '17',
+    '18',
+    '19',
+    '20',
+    '21',
+    '22',
+    '23',
+    '24',
+  ]),
+  codeFont: z.enum(['system', 'jetbrains-mono', 'fira-code', 'ibm-plex-mono']),
 });
 export type Typography = z.infer<typeof typography>;
-export const defaultTypography: Typography = { font: 'system', size: 'standard' };
+export const defaultTypography: Typography = { font: 'system', size: '16', codeFont: 'system' };
 export const signIn = z.discriminatedUnion('state', [
   z.object({ state: z.literal('idle') }),
   z.object({ state: z.literal('waiting'), code: z.string().nullable() }),

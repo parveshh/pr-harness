@@ -52,7 +52,7 @@ PRAGMA user_version=12;`);
 }
 const scopedPrompt = z.object({ prompt: reviewPrompt });
 export function assistantStore(db: DatabaseSync) {
-  function repositories() {
+  function cachedRepositories() {
     return db
       .prepare('SELECT * FROM repositories ORDER BY name')
       .all()
@@ -64,6 +64,20 @@ export function assistantStore(db: DatabaseSync) {
           pulls: JSON.parse(String(row.pulls)) as unknown,
         }),
       );
+  }
+  function repositories() {
+    const inactive = new Set(
+      db
+        .prepare("SELECT url FROM pull_lifecycle WHERE state IN ('CLOSED','MERGED')")
+        .all()
+        .map((row) => row.url),
+    );
+    return cachedRepositories().map((repo) => ({
+      ...repo,
+      pulls: repo.pulls.filter(
+        (pull) => !inactive.has('https://github.com/' + repo.name + '/pull/' + pull.number),
+      ),
+    }));
   }
   // `first` is the harness to use until the reviewer picks one.
   function chosen(first: AgentId): Selection {
@@ -122,7 +136,7 @@ export function assistantStore(db: DatabaseSync) {
       const name = githubRepoOf(url);
       if (name === null) return false;
       const number = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
-      const repo = repositories().find((r) => r.name === name);
+      const repo = cachedRepositories().find((r) => r.name === name);
       if (!repo?.pulls.some((p) => p.number === number && p.unseen)) return false;
       db.prepare('UPDATE repositories SET pulls=? WHERE name=?').run(
         JSON.stringify(repo.pulls.map((p) => (p.number === number ? { ...p, unseen: false } : p))),

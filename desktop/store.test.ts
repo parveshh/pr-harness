@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { defaultPrompt, type Preferences } from '../shared/assistant.js';
+import { groupReviews } from '../shared/repository-groups.js';
 import { openStore } from './store.js';
 
 await test('a saved PR survives restart and links to its files tab share the same entry', (t) => {
@@ -271,10 +272,10 @@ await test('opening a newer schema preserves its version and contents', (t) => {
   const db = new DatabaseSync(path);
   t.after(() => db.close());
   db.exec(
-    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=24",
+    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=26",
   );
   assert.throws(() => openStore(path), /newer Local Reviewer/);
-  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 24);
+  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 26);
   assert.equal(db.prepare('SELECT value FROM future').get()?.value, 'preserve');
 });
 
@@ -435,4 +436,95 @@ await test('a version 21 workspace keeps its earlier messages outside the active
     upgraded.assistant.history(url, upgraded.assistant.generation(url)).map((msg) => msg.question),
     ['Current?'],
   );
+});
+
+await test('merged reviews stay out of open lists after upgrading, reopening and stale refreshes', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'reviewer-merged-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'workspace.sqlite');
+  const url = 'https://github.com/org/repo/pull/12';
+  let store = openStore(path);
+  store.save(url);
+  store.drafts.write(url, 0, { ...store.drafts.get(url), summary: 'Keep this draft' });
+  store.close();
+  const legacy = new DatabaseSync(path);
+  legacy.exec('DROP TABLE pull_lifecycle; PRAGMA user_version=23');
+  legacy.close();
+  store = openStore(path);
+  t.after(() => store.close());
+  const open = () => groupReviews(store.assistant.repositories(), store.list()).get('org/repo');
+  assert.equal(open()?.saved[0]?.url, url);
+  store.reader.observePullState(url, 'CLOSED', '2026-11-22T10:00:00Z');
+  assert.equal(open()?.saved.length, 0);
+  store.reader.observePullState(url, 'OPEN', '2026-11-22T09:00:00Z');
+  assert.equal(open()?.saved.length, 0);
+  store.reader.observePullState(url, 'OPEN', '2026-11-22T11:00:00Z');
+  assert.equal(open()?.saved[0]?.url, url);
+  store.assistant.add('org/repo');
+  store.assistant.watch('org/repo', ['octo']);
+  store.assistant.update(
+    'org/repo',
+    ['octo'],
+    [{ number: 12, author: 'octo', title: 'Saved PR', approved: false, unseen: false }],
+  );
+  assert.equal(open()?.pulls[0]?.url, url);
+  store.reader.observePullState(url, 'MERGED', '2026-11-22T12:00:00Z');
+  store.reader.observePullState(url, 'OPEN', '2026-11-22T13:00:00Z');
+  assert.equal(open()?.pulls.length, 0);
+  store.assistant.update('org/repo', ['octo'], []);
+  store.close();
+  store = openStore(path);
+  assert.equal(open()?.saved.length, 0);
+  assert.equal(store.list()[0]?.state, 'MERGED');
+  assert.equal(store.drafts.get(url).summary, 'Keep this draft');
+});
+
+await test('a confirmed merge hides a watched unsaved PR even when repository refresh fails', (t) => {
+  const store = openStore(':memory:');
+  t.after(() => store.close());
+  store.assistant.add('org/repo');
+  store.assistant.watch('org/repo', ['octo']);
+  store.assistant.update(
+    'org/repo',
+    ['octo'],
+    [{ number: 12, author: 'octo', title: 'Watched PR', approved: false, unseen: true }],
+  );
+  assert.equal(store.assistant.unseen(), 1);
+  store.reader.observePullState(
+    'https://github.com/org/repo/pull/12',
+    'MERGED',
+    '2026-11-22T12:00:00Z',
+  );
+  store.assistant.failure('org/repo', 'Offline');
+  assert.deepEqual(store.list(), []);
+  assert.deepEqual(store.assistant.repositories()[0]?.pulls, []);
+  assert.equal(store.assistant.unseen(), 0);
+});
+
+await test('numeric typography keeps the previous scale and persists coding font choices', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'reviewer-typography-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const [before, after] of [
+    ['small', '14.4'],
+    ['standard', '16'],
+    ['large', '18'],
+    ['larger', '20'],
+  ] as const) {
+    const file = join(dir, before + '.sqlite');
+    openStore(file).close();
+    const old = new DatabaseSync(file);
+    old.exec('ALTER TABLE workspace DROP COLUMN code_font; PRAGMA user_version=24');
+    old.prepare("UPDATE workspace SET font='humanist',font_size=?").run(before);
+    old.close();
+    const store = openStore(file);
+    const previous = store.typography();
+    assert.deepEqual(previous, { font: 'humanist', size: after, codeFont: 'system' });
+    const chosen = { ...previous, size: '17', codeFont: 'ibm-plex-mono' };
+    store.saveTypography(chosen);
+    assert.throws(() => store.saveTypography({ ...chosen, size: '500' }));
+    store.close();
+    const reopened = openStore(file);
+    assert.deepEqual(reopened.typography(), chosen);
+    reopened.close();
+  }
 });

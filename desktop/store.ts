@@ -25,7 +25,7 @@ export function openStore(filename: string) {
   try {
     db.exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version < 0 || version > 23)
+    if (typeof version !== 'number' || version < 0 || version > 25)
       throw new Error('This workspace requires a newer Local Reviewer.');
     if (version === 0) {
       db.exec(`CREATE TABLE saved_reviews (url TEXT PRIMARY KEY, saved_at TEXT NOT NULL) STRICT;
@@ -80,6 +80,20 @@ export function openStore(filename: string) {
         );
       db.exec('PRAGMA user_version=23');
     }
+    if (version < 24)
+      db.exec(`CREATE TABLE IF NOT EXISTS pull_lifecycle (
+        url TEXT PRIMARY KEY REFERENCES reply_targets(url) ON DELETE CASCADE,
+        state TEXT NOT NULL CHECK(state IN ('OPEN','CLOSED','MERGED')),
+        updated_at TEXT NOT NULL
+      ) STRICT; PRAGMA user_version=24;`);
+    if (version < 25) {
+      if (!db.prepare("SELECT 1 FROM pragma_table_info('workspace') WHERE name='code_font'").get())
+        db.exec("ALTER TABLE workspace ADD COLUMN code_font TEXT NOT NULL DEFAULT 'system'");
+      db.exec(`UPDATE workspace SET font_size = CASE font_size
+        WHEN 'small' THEN '14.4' WHEN 'standard' THEN '16'
+        WHEN 'large' THEN '18' WHEN 'larger' THEN '20' ELSE font_size END;
+        PRAGMA user_version=25;`);
+    }
     ensureLocalReviewSchema(db);
     if (version === 0)
       db.prepare('UPDATE workspace SET appearance=?, accent=? WHERE id=1').run('ink', 'green');
@@ -89,14 +103,14 @@ export function openStore(filename: string) {
     throw error;
   }
   const list = db.prepare(
-    `SELECT url, saved_at AS savedAt, draft, repository, branch, base_name AS baseBranch, repo_path AS path,
+    `SELECT url, saved_at AS savedAt, pull_lifecycle.state, draft, repository, branch, base_name AS baseBranch, repo_path AS path,
             CASE WHEN json_valid(snapshots.meta) THEN json_extract(snapshots.meta,'$.title') END AS title,
             CASE WHEN local_reviews.url IS NULL AND json_valid(snapshots.meta) THEN json_extract(snapshots.meta,'$.author') END AS author,
             CASE WHEN local_reviews.url IS NULL AND json_valid(snapshots.meta) THEN json_extract(snapshots.meta,'$.openedAt') END AS openedAt,
             COALESCE(pull_review_status.head, CASE WHEN local_reviews.url IS NULL AND json_valid(snapshots.meta) THEN json_extract(snapshots.meta,'$.head') END) AS head,
             CASE WHEN pull_review_status.head IS NOT NULL THEN commit_count WHEN local_reviews.url IS NULL AND json_valid(snapshots.meta) THEN json_extract(snapshots.meta,'$.commitCount') END AS commitCount,
             approval_stage AS approvalStage
-     FROM saved_reviews LEFT JOIN local_reviews USING(url) LEFT JOIN pull_draft_status USING(url) LEFT JOIN snapshots USING(url) LEFT JOIN pull_review_status USING(url) ORDER BY saved_at DESC, url`,
+     FROM saved_reviews LEFT JOIN pull_lifecycle USING(url) LEFT JOIN local_reviews USING(url) LEFT JOIN pull_draft_status USING(url) LEFT JOIN snapshots USING(url) LEFT JOIN pull_review_status USING(url) ORDER BY saved_at DESC, url`,
   );
   const listReviews = () =>
     reviewList.parse(
@@ -106,6 +120,7 @@ export function openStore(filename: string) {
           ({
             url,
             savedAt,
+            state,
             draft,
             title,
             author,
@@ -118,6 +133,7 @@ export function openStore(filename: string) {
           }) => ({
             url,
             savedAt,
+            ...(state === null ? {} : { state }),
             ...(typeof title === 'string' ? { title } : {}),
             ...(typeof author === 'string' && author !== 'Unknown author' ? { author } : {}),
             ...(typeof openedAt === 'string' ? { openedAt } : {}),
@@ -144,10 +160,18 @@ export function openStore(filename: string) {
     replies: replyStore(db),
     lessons: lessonStore(db),
     typography: () =>
-      typography.parse(db.prepare('SELECT font,font_size AS size FROM workspace WHERE id=1').get()),
+      typography.parse(
+        db
+          .prepare('SELECT font,font_size AS size, code_font AS codeFont FROM workspace WHERE id=1')
+          .get(),
+      ),
     saveTypography(input: unknown) {
       const value = typography.parse(input);
-      db.prepare('UPDATE workspace SET font=?,font_size=? WHERE id=1').run(value.font, value.size);
+      db.prepare('UPDATE workspace SET font=?,font_size=?,code_font=? WHERE id=1').run(
+        value.font,
+        value.size,
+        value.codeFont,
+      );
       return value;
     },
     getAppearance: () =>

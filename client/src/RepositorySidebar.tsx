@@ -30,11 +30,12 @@ import {
   UserRoundCheck,
 } from 'lucide-react';
 import type { ApprovalStage, SavedReview } from '../../shared/reviews.js';
-import { CommitLink, PrNumberLink, formatPrDate } from './components/PrMetadata.js';
+import { CommitLink, DraftLabel, PrNumberLink, formatPrDate } from './components/PrMetadata.js';
 import type { RepositoryGroup } from '../../shared/repository-groups.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 
 export function RepositorySidebar({
+  layoutPicker,
   repos,
   setRepos,
   groups,
@@ -43,6 +44,7 @@ export function RepositorySidebar({
   selectedRepo,
   chooseRepository,
   refresh,
+  refreshSavedStatuses,
   activeUrl,
   openInbox,
   openSettings,
@@ -50,6 +52,7 @@ export function RepositorySidebar({
   repliesPane,
   unread,
 }: {
+  layoutPicker: ReactNode;
   repos: Repository[];
   setRepos: Dispatch<SetStateAction<Repository[] | null>>;
   groups: RepositoryGroup[];
@@ -58,6 +61,7 @@ export function RepositorySidebar({
   selectedRepo: string | null;
   chooseRepository: (name: string) => void;
   refresh: number;
+  refreshSavedStatuses: () => void;
   activeUrl: string | null;
   openInbox: () => void;
   openSettings: () => void;
@@ -170,6 +174,7 @@ export function RepositorySidebar({
   return (
     <aside className="repo-sidebar repository-navigation" aria-label="Repository sidebar">
       <nav className="workspace-rail" aria-label="Workspace tools">
+        {layoutPicker}
         <button
           ref={repliesButton}
           title="Review alerts"
@@ -288,7 +293,10 @@ export function RepositorySidebar({
             onWatch={(authors, done) =>
               update(() => window.reviewer.watchAuthors(selected.name, authors), done)
             }
-            onRefresh={() => update(() => window.reviewer.syncRepository(selected.name, true))}
+            onRefresh={() => {
+              refreshSavedStatuses();
+              update(() => window.reviewer.syncRepository(selected.name, true));
+            }}
           />
           {(error || selected.error) && <p role="alert">{error || selected.error}</p>}
           <button
@@ -363,13 +371,9 @@ function RepositoryFolder({
       label: pull.title,
       status: sidebarStatus(pull),
       detail: '#' + pull.number + ' ' + pull.title,
-      metadata: [
-        '@' + pull.author,
-        pull.isDraft && 'Draft',
-        pull.openedAt && 'Opened ' + formatPrDate(pull.openedAt),
-      ]
-        .filter(Boolean)
-        .join(' · '),
+      author: pull.author,
+      isDraft: pull.isDraft,
+      date: pull.openedAt && 'Opened ' + formatPrDate(pull.openedAt),
       open: openMonitored,
     })),
     ...group.saved.map((review) => {
@@ -383,15 +387,13 @@ function RepositoryFolder({
         label,
         status: sidebarStatus(review),
         detail: local ? label : title ? '#' + number + ' ' + title : 'Pull request #' + number,
-        metadata: local
-          ? ''
-          : [
-              author && '@' + author,
-              isDraft && 'Draft',
-              openedAt ? 'Opened ' + formatPrDate(openedAt) : 'Saved ' + formatPrDate(savedAt),
-            ]
-              .filter(Boolean)
-              .join(' · '),
+        author: local ? undefined : author,
+        isDraft: !local && isDraft,
+        date: local
+          ? undefined
+          : openedAt
+            ? 'Opened ' + formatPrDate(openedAt)
+            : 'Saved ' + formatPrDate(savedAt),
         open: openSaved,
       };
     }),
@@ -451,8 +453,14 @@ function RepositoryFolder({
           aria-label={'Reviews in ' + group.key}
           hidden={!expanded}
         >
-          {visible.map(({ url, label, detail, metadata, status, open }) => {
-            const description = [metadata, status.commitLabel, status.badge?.label]
+          {visible.map(({ url, label, detail, author, isDraft, date, status, open }) => {
+            const description = [
+              author && '@' + author,
+              isDraft && 'Draft',
+              date,
+              status.commitLabel,
+              status.badge?.label,
+            ]
               .filter(Boolean)
               .join(' · ');
             return (
@@ -478,9 +486,17 @@ function RepositoryFolder({
                     )}
                   </span>
                 </button>
-                {metadata && (
+                {(date || author || isDraft) && (
                   <small className="sidebar-review-meta">
-                    <PrNumberLink url={url} onError={onError} /> · {metadata}
+                    <PrNumberLink url={url} onError={onError} />
+                    {author && ' · @' + author}
+                    {isDraft && (
+                      <>
+                        {' '}
+                        · <DraftLabel />
+                      </>
+                    )}
+                    {date && ' · ' + date}
                   </small>
                 )}
                 {status.commitLabel && (

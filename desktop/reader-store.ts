@@ -1,4 +1,4 @@
-import { saveDraftStatus } from './review-activity.js';
+import { saveDraftStatus, savePullState } from './review-activity.js';
 import { setImmediate } from 'node:timers/promises';
 import type { DatabaseSync } from 'node:sqlite';
 import {
@@ -16,7 +16,7 @@ import {
   literalPattern,
   type MatchingHunk,
 } from '../shared/diff-search.js';
-import { reviewKey } from '../shared/reviews.js';
+import { reviewKey, type PullState } from '../shared/reviews.js';
 import { questionStore } from './questions.js';
 import { revisionStore } from './revisions.js';
 import type { HeadComparison, Snapshot } from './github.js';
@@ -70,6 +70,8 @@ export function readerStore(db: DatabaseSync) {
   }
   return {
     active,
+    observePullState: (url: string, state: PullState | undefined, updatedAt: string | undefined) =>
+      savePullState(db, url, state, updatedAt),
     observeRemoteHead(url: string, head: string, commitCount: number | undefined) {
       // A network read can advance sidebar status even while the reader stays on its pinned revision.
       db.prepare(

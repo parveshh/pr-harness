@@ -2,7 +2,9 @@ import { LessonEditor, LessonList, useReviewLessons } from './ReviewLessons.js';
 import { matchesLessonFile, matchesLessonLines } from '../../shared/lessons.js';
 import type { DiscussionThread } from '../../shared/discussions.js';
 import { useCommentDrag } from './useCommentDrag.js';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './components/Resizable.js';
+import { ReviewPanes } from './components/ReviewPanes.js';
+import { defaultReviewLayout, type ReviewLayout } from './reviewLayouts.js';
+import { ResizablePanel } from './components/Resizable.js';
 import { PinnedQuestions, QuestionLinks, type QuestionPanel } from './PinnedQuestions.js';
 import { RevisionChanges, revisionQueue } from './RevisionChanges.js';
 import { InlineComments } from './InlineComments.js';
@@ -15,7 +17,8 @@ import {
   type MatchSpan,
   type SearchHit,
 } from '../../shared/diff-search.js';
-import { FilePicker } from './ChangedFiles.js';
+import { usePanelRef } from 'react-resizable-panels';
+import { ChangedFiles } from './ChangedFiles.js';
 import {
   type ReactNode,
   type RefObject,
@@ -32,7 +35,7 @@ import { isLocalReview, type LocalReviewInfo } from '../../shared/reviews.js';
 import { diffLines } from '../../shared/diff.js';
 import { highlightRows, languageFor } from '../../shared/highlight.js';
 import { ChatMarkdown } from './components/ChatMarkdown.js';
-import { CommitLink, PrNumberLink, formatPrDate } from './components/PrMetadata.js';
+import { CommitLink, DraftLabel, PrNumberLink, formatPrDate } from './components/PrMetadata.js';
 import { CodeLine } from './components/CodeLine.js';
 import './reader.css';
 import { DraftReview, type DraftEditor } from './DraftReview.js';
@@ -45,6 +48,8 @@ import {
   UserRound,
   RotateCw,
   FileCode2,
+  PanelLeftOpen,
+  PanelLeftClose,
   Sparkles,
   Pin,
   MessageSquarePlus,
@@ -68,6 +73,7 @@ function message(error: unknown) {
 export type PrCommand = { id: number; url: string; kind: 'summarise' | 'review' | 'approve' };
 
 export function Reader({
+  layout,
   url,
   onBack,
   agentPicker,
@@ -78,6 +84,7 @@ export function Reader({
   accountEpoch,
   local: localInfo,
 }: {
+  layout: ReviewLayout;
   url: string;
   // Present for a local branch review, which has no GitHub discussion, checks or publishing.
   local: LocalReviewInfo | null;
@@ -147,6 +154,22 @@ export function Reader({
   const [line, setLine] = useState<(CommentAnchor & { revision: string }) | null>(null);
   const [bundle, setBundle] = useState<Bundle | null>(null);
   const [editor, setEditor] = useState<DraftEditor | null>(null);
+  const filePanel = usePanelRef();
+  const fileToolButton = useRef<HTMLButtonElement>(null);
+  const fileFilter = useRef<HTMLInputElement>(null);
+  const readerElement = useRef<HTMLDivElement>(null);
+  const [filesClosed, setFilesClosed] = useState(false);
+  const [compact, setCompact] = useState(false);
+  useLayoutEffect(() => {
+    const reader = readerElement.current;
+    if (!reader) return;
+    // Match the single-pane container query, including when the repository sidebar is resized.
+    const measure = () => setCompact(reader.getBoundingClientRect().width <= 680);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(reader);
+    return () => observer.disconnect();
+  }, []);
   const expandChatButton = useRef<HTMLButtonElement>(null);
   const closeChatButton = useRef<HTMLButtonElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -170,8 +193,20 @@ export function Reader({
     setPaneName('chat');
     focusPanelControl();
   }
-  const [paneName, setPaneName] = useState<'diff' | 'chat'>('diff');
-  useLayoutEffect(focusPanelControl, [chatOpen, paneName]);
+  const [paneName, setPaneName] = useState<'files' | 'diff' | 'chat'>('diff');
+  const filesVisible = compact ? paneName === 'files' : !filesClosed;
+  useLayoutEffect(focusPanelControl, [chatOpen, filesVisible, paneName]);
+  function toggleFiles() {
+    if (filesVisible) {
+      pendingFocus.current = fileToolButton;
+      if (!compact) filePanel.current?.collapse();
+      setPaneName('diff');
+    } else {
+      pendingFocus.current = fileFilter;
+      if (compact) setPaneName('files');
+      else filePanel.current?.expand();
+    }
+  }
   // Each sidebar command becomes a one-shot request for the pane that carries it out.
   const [seenCommand, setSeenCommand] = useState<number | null>(null);
   const [prRequest, setPrRequest] = useState<{ id: number; kind: 'review' | 'summary' } | null>(
@@ -311,7 +346,8 @@ export function Reader({
       if (checking || document.hidden || !document.hasFocus() || Date.now() < nextCheck) return;
       checking = true;
       try {
-        const { incoming, isDraft } = await window.reviewer.checkUpdate(url);
+        const { incoming, isDraft, statusChanged } = await window.reviewer.checkUpdate(url);
+        if (live && statusChanged) onSnapshotSaved();
         if (live)
           setView((v) => {
             if (!v || (v.incoming === incoming && v.meta.isDraft === isDraft)) return v;
@@ -335,7 +371,7 @@ export function Reader({
       window.removeEventListener('focus', trigger);
       window.clearInterval(timer);
     };
-  }, [url, loading, transition, hasView]);
+  }, [url, loading, transition, hasView, onSnapshotSaved]);
   async function changeRevision(open: boolean) {
     if (!view || transition) return;
     setTransition(true);
@@ -441,8 +477,10 @@ export function Reader({
     (file) => !file.reviewed,
   );
   const chatFile = queue ? files.find((file) => file.path === queue.path) : selected;
-  const filePicker = view && (
-    <FilePicker
+  const fileTree = view && (
+    <ChangedFiles
+      collapse={toggleFiles}
+      filterRef={fileFilter}
       files={queue?.files ?? files}
       selected={queue ? queue.path : selected?.path}
       counts={commentCounts}
@@ -455,6 +493,7 @@ export function Reader({
           setSource(null);
           move(file);
         }
+        if (compact) pendingFocus.current = fileToolButton;
         setSection('Changes');
         setPaneName('diff');
       }}
@@ -486,8 +525,74 @@ export function Reader({
     }
     setRangeHint('');
   }
+  const filePane = view && (
+    <ResizablePanel
+      id="review-files"
+      defaultSize="20%"
+      minSize="165px"
+      collapsible
+      panelRef={filePanel}
+      onResize={(size) => setFilesClosed(size.asPercentage === 0)}
+      inert={!filesVisible}
+      aria-hidden={!filesVisible || undefined}
+    >
+      {fileTree}
+    </ResizablePanel>
+  );
+  const chatPane = (!local || view) && (
+    <Activity mode={chatOpen ? 'visible' : 'hidden'}>
+      <ResizablePanel id="review-chat" defaultSize="28%" minSize="235px">
+        <ReviewChat
+          agents={agents}
+          prRequest={prRequest}
+          bundle={bundle}
+          onDrafts={(next) =>
+            setBundle((prev) => (prev && prev.version > next.version ? prev : next))
+          }
+          onPrStarted={() => {
+            if (view?.since) showComparison(false);
+            setPrRequest(null);
+            setChatOpen(true);
+          }}
+          url={url}
+          local={local}
+          view={view}
+          file={chatFile}
+          comparison={since}
+          loading={loading}
+          selection={since ? null : selection}
+          agentPicker={agentPicker}
+          composerRef={composer}
+          closeButtonRef={closeChatButton}
+          collapse={() => {
+            pendingFocus.current = expandChatButton;
+            setChatOpen(false);
+            setPaneName('diff');
+          }}
+          openSource={(run, cite) => {
+            if (since) showComparison(false);
+            setSection('Changes');
+            setPaneName('diff');
+            setSource((prev) => ({ ...cite, run, visit: (prev?.visit ?? 0) + 1 }));
+          }}
+          jump={(cite) => {
+            const target = files.find((f) => f.path === cite.path);
+            if (target && view) {
+              setSource(null);
+              if (since) showComparison(false);
+              setFullFile(false);
+              setSection('Changes');
+              setPaneName('diff');
+              move(target, { hunk: cite.hunk, scroll: 0 });
+              setLine({ ...cite, revision: view.revision });
+            }
+          }}
+        />
+      </ResizablePanel>
+    </Activity>
+  );
   return (
-    <div className="reader review-studio">
+    <div className="reader review-studio" ref={readerElement}>
       {lessonThread && (
         <LessonEditor
           thread={lessonThread}
@@ -526,14 +631,29 @@ export function Reader({
           }}
         />
       )}
-      <ResizablePanelGroup
-        id={chatOpen ? 'review-with-chat' : 'review-reading'}
-        className="reading-grid workbench"
-        data-pane={paneName}
+      <ReviewPanes
+        layout={compact ? defaultReviewLayout : layout}
+        pane={paneName}
+        files={filePane}
+        chat={chatPane}
+        chatOpen={chatOpen}
       >
-        <ResizablePanel id="review-diff" minSize="300px">
+        <ResizablePanel id="review-diff" minSize="265px">
           <main className="review-center">
             <header>
+              {view && (
+                <button
+                  className="pane-toggle"
+                  ref={fileToolButton}
+                  aria-expanded={filesVisible}
+                  aria-controls="review-files"
+                  aria-label={filesVisible ? 'Hide changed files' : 'Show changed files'}
+                  title={filesVisible ? 'Hide changed files' : 'Show changed files'}
+                  onClick={toggleFiles}
+                >
+                  {filesVisible ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+                </button>
+              )}
               <button className="queue-breadcrumb" onClick={onBack}>
                 {local ? 'Local reviews' : 'Pull requests'}
               </button>
@@ -580,7 +700,7 @@ export function Reader({
                 <h1>{view?.meta.title ?? (local ? 'Local branch' : 'Pull request')}</h1>
                 {view && (
                   <div className="pr-meta">
-                    {!local && view.meta.isDraft && <span className="review-tag">Draft</span>}
+                    {!local && view.meta.isDraft && <DraftLabel />}
                     <span>
                       <UserRound size={13} />
                       {view.meta.author}
@@ -804,7 +924,6 @@ export function Reader({
                 </button>
               </div>
             )}
-            {view && since && <div className="file-heading">{filePicker}</div>}
             {view && since && view.comparison && (
               <RevisionChanges
                 key={view.revision}
@@ -857,7 +976,13 @@ export function Reader({
               ) : selected ? (
                 <article ref={diffPanel}>
                   <div className="file-heading">
-                    {filePicker}
+                    <h2>
+                      <FileCode2 size={16} />
+                      {selected.path}
+                    </h2>
+                    <small>
+                      {index + 1} of {files.length} files
+                    </small>
                     <p>
                       {selected.status}{' '}
                       {selected.previousPath && (
@@ -1043,60 +1168,7 @@ export function Reader({
               ))}
           </main>
         </ResizablePanel>
-        {(!local || view) && (
-          <Activity mode={chatOpen ? 'visible' : 'hidden'}>
-            <ResizableHandle label="Resize diff and chat" />
-            <ResizablePanel id="review-chat" defaultSize="28%" minSize="235px">
-              <ReviewChat
-                agents={agents}
-                prRequest={prRequest}
-                bundle={bundle}
-                onDrafts={(next) =>
-                  setBundle((prev) => (prev && prev.version > next.version ? prev : next))
-                }
-                onPrStarted={() => {
-                  if (view?.since) showComparison(false);
-                  setPrRequest(null);
-                  setChatOpen(true);
-                }}
-                url={url}
-                local={local}
-                view={view}
-                file={chatFile}
-                comparison={since}
-                loading={loading}
-                selection={since ? null : selection}
-                agentPicker={agentPicker}
-                composerRef={composer}
-                closeButtonRef={closeChatButton}
-                collapse={() => {
-                  pendingFocus.current = expandChatButton;
-                  setChatOpen(false);
-                  setPaneName('diff');
-                }}
-                openSource={(run, cite) => {
-                  if (since) showComparison(false);
-                  setSection('Changes');
-                  setPaneName('diff');
-                  setSource((prev) => ({ ...cite, run, visit: (prev?.visit ?? 0) + 1 }));
-                }}
-                jump={(cite) => {
-                  const target = files.find((f) => f.path === cite.path);
-                  if (target && view) {
-                    setSource(null);
-                    if (since) showComparison(false);
-                    setFullFile(false);
-                    setSection('Changes');
-                    setPaneName('diff');
-                    move(target, { hunk: cite.hunk, scroll: 0 });
-                    setLine({ ...cite, revision: view.revision });
-                  }
-                }}
-              />
-            </ResizablePanel>
-          </Activity>
-        )}
-      </ResizablePanelGroup>
+      </ReviewPanes>
     </div>
   );
 }

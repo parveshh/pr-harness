@@ -153,7 +153,11 @@ export function monitor(
       for (const pull of pulls)
         if (known.has(pull.number)) pull.unseen = stored.get(pull.number) ?? pull.unseen;
       store.update(name, [...authors].sort(), pulls);
-      const arrived = pulls.filter((p) => p.unseen && !known.has(p.number));
+      const arrived =
+        store
+          .repositories()
+          .find((r) => r.name === name)
+          ?.pulls.filter((p) => p.unseen && !known.has(p.number)) ?? [];
       try {
         if (arrived.length) onNew(name, arrived);
       } catch {

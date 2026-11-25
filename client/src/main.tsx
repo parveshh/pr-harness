@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import './fonts.css';
 import './workspace.css';
 import { applyTypography } from './WorkspacePanels.js';
 import { defaultTypography } from '../../shared/workspace.js';

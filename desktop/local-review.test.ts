@@ -121,7 +121,7 @@ await test('version 15 workspaces gain local reviews and keep their saved PRs, d
   );
   const reopened = new DatabaseSync(path);
   t.after(() => reopened.close());
-  assert.equal(reopened.prepare('PRAGMA user_version').get()?.user_version, 23);
+  assert.equal(reopened.prepare('PRAGMA user_version').get()?.user_version, 25);
 });
 
 await test('a version 16 workspace without the local table still opens and gains it', (t) => {

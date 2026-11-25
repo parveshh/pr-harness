@@ -255,7 +255,7 @@
 .repo-group-name strong {
   flex: 1;
   font:
-    550 0.8125rem/1.45 ui-monospace,
+    550 0.8125rem/1.45 var(--code-font, ui-monospace),
     monospace;
   overflow-wrap: anywhere;
   min-width: 0;
@@ -286,7 +286,7 @@
   gap: 4px;
   color: var(--muted);
   font:
-    0.6875rem/1.65 ui-monospace,
+    0.6875rem/1.65 var(--code-font, ui-monospace),
     monospace;
 }
 .home-bar {
@@ -572,7 +572,7 @@
 .review-chat small {
   color: var(--muted);
   font:
-    0.75rem/1.5 ui-monospace,
+    0.75rem/1.5 var(--code-font, ui-monospace),
     monospace;
 }
 .dialog-body > small {
@@ -716,7 +716,7 @@
 }
 .cite {
   font:
-    0.6875rem ui-monospace,
+    0.6875rem var(--code-font, ui-monospace),
     monospace;
   background: var(--raised);
   color: var(--ink-bright);
@@ -852,14 +852,14 @@
 }
 .draft-location {
   font:
-    600 0.75rem/1.5 ui-monospace,
+    600 0.75rem/1.5 var(--code-font, ui-monospace),
     monospace;
 }
 .draft-excerpt {
   padding: 7px 9px;
   background: var(--raised);
   font:
-    0.75rem/1.5 ui-monospace,
+    0.75rem/1.5 var(--code-font, ui-monospace),
     monospace;
 }
 .draft-body {
@@ -1548,7 +1548,7 @@ body,
 .inline-comments small,
 .range-hint {
   font:
-    0.6875rem/1.4 ui-monospace,
+    0.6875rem/1.4 var(--code-font, ui-monospace),
     monospace;
   color: var(--muted);
   overflow-wrap: anywhere;
@@ -1731,7 +1731,7 @@ body,
 }
 .revision-diff pre {
   font:
-    0.75rem/1.55 ui-monospace,
+    0.75rem/1.55 var(--code-font, ui-monospace),
     monospace;
   margin: 0;
 }
@@ -1824,7 +1824,7 @@ body,
   border-radius: 6px;
   padding: 8px;
   font:
-    0.75rem/1.5 ui-monospace,
+    0.75rem/1.5 var(--code-font, ui-monospace),
     monospace;
   max-height: 26vh;
 }
@@ -1960,8 +1960,7 @@ body,
   outline-offset: 2px;
 }
 .palette-choice input,
-.accent-choice input,
-.type-size input {
+.accent-choice input {
   opacity: 0;
   position: absolute;
   width: 1px;
@@ -2003,8 +2002,7 @@ body,
 }
 /* The focused choice is usually the selected one, so focus must outrank the selected ring. */
 .settings-group .palette-choice input:focus-visible + span,
-.settings-group .accent-choice input:focus-visible + span,
-.type-size input:focus-visible + span {
+.settings-group .accent-choice input:focus-visible + span {
   outline: 2px solid var(--positive);
   outline-offset: 2px;
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--positive) 35%, transparent);
@@ -2035,30 +2033,6 @@ body,
   width: auto;
   min-width: 44%;
   padding: 6px 10px;
-}
-.type-size label {
-  display: inline-block;
-  position: relative;
-  font-weight: 550;
-  margin: 0;
-  cursor: pointer;
-}
-.type-size label span {
-  display: block;
-  padding: 5px 12px;
-  border: 1px solid var(--line);
-  background: var(--editor);
-  font-size: 0.75rem;
-}
-.type-size label:first-of-type span {
-  border-radius: 6px 0 0 6px;
-}
-.type-size label:last-of-type span {
-  border-radius: 0 6px 6px 0;
-}
-.type-size input:checked + span {
-  color: var(--control-ink);
-  background: var(--control);
 }
 .account-row {
   padding: 10px 12px;
@@ -2093,7 +2067,7 @@ body,
 }
 .device-login code {
   font:
-    600 1.2rem ui-monospace,
+    600 1.2rem var(--code-font, ui-monospace),
     monospace;
   letter-spacing: 0.1em;
   user-select: all;
@@ -2166,15 +2140,6 @@ body,
 }
 :root[data-font='mono'] {
   font-family: ui-monospace, Menlo, Consolas, monospace;
-}
-:root[data-text-size='small'] {
-  font-size: 90%;
-}
-:root[data-text-size='large'] {
-  font-size: 112.5%;
-}
-:root[data-text-size='larger'] {
-  font-size: 125%;
 }
 .visually-hidden {
   position: absolute;

@@ -27,15 +27,16 @@ const fonts: Record<Typography['font'], string> = {
   serif: 'Serif',
   mono: 'Monospace',
 };
-const sizes: Record<Typography['size'], string> = {
-  small: 'Small',
-  standard: 'Default',
-  large: 'Large',
-  larger: 'Larger',
+const codeFonts: Record<Typography['codeFont'], string> = {
+  system: 'System monospace',
+  'jetbrains-mono': 'JetBrains Mono',
+  'fira-code': 'Fira Code',
+  'ibm-plex-mono': 'IBM Plex Mono',
 };
 export function applyTypography(settings: Typography) {
   document.documentElement.dataset.font = settings.font;
-  document.documentElement.dataset.textSize = settings.size;
+  document.documentElement.style.fontSize = settings.size + 'px';
+  document.documentElement.dataset.codeFont = settings.codeFont;
 }
 export function SettingsPane({
   theme,
@@ -204,21 +205,38 @@ export function SettingsPane({
             ))}
           </select>
         </div>
-        <fieldset className="type-size">
-          <legend>Text size</legend>
-          {typography.shape.size.options.map((size) => (
-            <label key={size}>
-              <input
-                type="radio"
-                name="text-size"
-                value={size}
-                checked={size === type.size}
-                onChange={() => chooseType({ size })}
-              />
-              <span>{sizes[size]}</span>
-            </label>
-          ))}
-        </fieldset>
+        <div className="settings-line">
+          <label htmlFor="code-font">Code font</label>
+          <select
+            id="code-font"
+            value={type.codeFont}
+            onChange={(event) =>
+              chooseType({ codeFont: typography.shape.codeFont.parse(event.target.value) })
+            }
+          >
+            {typography.shape.codeFont.options.map((font) => (
+              <option key={font} value={font}>
+                {codeFonts[font]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="settings-line">
+          <label htmlFor="base-font-size">Base font size</label>
+          <select
+            id="base-font-size"
+            value={type.size}
+            onChange={(event) =>
+              chooseType({ size: typography.shape.size.parse(event.target.value) })
+            }
+          >
+            {typography.shape.size.options.map((size) => (
+              <option key={size} value={size}>
+                {size} px
+              </option>
+            ))}
+          </select>
+        </div>
       </section>
       <section className="settings-group">
         <h3>GitHub account</h3>
