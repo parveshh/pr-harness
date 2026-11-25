@@ -20,11 +20,13 @@ Use **Full file** above the diff to read surrounding code with additions and del
 
 Both views colour code by language, chosen from the file name. The old and new sides of a hunk are each read as continuous source, so a comment or string that spans lines keeps its colour. A hunk that starts inside one can be coloured wrongly until it ends, because the text above the hunk is not part of the diff. Files in an unrecognised language stay plain, as does a hunk or full-file page over 150,000 characters or with a line over 2,000.
 
+A hunk of more than 1,000 lines, such as a generated file or a lockfile, loads only the lines near your reading position and adds the rest as you scroll. Selecting lines, dragging to comment, drafts, published threads, citations and your saved reading position work as they do in a shorter hunk. Lines that are not loaded are invisible to anything that reads the page, so use **Search diff** (**Ctrl+F** or **⌘F**) to find text in them. A screen reader hears the number of lines in the hunk and each line's position among them.
+
 Choose **Review layout** in the sidebar to arrange Files, Diff, and Chat in any order after Repositories. The app remembers your choice across reviews and restarts. Drag a divider, or focus it and press the arrow keys, to resize the repository sidebar, file explorer, or open chat pane. In a narrow window, chat sits below the diff. Choose **Ask about PR** to give chat the full reading area.
 
 New workspaces start with the Ink palette and green accent. Change appearance using the **Settings** gear at the bottom left. Existing workspaces keep their saved choices.
 
-The file explorer opens beside the diff. Filter by filename or path, expand folders, and select files to switch diffs. Each file shows its review status and published comment count. Use the panel button in the PR header to hide or reopen the explorer. In a narrow window, selecting a file returns you to the diff. Review chat opens alongside the diff when you open a PR. Returning to the repository queue hides it. If you close chat while reading, **Ask about PR** reopens it.
+The file explorer opens beside the diff. Filter by filename or path, expand folders, and select files to switch diffs. Each file shows its review status and published comment count. The list scrolls to the open file when you move to it with a shortcut or **Next unread →**. A list of more than 300 files and folders loads the rows near the part you are looking at. Use the panel button in the PR header to hide or reopen the explorer. In a narrow window, selecting a file returns you to the diff. Review chat opens alongside the diff when you open a PR. Returning to the repository queue hides it. If you close chat while reading, **Ask about PR** reopens it.
 
 ## Review with a local agent
 
@@ -94,11 +96,13 @@ The list refreshes about every two minutes while the app's window is open, and w
 
 - `client/` contains the React renderer. It accesses the desktop through `window.reviewer`.
 - `desktop/` contains the Electron main process, sandboxed preload, and SQLite store. The database is `workspace.sqlite` in Electron's per-user application data directory.
-- `shared/` contains the typed bridge and review validation. The main process validates data before writing it. It also holds pure modules used by the renderer and tested with Node, such as the per-PR chat store (`chat-runs.ts`) and the syntax highlighter (`highlight.ts`).
+- `shared/` contains the typed bridge and review validation. The main process validates data before writing it. It also holds pure modules used by the renderer and tested with Node, such as the per-PR chat store (`chat-runs.ts`), the syntax highlighter (`highlight.ts`) and the row windowing for long hunks and file lists (`windowing.ts`).
 
 ## Checks
 
-Run `npm run lint`, `npm run format:check`, `npm run typecheck`, and `npm test`. Use `npm run format` to apply formatting. After building, `npm run test:desktop` verifies repository dialogs, the review requests list, monitored authors, all five agent adapters, citation navigation, cancellation, the file reader, draft editing and discarding, an offline restart, and receipt recovery after a simulated lost submission response with a temporary profile and fixture CLI on macOS or Linux. Use `npm run test:desktop -- --live` to exercise a public PR with your signed-in GitHub CLI. Both desktop tests require a graphical session.
+Run `npm run lint`, `npm run format:check`, `npm run typecheck`, and `npm test`. Use `npm run format` to apply formatting. After building, `npm run test:desktop` verifies repository dialogs, the review requests list, monitored authors, all five agent adapters, citation navigation, cancellation, the file reader, a hunk and file list long enough to load in part, draft editing and discarding, an offline restart, and receipt recovery after a simulated lost submission response with a temporary profile and fixture CLI on macOS or Linux. Use `npm run test:desktop -- --live` to exercise a public PR with your signed-in GitHub CLI. Both desktop tests require a graphical session.
+
+After building, `npm run bench:large` times the reader on a fixture pull request with 3,000 files, a 50,000-line added file and a 5,000-row hunk that has drafts and a published thread. It reports the time to the first diff rows, to switch files, to filter the file explorer and to type in the inline editor, and the frame times while scrolling. `--runs`, `--files`, `--added-lines` and `--modified-rows` change the sample count and the fixture, and `--json` prints the numbers for comparison. It also needs a graphical session.
 
 ## Review another push
 

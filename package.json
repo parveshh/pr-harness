@@ -16,6 +16,7 @@
     "test": "node --import tsx --test desktop/*.test.ts",
     "build": "npm run typecheck && electron-vite build",
     "test:desktop": "node scripts/desktop-smoke.mjs",
+    "bench:large": "node scripts/large-pr-bench.mjs",
     "package:mac": "npm run build && electron-builder --mac dmg --arm64 --publish never",
     "package:win": "npm run build && electron-builder --win nsis --x64 --publish never"
   },

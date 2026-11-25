@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import electron from 'electron';
 import { _electron as launcher } from 'playwright-core';
+import { largePr } from '../fixtures/github/large-pr.mjs';
 
 const live = process.argv.includes('--live');
 const directory = await mkdtemp(join(tmpdir(), 'local-reviewer-desktop-'));
@@ -26,6 +27,8 @@ const signedOut = join(directory, 'signed-out');
 const switchedAccount = join(directory, 'switched-account');
 const revisionFixture = join(directory, 'revision.json');
 const releaseAnswer = join(directory, 'release-answer');
+// A second pull request with a hunk and a file list long enough to be windowed.
+const largeShape = { files: 400, addedLines: 3000, modifiedRows: 1500 };
 const env = { ...process.env };
 if (!live) {
   // Exercise the same gh subprocess contract as production using isolated, repeatable responses.
@@ -136,6 +139,11 @@ if (!live) {
       "if(update){ response.meta.head.sha=update.head; response.meta.base.sha=update.base; response.files[1].patch=response.files[1].patch.replace('+new line 1\\n','+'+update.line+'\\n'); response.files[1].sha=update.line; }",
       'const pairPulls = JSON.parse(fs.readFileSync(' + JSON.stringify(pairFixtures) + '));',
       "const endpoint = process.argv.find(a=>a.startsWith('repos/')) ?? '';",
+      'const {largePrFixture} = require(' +
+        JSON.stringify(resolve('fixtures/github/large-pr.mjs')) +
+        ');',
+      'const large = largePrFixture(endpoint, ' + JSON.stringify(largeShape) + ');',
+      'if(large !== undefined) { console.log(JSON.stringify(large)); return; }',
       "if(endpoint==='repos/example/project/pulls/14' && fs.existsSync(" +
         JSON.stringify(join(directory, 'merged-14')) +
         ")) {response.meta.state='closed'; response.meta.merged_at='2026-11-24T12:00:00Z';}",
@@ -2103,6 +2111,264 @@ try {
       await capture(page, 'sidebar-folders');
       await back(page);
 
+      // A hunk too long to render whole shows only the rows near the viewport, and the file
+      // list does the same. Everything a reviewer does on a line still works there.
+      await page.getByRole('button', { name: 'Open review', exact: true }).click();
+      await page.getByLabel('GitHub pull request URL').fill(largePr.url);
+      await page.getByRole('button', { name: 'Save pull request' }).click();
+      await page
+        .locator('.pr-queue')
+        .getByRole('button', { name: /example\/large/ })
+        .click();
+      const largeFiles = changedFiles(page);
+      await largeFiles.getByText('0 of ' + largeShape.files + ' reviewed').waitFor();
+      const treeRows = largeFiles.locator('.file-row, .directory-row');
+      const treeList = largeFiles.getByRole('list', { name: /^\d+ files and folders$/ });
+      await treeList.waitFor();
+      assert.ok((await treeRows.count()) < 150, 'the file list renders a window of its rows');
+      // Filtering reaches a file whose row was not rendered, and folders still collapse.
+      const lastModule = 'module-0' + (largeShape.files - 1) + '.ts';
+      assert.equal(
+        await largeFiles.getByRole('button', { name: new RegExp(lastModule) }).count(),
+        0,
+      );
+      await largeFiles.getByLabel('Filter files').fill(lastModule);
+      await largeFiles.getByRole('button', { name: new RegExp(lastModule) }).waitFor();
+      assert.equal(await largeFiles.locator('.file-row').count(), 1);
+      await largeFiles.getByLabel('Filter files').fill('');
+      const packagesFolder = largeFiles.getByRole('button', { name: 'packages', exact: true });
+      await packagesFolder.press('Enter');
+      await largeFiles.getByRole('list', { name: '5 files and folders' }).waitFor();
+      await packagesFolder.and(page.locator(':focus')).waitFor();
+      assert.equal(await packagesFolder.getAttribute('aria-expanded'), 'false');
+      await packagesFolder.press('Enter');
+      await treeList.getByRole('button', { name: 'pkg-02', exact: true }).waitFor();
+      await largeFiles.getByRole('button', { name: /^src\/ledger\.ts, modified/ }).click();
+      const largeDiff = page.getByRole('region', { name: 'File diff' });
+      await largeDiff
+        .getByRole('list', { name: largeShape.modifiedRows + ' diff lines' })
+        .waitFor();
+      const renderedLines = largeDiff.locator('.diff-line');
+      assert.ok((await renderedLines.count()) < 200, 'the hunk renders a window of its rows');
+      const thread = largeDiff
+        .locator('.published-threads [role="article"]')
+        .filter({ hasText: largePr.thread.body });
+      await thread.waitFor();
+      const inView = (locator) =>
+        locator.evaluate((el) => {
+          const pane = el.closest('.diff-scroll').getBoundingClientRect();
+          const box = el.getBoundingClientRect();
+          return box.top >= pane.top - 1 && box.bottom <= pane.bottom + 1;
+        });
+      const newLine = (line) => largeDiff.locator('.diff-line[data-new-line="' + line + '"]');
+      // Scroll to the middle of the hunk and select a range there.
+      await largeDiff.evaluate((el) => (el.scrollTop = el.scrollHeight / 2));
+      // The unchanged line nearest the middle of the pane, with its row's place on screen.
+      const middleLine = () =>
+        page.waitForFunction(() => {
+          const pane = globalThis.document.querySelector('[role="region"][aria-label="File diff"]');
+          const box = pane.getBoundingClientRect();
+          const middle = box.top + box.height / 2;
+          const centre = (row) => {
+            const { top, height } = row.getBoundingClientRect();
+            return top + height / 2;
+          };
+          const rows = Array.from(pane.querySelectorAll('.diff-line[data-new-line]'))
+            .filter((row) => !row.classList.contains('deletion'))
+            .sort((a, b) => Math.abs(centre(a) - middle) - Math.abs(centre(b) - middle));
+          const row = rows[0];
+          return row && Math.abs(centre(row) - middle) < 60
+            ? { line: Number(row.dataset.newLine), x: box.left + box.width / 2, y: centre(row) }
+            : null;
+        });
+      const deepLine = (await (await middleLine()).jsonValue()).line;
+      assert.ok(deepLine > 300);
+      const deepScroll = await largeDiff.evaluate((el) => el.scrollTop);
+      assert.equal(await newLine(1).count(), 0, 'rows far from the viewport are not rendered');
+      // The thread near the top stays rendered, so it keeps its place in the discussion.
+      assert.equal(await thread.count(), 1);
+      await largeDiff
+        .getByRole('button', { name: 'Select new line ' + deepLine, exact: true })
+        .click();
+      await largeDiff
+        .getByRole('button', { name: 'Select new line ' + (deepLine + 5), exact: true })
+        .click({ modifiers: ['Shift'] });
+      assert.equal(await largeDiff.locator('.diff-line[data-selected="true"]').count(), 6);
+      // The inline editor keeps its text and focus while its row is scrolled out of the window.
+      await page
+        .getByRole('button', { name: 'Comment on lines ' + deepLine + '–' + (deepLine + 5) })
+        .click();
+      const deepEditor = largeDiff.getByRole('form', { name: 'Draft line comment' });
+      const deepField = deepEditor.getByLabel('Comment', { exact: true });
+      await deepField.fill('Settle this before the totals');
+      await largeDiff.evaluate((el) => (el.scrollTop = 0));
+      await newLine(1).waitFor();
+      await newLine(deepLine - 3).waitFor({ state: 'detached' });
+      assert.equal(await deepField.inputValue(), 'Settle this before the totals');
+      await page.keyboard.type(' change.');
+      assert.equal(await deepField.inputValue(), 'Settle this before the totals change.');
+      await largeDiff.evaluate((el, top) => (el.scrollTop = top), deepScroll);
+      await newLine(deepLine - 3).waitFor();
+      assert.equal(await deepField.inputValue(), 'Settle this before the totals change.');
+      assert.ok(await inView(newLine(deepLine)));
+      // Esc returns focus to the commented line, and c reopens the editor on the selection.
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape');
+      await deepEditor.waitFor({ state: 'detached' });
+      await largeDiff
+        .getByRole('button', { name: 'Select new line ' + (deepLine + 5), exact: true })
+        .and(page.locator(':focus'))
+        .waitFor();
+      await page.keyboard.press('c');
+      await deepField.fill('Saved on a deep line.');
+      await deepEditor.getByRole('button', { name: 'Save draft' }).click();
+      const deepNote = largeDiff
+        .locator('.inline-note')
+        .filter({ hasText: 'Saved on a deep line.' });
+      await deepNote.waitFor();
+      // Diff search finds text in a row that was never rendered and scrolls to it.
+      const lastSettled = (largeShape.modifiedRows / 5) * 4;
+      await largeDiff.evaluate((el) => (el.scrollTop = 0));
+      await newLine(1).waitFor();
+      assert.equal(await deepNote.count(), 1, 'a row with a draft stays rendered');
+      assert.equal(await newLine(lastSettled).count(), 0);
+      await page.keyboard.press('ControlOrMeta+f');
+      const largeSearch = page.getByRole('search', { name: 'Search PR diff' });
+      await largeSearch
+        .getByLabel('Search changed lines')
+        .fill('settled(' + (lastSettled - 1) + ')');
+      await newLine(lastSettled).locator('mark').waitFor();
+      assert.ok(await inView(newLine(lastSettled).locator('mark')));
+      await largeSearch.getByText('1 of 1', { exact: true }).waitFor();
+      await page.keyboard.press('Escape');
+      await largeSearch.waitFor({ state: 'detached' });
+      // A citation opens its line even when that row has left the window.
+      await largeDiff
+        .getByRole('button', { name: 'Select new line ' + lastSettled, exact: true })
+        .click();
+      const largeChat = page.getByRole('region', { name: 'Review chat' });
+      await largeChat
+        .getByRole('textbox', { name: 'Ask about the diff' })
+        .fill('Is this total settled?');
+      await largeChat.getByRole('button', { name: 'Send', exact: true }).click();
+      const cited = largeChat
+        .locator('.chat-answer')
+        .getByRole('button', { name: 'Open src/ledger.ts:' + lastSettled, exact: true })
+        .first();
+      await cited.waitFor();
+      await largeDiff.evaluate((el) => (el.scrollTop = 0));
+      await largeDiff.getByRole('button', { name: 'Select new line 1', exact: true }).click();
+      await newLine(lastSettled).waitFor({ state: 'detached' });
+      await cited.click();
+      await largeDiff
+        .locator('.diff-line[data-selected="true"][data-new-line="' + lastSettled + '"]')
+        .waitFor();
+      assert.ok(await inView(newLine(lastSettled)));
+      // Dragging the comment icon past the edge of the window scrolls the hunk and keeps the
+      // gesture, although the row it started on is no longer near the viewport.
+      await largeDiff.evaluate((el, top) => (el.scrollTop = top), deepScroll);
+      const dragFrom = deepLine + 1;
+      const dragIcon = largeDiff.getByRole('button', {
+        name: 'Draft on new line ' + dragFrom,
+        exact: true,
+      });
+      await dragIcon.waitFor();
+      assert.ok(await inView(dragIcon));
+      const dragStart = await dragIcon.boundingBox();
+      const paneBox = await largeDiff.boundingBox();
+      assert.ok(dragStart && paneBox);
+      await page.mouse.move(dragStart.x + dragStart.width / 2, dragStart.y + dragStart.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(dragStart.x + dragStart.width / 2, paneBox.y + paneBox.height - 10, {
+        steps: 5,
+      });
+      await page.waitForFunction(
+        (top) =>
+          globalThis.document.querySelector('[role="region"][aria-label="File diff"]').scrollTop >
+          top + 2500,
+        deepScroll,
+      );
+      assert.equal(await dragIcon.count(), 1, 'the row a drag started on stays rendered');
+      const dragEnd = await (await middleLine()).jsonValue();
+      await page.mouse.move(dragEnd.x, dragEnd.y, { steps: 3 });
+      await page.mouse.up();
+      assert.ok(dragEnd.line > dragFrom + 50, 'the drag reached rows beyond the first window');
+      await deepEditor.getByText(new RegExp(dragFrom + '[–-]' + dragEnd.line)).waitFor();
+      await deepEditor.getByRole('button', { name: 'Cancel', exact: true }).click();
+      // The same upwards: the window leaves the starting row below it.
+      const upFrom = (await (await middleLine()).jsonValue()).line;
+      const upIcon = largeDiff.getByRole('button', {
+        name: 'Draft on new line ' + upFrom,
+        exact: true,
+      });
+      const upStart = await upIcon.boundingBox();
+      const upScroll = await largeDiff.evaluate((el) => el.scrollTop);
+      assert.ok(upStart);
+      await page.mouse.move(upStart.x + upStart.width / 2, upStart.y + upStart.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(upStart.x + upStart.width / 2, paneBox.y + 10, { steps: 5 });
+      await page.waitForFunction(
+        (top) =>
+          globalThis.document.querySelector('[role="region"][aria-label="File diff"]').scrollTop <
+          top - 2500,
+        upScroll,
+      );
+      assert.equal(await upIcon.count(), 1, 'the starting row stays rendered below the window');
+      const upEnd = await (await middleLine()).jsonValue();
+      await page.mouse.move(upEnd.x, upEnd.y, { steps: 3 });
+      await page.mouse.up();
+      assert.ok(upEnd.line < upFrom - 50);
+      await deepEditor.getByText(new RegExp(upEnd.line + '[–-]' + upFrom)).waitFor();
+      await deepEditor.getByRole('button', { name: 'Cancel', exact: true }).click();
+      // j and k still move between hunks and put focus on the diff.
+      await page.keyboard.press('j');
+      await page
+        .getByRole('heading', { name: 'packages/pkg-02/src/module-0002.ts', exact: true })
+        .waitFor();
+      await page.keyboard.press('k');
+      await page.getByRole('heading', { name: largePr.modifiedPath, exact: true }).waitFor();
+      await page.keyboard.press('k');
+      await page.getByRole('heading', { name: largePr.addedPath, exact: true }).waitFor();
+      await largeDiff.and(page.locator(':focus')).waitFor();
+      await largeDiff.getByRole('list', { name: largeShape.addedLines + ' diff lines' }).waitFor();
+      assert.ok((await renderedLines.count()) < 200);
+      // The reading position in a windowed hunk is restored when the review is reopened,
+      // here at the very end of the hunk.
+      await largeDiff.evaluate((el) => (el.scrollTop = el.scrollHeight));
+      const savedLine = (await (await middleLine()).jsonValue()).line;
+      const savedScroll = await largeDiff.evaluate((el) => el.scrollTop);
+      assert.ok(savedLine > largeShape.addedLines - 30);
+      await back(page);
+      await page
+        .locator('.pr-queue')
+        .getByRole('button', { name: /Regenerate routes/ })
+        .click();
+      await newLine(savedLine).waitFor();
+      assert.ok(await inView(newLine(savedLine)));
+      // The saved position is a whole number of pixels.
+      assert.ok(
+        Math.abs((await largeDiff.evaluate((el) => el.scrollTop)) - savedScroll) <= 1,
+        'windowed hunk scroll position after reopening',
+      );
+      // Moving to a file far down the list scrolls the file list to its row.
+      const farFile = largeFiles.getByRole('button', { name: new RegExp(lastModule) });
+      assert.equal(await farFile.count(), 0);
+      await page.keyboard.press('ControlOrMeta+f');
+      await largeSearch
+        .getByLabel('Search changed lines')
+        .fill('value = ' + (largeShape.files - 1) + ';');
+      await page.getByRole('heading', { name: new RegExp(lastModule) }).waitFor();
+      await farFile.and(page.locator('[aria-current="true"]')).waitFor();
+      assert.ok(
+        await farFile.evaluate((el) => {
+          const pane = el.closest('.files-scroll').getBoundingClientRect();
+          const box = el.getBoundingClientRect();
+          return box.top >= pane.top - 1 && box.bottom <= pane.bottom + 1;
+        }),
+      );
+      await page.keyboard.press('Escape');
+      await back(page);
+
       // Saved reviews remain usable when repository monitoring is unavailable at startup.
       await reopened.evaluate(({ ipcMain }) => {
         ipcMain.removeHandler('repos:list');
@@ -2118,7 +2384,7 @@ try {
     console.info(
       live
         ? 'Live GitHub desktop read and resume passed.'
-        : 'Desktop window controls, reader, chat, offline drafts, grouped review, receipt recovery, pushes, rewritten history, base changes and late citations passed.',
+        : 'Desktop window controls, reader, chat, offline drafts, grouped review, receipt recovery, pushes, rewritten history, base changes, late citations and a windowed large hunk passed.',
     );
   } finally {
     await reopened.close();

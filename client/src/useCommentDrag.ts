@@ -16,11 +16,16 @@ type Gesture = {
 export function useCommentDrag(
   pane: RefObject<HTMLDivElement | null>,
   finish: (range: Range) => void,
+  // True for a windowed hunk, which must keep the row a drag started on rendered.
+  trackOrigin: boolean,
 ) {
   const gesture = useRef<Gesture | null>(null),
     frame = useRef(0),
     suppressClick = useRef(false);
   const [preview, setPreview] = useState<Range | null>(null);
+  // The line whose comment button holds the pointer. A windowed hunk keeps that row rendered
+  // while the pane scrolls, because removing the button would drop its pointer capture.
+  const [origin, setOrigin] = useState<Pick<Range, 'side' | 'line'> | null>(null);
   useEffect(() => () => cancelAnimationFrame(frame.current), []);
 
   function hit(g: Gesture): Range | null {
@@ -61,9 +66,11 @@ export function useCommentDrag(
     frame.current = 0;
     gesture.current = null;
     setPreview(null);
+    if (trackOrigin) setOrigin(null);
   }
   return {
     preview,
+    origin,
     suppressClick,
     start(e: PointerEvent<HTMLButtonElement>, side: Side, line: number) {
       if (!e.isPrimary || e.button !== 0) return;
@@ -77,6 +84,7 @@ export function useCommentDrag(
         originY: e.clientY,
         moved: false,
       };
+      if (trackOrigin) setOrigin({ side, line });
       e.currentTarget.setPointerCapture(e.pointerId);
     },
     move: (e: PointerEvent<HTMLButtonElement>) => {

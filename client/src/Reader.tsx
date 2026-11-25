@@ -10,6 +10,8 @@ import { RevisionChanges, revisionQueue } from './RevisionChanges.js';
 import { InlineComments } from './InlineComments.js';
 import { Activity, Fragment } from 'react';
 import { useShortcuts } from './useShortcuts.js';
+import { useRowWindow } from './useRowWindow.js';
+import { hunkWindowThreshold, shouldWindow } from '../../shared/windowing.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 import {
   adjacentFile,
@@ -33,6 +35,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -1297,6 +1300,14 @@ export function Reader({
                           : undefined
                       }
                       selection={selection}
+                      publishedLines={threadsByLine}
+                      editorAnchor={
+                        editor &&
+                        editor.location.path === selected.path &&
+                        editor.location.hunk === selected.hunk
+                          ? editor.location
+                          : null
+                      }
                       onLine={selectLine}
                       notes={(oldLine, newLine, comments, hunk) => {
                         if (!editor && !comments.length) return null;
@@ -1399,6 +1410,9 @@ type Notes = (
 ) => ReactNode;
 type Compose = ((anchor: CommentAnchor, excerpt: string, draft?: Draft) => void) | undefined;
 type Move = (file: ReaderFile, change: Partial<Position>) => void;
+// Lines that carry something beneath them, which a windowed hunk keeps rendered.
+type PublishedLines = ReadonlyMap<string, unknown>;
+type EditorAnchor = Pick<CommentAnchor, 'side' | 'line'> | null;
 function Patch({
   searchHit,
   local,
@@ -1414,6 +1428,8 @@ function Patch({
   compose,
   notes,
   published,
+  publishedLines,
+  editorAnchor,
   selection,
   onLine,
   move,
@@ -1432,6 +1448,8 @@ function Patch({
   compose: Compose;
   notes: Notes;
   published: Published;
+  publishedLines: PublishedLines;
+  editorAnchor: EditorAnchor;
   move: Move;
   selection: CommentAnchor | null;
   onLine: (a: Anchor, extend: boolean) => void;
@@ -1513,6 +1531,8 @@ function Patch({
         key={file.hunk}
         notes={notes}
         published={published}
+        publishedLines={publishedLines}
+        editorAnchor={editorAnchor}
         onRange={(range) => compose?.({ path: file.path, hunk: file.hunk, ...range }, '')}
         drafts={drafts}
         onComment={
@@ -1559,6 +1579,8 @@ function Hunk({
   offset,
   notes,
   published,
+  publishedLines,
+  editorAnchor,
   drafts,
   onComment,
   onRange,
@@ -1576,6 +1598,8 @@ function Hunk({
   offset: number;
   notes: Notes;
   published: Published;
+  publishedLines: PublishedLines;
+  editorAnchor: EditorAnchor;
   drafts: Draft[];
   onRange: (range: Pick<CommentAnchor, 'side' | 'line' | 'startLine'>) => void;
   onComment:
@@ -1585,20 +1609,80 @@ function Hunk({
   onScroll: (n: number) => void;
 }) {
   const pane = useRef<HTMLDivElement>(null);
-  const drag = useCommentDrag(pane, onRange);
+  const rowList = useRef<HTMLDivElement>(null);
+  const { heading, lines } = useMemo(() => diffLines(text), [text]);
+  // A long hunk renders only the rows near the viewport. See useRowWindow.
+  const windowed = shouldWindow(lines.length, hunkWindowThreshold);
+  const drag = useCommentDrag(pane, onRange, windowed);
   const highlighted = drag.preview ?? selection;
-  const initial = useRef(offset);
+  const rowOf = useMemo(() => {
+    if (!windowed) return null;
+    const old = new Map<number, number>(),
+      current = new Map<number, number>();
+    let widest = 0,
+      width = -1;
+    for (const [i, line] of lines.entries()) {
+      if (line.oldLine !== null) old.set(line.oldLine, i);
+      if (line.newLine !== null) current.set(line.newLine, i);
+      // A tab is at most four columns. See `tab-size` on .diff-content.
+      const columns = line.text.length + 3 * (line.text.split('\t').length - 1);
+      if (columns > width) {
+        width = columns;
+        widest = i;
+      }
+    }
+    return { old, new: current, widest: lines[widest]?.text ?? '' };
+  }, [windowed, lines]);
+  const notesByEnd = useMemo(() => {
+    const byEnd = new Map<string, Draft[]>();
+    for (const d of drafts) {
+      const key = d.side + ':' + d.line;
+      const entries = byEnd.get(key);
+      if (entries) entries.push(d);
+      else byEnd.set(key, [d]);
+    }
+    return byEnd;
+  }, [drafts]);
+  // Rows with a draft, an open editor, a published thread or an active drag stay rendered:
+  // they hold state, and their measured heights keep every row's offset exact.
+  const pinned = useMemo(() => {
+    if (!rowOf) return [];
+    const rows = new Set<number>();
+    const pin = (side: Anchor['side'], line: number) => {
+      const row = rowOf[side].get(line);
+      if (row !== undefined) rows.add(row);
+    };
+    for (const d of drafts) pin(d.side, d.line);
+    for (const key of publishedLines.keys())
+      pin(key.startsWith('LEFT:') ? 'old' : 'new', Number(key.slice(key.indexOf(':') + 1)));
+    if (editorAnchor) pin(editorAnchor.side, editorAnchor.line);
+    if (drag.origin) pin(drag.origin.side, drag.origin.line);
+    return [...rows];
+  }, [rowOf, drafts, publishedLines, editorAnchor, drag.origin]);
+  const [initialScroll] = useState(offset);
+  const { segments, reveal } = useRowWindow({
+    enabled: windowed,
+    count: lines.length,
+    scroller: pane,
+    list: rowList,
+    pinned,
+    initialScroll,
+  });
   useLayoutEffect(() => {
-    if (pane.current) pane.current.scrollTop = initial.current;
-  }, []);
+    // A windowed hunk restores its position once its rows are measured.
+    if (pane.current && !windowed) pane.current.scrollTop = initialScroll;
+  }, [windowed, initialScroll]);
   useLayoutEffect(() => {
     const composer = pane.current?.querySelector('.inline-composer textarea:focus');
     if (composer) composer.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    else if (selection)
+    else if (selection && rowOf) {
+      const row = rowOf[selection.side].get(selection.startLine ?? selection.line);
+      if (row !== undefined) reveal(row, '.diff-line');
+    } else if (selection)
       pane.current
         ?.querySelector('[data-selected="true"]')
         ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [selection]);
+  }, [selection, rowOf, reveal]);
   const [found, setFound] = useState<{ hit: SearchHit; span: MatchSpan } | null>(null);
   const match = found && found.hit === searchHit ? found.span : null;
   useEffect(() => {
@@ -1619,22 +1703,13 @@ function Hunk({
     return () => controller.abort();
   }, [searchHit, text]);
   useLayoutEffect(() => {
-    if (match)
+    if (!match) return;
+    if (windowed) reveal(match.row, '.code-line mark');
+    else
       pane.current
         ?.querySelector('.code-line mark')
         ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [match]);
-  const notesByEnd = useMemo(() => {
-    const byEnd = new Map<string, Draft[]>();
-    for (const d of drafts) {
-      const key = d.side + ':' + d.line;
-      const entries = byEnd.get(key);
-      if (entries) entries.push(d);
-      else byEnd.set(key, [d]);
-    }
-    return byEnd;
-  }, [drafts]);
-  const { heading, lines } = useMemo(() => diffLines(text), [text]);
+  }, [match, windowed, reveal]);
   const syntax = useMemo(() => highlightRows(lines, languageFor(path)), [lines, path]);
   useEffect(() => {
     const api: HunkControl = {
@@ -1662,12 +1737,126 @@ function Hunk({
     pane.current?.focus({ preventScroll: true });
     pane.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [claimFocus, path, index]);
+  const windowHint = useId();
+  // The line itself, then anything published or drafted beneath it. `plain` is true when
+  // the row is only the line, so its height is the one every such row shares.
+  function renderRow(line: (typeof lines)[number], i: number) {
+    const number = line.newLine ?? line.oldLine;
+    const side = line.newLine === null ? 'old' : 'new';
+    const comments =
+      notesByEnd.get('old:' + line.oldLine) ?? notesByEnd.get('new:' + line.newLine) ?? [];
+    const local = comments[0];
+    const selectedLine = highlighted?.side === 'old' ? line.oldLine : line.newLine;
+    const tools =
+      !!selection && (selection.side === 'old' ? line.oldLine : line.newLine) === selection.line;
+    const threads = published(line.oldLine, line.newLine);
+    const drafted = notes(line.oldLine, line.newLine, comments, text);
+    return {
+      plain: !tools && !threads && !drafted,
+      content: (
+        <>
+          <div
+            data-old-line={line.oldLine ?? undefined}
+            data-new-line={line.newLine ?? undefined}
+            data-selected={
+              !!highlighted &&
+              selectedLine !== null &&
+              selectedLine >= (highlighted.startLine ?? highlighted.line) &&
+              selectedLine <= highlighted.line
+            }
+            className={'diff-line ' + line.kind}
+          >
+            <span className="comment-gutter">
+              {onComment && number !== null && (
+                <button
+                  className={local ? 'has-draft' : ''}
+                  aria-label={
+                    local
+                      ? 'Edit draft on ' + local.side + ' line ' + local.line
+                      : 'Draft on ' + side + ' line ' + number
+                  }
+                  title="Click to comment, or drag across lines to comment on a block"
+                  onPointerDown={(e) => drag.start(e, side, number)}
+                  onPointerMove={drag.move}
+                  onPointerUp={drag.end}
+                  onLostPointerCapture={drag.cancel}
+                  onPointerCancel={drag.cancel}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') drag.cancel();
+                  }}
+                  onClick={(e) => {
+                    if (e.detail && drag.suppressClick.current) return;
+                    onComment(local?.side ?? side, local?.line ?? number, line.text, local);
+                  }}
+                >
+                  <MessageSquarePlus size={13} />
+                </button>
+              )}
+            </span>
+            <span className="gutter">
+              {line.oldLine !== null && (
+                <button
+                  aria-label={'Select old line ' + line.oldLine}
+                  title="Shift-click to select a range"
+                  onClick={(e) => {
+                    if (line.oldLine !== null) onLine('old', line.oldLine, e.shiftKey);
+                  }}
+                >
+                  {line.oldLine}
+                </button>
+              )}
+            </span>
+            <span className="gutter">
+              {line.newLine !== null && (
+                <button
+                  aria-label={'Select new line ' + line.newLine}
+                  title="Shift-click to select a range"
+                  onClick={(e) => {
+                    if (line.newLine !== null) onLine('new', line.newLine, e.shiftKey);
+                  }}
+                >
+                  {line.newLine}
+                </button>
+              )}
+            </span>
+            <CodeLine
+              text={line.text}
+              tokens={syntax[i] ?? null}
+              match={match?.row === i ? match : null}
+            />
+            {selection && tools && (
+              <span className="line-tools">
+                <button
+                  className="secondary"
+                  disabled={!onComment}
+                  aria-label={
+                    selection.startLine && selection.startLine !== selection.line
+                      ? 'Comment on lines ' + selection.startLine + '–' + selection.line
+                      : 'Comment on line'
+                  }
+                  onClick={() => onComment?.(selection.side, selection.line, line.text)}
+                >
+                  <MessageSquare size={13} /> Comment
+                </button>
+                <button className="secondary" onClick={ask}>
+                  <Sparkles size={13} /> Ask assistant
+                </button>
+              </span>
+            )}
+          </div>
+          {threads}
+          {drafted}
+        </>
+      ),
+    };
+  }
   return (
     <div
       ref={pane}
       className="diff-scroll"
       role="region"
       aria-label="File diff"
+      aria-describedby={segments ? windowHint : undefined}
       tabIndex={0}
       onScroll={(e) => {
         const top = Math.round(e.currentTarget.scrollTop);
@@ -1676,110 +1865,51 @@ function Hunk({
     >
       <div className="diff-content">
         <div className="hunk-header">{heading}</div>
-        {lines.map((line, i) => {
-          const number = line.newLine ?? line.oldLine;
-          const side = line.newLine === null ? 'old' : 'new';
-          const comments =
-            notesByEnd.get('old:' + line.oldLine) ?? notesByEnd.get('new:' + line.newLine) ?? [];
-          const local = comments[0];
-          const selectedLine = highlighted?.side === 'old' ? line.oldLine : line.newLine;
-          return (
-            <Fragment key={i}>
-              <div
-                data-old-line={line.oldLine ?? undefined}
-                data-new-line={line.newLine ?? undefined}
-                data-selected={
-                  !!highlighted &&
-                  selectedLine !== null &&
-                  selectedLine >= (highlighted.startLine ?? highlighted.line) &&
-                  selectedLine <= highlighted.line
-                }
-                className={'diff-line ' + line.kind}
-              >
-                <span className="comment-gutter">
-                  {onComment && number !== null && (
-                    <button
-                      className={local ? 'has-draft' : ''}
-                      aria-label={
-                        local
-                          ? 'Edit draft on ' + local.side + ' line ' + local.line
-                          : 'Draft on ' + side + ' line ' + number
-                      }
-                      title="Click to comment, or drag across lines to comment on a block"
-                      onPointerDown={(e) => drag.start(e, side, number)}
-                      onPointerMove={drag.move}
-                      onPointerUp={drag.end}
-                      onLostPointerCapture={drag.cancel}
-                      onPointerCancel={drag.cancel}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Escape') drag.cancel();
-                      }}
-                      onClick={(e) => {
-                        if (e.detail && drag.suppressClick.current) return;
-                        onComment(local?.side ?? side, local?.line ?? number, line.text, local);
-                      }}
-                    >
-                      <MessageSquarePlus size={13} />
-                    </button>
-                  )}
-                </span>
-                <span className="gutter">
-                  {line.oldLine !== null && (
-                    <button
-                      aria-label={'Select old line ' + line.oldLine}
-                      title="Shift-click to select a range"
-                      onClick={(e) => {
-                        if (line.oldLine !== null) onLine('old', line.oldLine, e.shiftKey);
-                      }}
-                    >
-                      {line.oldLine}
-                    </button>
-                  )}
-                </span>
-                <span className="gutter">
-                  {line.newLine !== null && (
-                    <button
-                      aria-label={'Select new line ' + line.newLine}
-                      title="Shift-click to select a range"
-                      onClick={(e) => {
-                        if (line.newLine !== null) onLine('new', line.newLine, e.shiftKey);
-                      }}
-                    >
-                      {line.newLine}
-                    </button>
-                  )}
-                </span>
-                <CodeLine
-                  text={line.text}
-                  tokens={syntax[i] ?? null}
-                  match={match?.row === i ? match : null}
-                />
-                {selection &&
-                  (selection.side === 'old' ? line.oldLine : line.newLine) === selection.line && (
-                    <span className="line-tools">
-                      <button
-                        className="secondary"
-                        disabled={!onComment}
-                        aria-label={
-                          selection.startLine && selection.startLine !== selection.line
-                            ? 'Comment on lines ' + selection.startLine + '–' + selection.line
-                            : 'Comment on line'
-                        }
-                        onClick={() => onComment?.(selection.side, selection.line, line.text)}
-                      >
-                        <MessageSquare size={13} /> Comment
-                      </button>
-                      <button className="secondary" onClick={ask}>
-                        <Sparkles size={13} /> Ask assistant
-                      </button>
-                    </span>
-                  )}
+        {segments ? (
+          <>
+            <p id={windowHint} className="visually-hidden">
+              This hunk has {lines.length} lines. Lines load as you scroll. Use Search diff to find
+              text in lines that are not loaded.
+            </p>
+            <div
+              ref={rowList}
+              className="diff-rows"
+              role="list"
+              aria-label={lines.length + ' diff lines'}
+            >
+              {/* Holds the pane as wide as the longest line while that line is not rendered. */}
+              <div className="diff-sizer" role="presentation" aria-hidden="true">
+                <span className="comment-gutter" />
+                <span className="gutter" />
+                <span className="gutter" />
+                <span className="code-line">{rowOf?.widest}</span>
               </div>
-              {published(line.oldLine, line.newLine)}
-              {notes(line.oldLine, line.newLine, comments, text)}
-            </Fragment>
-          );
-        })}
+              {segments.map((segment) => {
+                if (segment.kind === 'gap')
+                  return (
+                    <div key={segment.key} role="presentation" style={{ height: segment.height }} />
+                  );
+                const line = lines[segment.index];
+                if (!line) return null;
+                const row = renderRow(line, segment.index);
+                return (
+                  <div
+                    key={segment.index}
+                    role="listitem"
+                    aria-setsize={lines.length}
+                    aria-posinset={segment.index + 1}
+                    data-row={segment.index}
+                    data-plain={row.plain ? '' : undefined}
+                  >
+                    {row.content}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          lines.map((line, i) => <Fragment key={i}>{renderRow(line, i).content}</Fragment>)
+        )}
       </div>
     </div>
   );

@@ -583,3 +583,12 @@
   padding: 1rem;
   overflow-wrap: anywhere;
 }
+/* A long hunk renders only the rows near the viewport. This row is never visible: it keeps
+   the pane as wide as the longest line, so the horizontal scrollbar holds still. */
+.diff-sizer {
+  display: flex;
+  white-space: pre;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
