@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import type { Citation, Turn } from '../shared/assistant.js';
+import { turn, type Citation, type Turn } from '../shared/assistant.js';
 import type { Snapshot } from './github.js';
 import { readFindings } from './pr-findings.js';
 import { openStore } from './store.js';
@@ -136,4 +136,88 @@ await test('only validated findings become drafts, atomically and once, on their
     meta: { ...snapshot.meta, head: 'new' },
   });
   assert.throws(() => db.findings.draft(request), /revision changed/);
+});
+
+function suggesting(startId: number, endId: number, suggestion: unknown) {
+  return JSON.stringify({
+    coverage: 'Read the diff.',
+    findings: [{ title: 'T', priority: 'low', comment: 'C', startId, endId, suggestion }],
+  });
+}
+await test('a suggestion is kept only for a new-side range and only when it changes the code', () => {
+  const read = (a: number, b: number, suggestion: unknown) =>
+    readFindings(suggesting(a, b, suggestion), refs, () => patch).findings[0];
+  assert.equal(read(1, 2, 'first!\nsecond!')?.suggestion, 'first!\nsecond!');
+  assert.equal(read(1, 1, 'first!\r\n')?.suggestion, 'first!');
+  // Absent, null, empty, repeated, oversized, malformed and old-side suggestions are dropped.
+  for (const dropped of [
+    read(1, 1, undefined),
+    read(1, 1, null),
+    read(1, 1, ''),
+    read(1, 2, 'first\nsecond'),
+    read(1, 1, 'x'.repeat(4001)),
+    read(1, 1, 42),
+    read(3, 3, 'two'),
+  ]) {
+    assert.ok(dropped);
+    assert.equal('suggestion' in dropped, false);
+  }
+  // Without an inline location there is nothing to replace, but the finding survives.
+  const located = readFindings(suggesting(99, 99, 'x'), refs, () => patch).findings[0];
+  assert.equal(located?.location, null);
+  assert.equal(located?.suggestion, undefined);
+  // The report is still readable when the agent omits the field entirely.
+  assert.equal(readFindings(report(1, 1), refs, () => patch).findings[0]?.suggestion, undefined);
+});
+
+await test('drafting a finding appends its suggestion only for new-side anchors, and older findings still load', (t) => {
+  const db = openStore(':memory:');
+  t.after(() => db.close());
+  db.save(url);
+  db.reader.install(url, snapshot);
+  const parsed = (a: number, b: number, suggestion: unknown) => {
+    const found = readFindings(suggesting(a, b, suggestion), refs, () => patch).findings[0];
+    assert.ok(found);
+    return { ...found, verdict: 'valid' as const };
+  };
+  const withSuggestion = parsed(1, 2, 'first!\nsecond!');
+  const plain = { ...parsed(1, 1, undefined), id: randomUUID() };
+  // An old-side finding that somehow carries a suggestion must not produce one.
+  const removed = { ...parsed(3, 3, undefined), id: randomUUID(), suggestion: 'two!' };
+  const findings = [withSuggestion, plain, removed];
+  const msg: Turn = {
+    run: randomUUID(),
+    path: 'f.ts',
+    revision: snapshot.revision,
+    question: 'Review PR',
+    answer: 'Read the diff.',
+    citations: [],
+    settings: db.assistant.preferences(url, 'claude').settings,
+    promptVersion: 'v',
+    reportedModel: null,
+    findings,
+  };
+  // Turns stored before suggestions existed had no such key and must still load.
+  const stored = JSON.parse(JSON.stringify(msg)) as { findings: Record<string, unknown>[] };
+  delete stored.findings[0]?.suggestion;
+  delete stored.findings[2]?.suggestion;
+  assert.equal(JSON.stringify(stored).includes('"suggestion"'), false);
+  assert.equal(turn.parse(stored).findings?.[0]?.suggestion, undefined);
+  assert.equal(turn.parse(stored).findings?.length, 3);
+  db.assistant.append(url, msg, db.assistant.generation(url));
+  const result = db.findings.draft({
+    url,
+    run: msg.run,
+    version: 0,
+    ids: findings.map((f) => f.id),
+  });
+  assert.deepEqual(
+    result.bundle.comments.map((d) => [d.side, d.body]),
+    [
+      ['new', 'C\n\n```suggestion\nfirst!\nsecond!\n```'],
+      ['new', 'C'],
+      ['old', 'C'],
+    ],
+  );
+  assert.equal(db.assistant.history(url)[0]?.findings?.[0]?.suggestion, 'first!\nsecond!');
 });

@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { excerpt } from './anchors.js';
+import { hasSuggestion } from '../shared/suggestions.js';
 import type { Bundle, Edit, Pending, PublishKey } from '../shared/publish.js';
 import { fetchSnapshot, githubApi, githubEnvironment } from './github.js';
 import type { openStore } from './store.js';
@@ -126,6 +127,17 @@ export function reviewPublisher(
         throw Error(
           'Select lines on one side of the same hunk. Use the updated side for unchanged context.',
         );
+      // Moving a draft to other lines replaces its excerpt. A suggestion written against the
+      // earlier lines must be edited for the new ones first, or it would pass as current.
+      if (
+        existing &&
+        hasSuggestion(existing.body) &&
+        text !== existing.excerpt &&
+        request.body === existing.body
+      )
+        throw Error(
+          'This draft holds a suggestion written against different code. Edit the suggestion to fit the selected lines, then save.',
+        );
       anchor = { ...target, excerpt: text, id: existing?.id ?? randomUUID(), body: request.body };
     }
     if (!anchor) throw Error('Select a diff line first.');
@@ -207,9 +219,23 @@ export function reviewPublisher(
       if (bundle.event !== 'COMMENT' && who.toLowerCase() === snapshot.meta.author.toLowerCase())
         throw Error('Choose Comment when reviewing your own PR.');
       for (const d of bundle.comments) {
+        const label = d.path + ' line ' + d.line;
+        const suggests = hasSuggestion(d.body);
+        if (suggests && d.side === 'old')
+          throw Error(
+            'The suggestion on ' +
+              label +
+              ' is on a removed line. GitHub only applies suggestions to updated lines. Remove the suggestion or comment on the updated side.',
+          );
         const file = snapshot.files.find((f) => f.info.path === d.path);
         if (d.revision !== revision || !file || excerpt(file.patch, d) !== d.excerpt)
-          throw Error('A draft location changed. Refresh the PR and choose its line again.');
+          throw Error(
+            suggests
+              ? 'The suggestion on ' +
+                  label +
+                  ' was written against different code. Refresh the PR, choose its line again, and update the suggestion before submitting, or remove it.'
+              : 'A draft location changed. Refresh the PR and choose its line again.',
+          );
       }
       const pending = {
         token: randomUUID(),

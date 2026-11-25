@@ -21,6 +21,9 @@ export const finding = z.object({
       excerpt: z.string().max(maxFindingChars),
     })
     .nullable(),
+  // Replacement text for the finding's new-side lines. Findings stored before suggestions
+  // existed, and findings without a drop-in fix, omit it.
+  suggestion: z.string().max(maxFindingChars).optional(),
   verdict,
   drafted: z.boolean(),
 });

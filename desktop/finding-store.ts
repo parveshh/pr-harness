@@ -4,6 +4,7 @@ import { maxFindingChars, type AssessFinding, type DraftFindings } from '../shar
 import type { CommentAnchor } from '../shared/publish.js';
 import type { draftStore } from './draft-store.js';
 import { excerpt } from './anchors.js';
+import { appendSuggestion } from '../shared/suggestions.js';
 
 export function findingStore(
   db: DatabaseSync,
@@ -63,7 +64,11 @@ export function findingStore(
             id: f.id,
             revision: msg.revision,
             excerpt: text,
-            body: f.comment,
+            // A suggestion can only replace new-side lines, so an old-side anchor keeps prose.
+            body:
+              f.suggestion && anchor.side === 'new'
+                ? appendSuggestion(f.comment, f.suggestion.split('\n')).body
+                : f.comment,
           });
           f.drafted = true;
         }

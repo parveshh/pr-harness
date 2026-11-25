@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { readableError, type Turn } from '../../shared/assistant.js';
 import { verdict, type Finding } from '../../shared/findings.js';
 import type { Bundle, CommentAnchor } from '../../shared/publish.js';
+import { excerptSource } from '../../shared/suggestions.js';
+import { SuggestionDiff } from './components/SuggestedChange.js';
 
 export function ReviewFindings({
   url,
@@ -56,6 +58,12 @@ export function ReviewFindings({
           <small>{f.priority} priority</small>
           <h4>{f.title}</h4>
           <p>{f.comment}</p>
+          {f.suggestion && f.location?.side === 'new' && (
+            <SuggestionDiff
+              before={excerptSource(f.location.excerpt)}
+              after={f.suggestion.split('\n')}
+            />
+          )}
           {f.location ? (
             <details>
               <summary>

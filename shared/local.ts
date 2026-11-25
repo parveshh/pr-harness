@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Draft } from './publish.js';
 import { revisionHead, uncommittedDigest } from './reader.js';
 import { localReviewKey, reviewList } from './reviews.js';
+import { parseBody } from './suggestions.js';
 
 export const baseOption = z.object({ ref: z.string().min(1), name: z.string().min(1) });
 // A repository the reviewer chose in the folder dialog. The main process keeps the path
@@ -81,11 +82,23 @@ export function briefLocation(d: Draft) {
     (d.side === 'old' ? ' (old side, removed lines)' : ' (new side)')
   );
 }
+// Prose is quoted. A suggestion becomes a code block the agent can paste over the commented lines.
+function commentBody(body: string) {
+  const parts = parseBody(body).map((segment) =>
+    segment.kind === 'text'
+      ? quote(segment.text)
+      : segment.lines.length
+        ? '**Suggested replacement** for the commented lines:\n\n' +
+          fencedBlock(segment.lines.join('\n'))
+        : '**Suggested replacement:** delete the commented lines.',
+  );
+  return parts.length ? parts.join('\n\n') : '> (empty comment)';
+}
 function comment(d: Draft, index: number) {
   return [
     '### ' + (index + 1) + '. ' + briefLocation(d),
     d.excerpt ? fencedBlock(d.excerpt, 'diff') : '_No code excerpt was saved._',
-    quote(d.body) || '> (empty comment)',
+    commentBody(d.body),
   ].join('\n\n');
 }
 

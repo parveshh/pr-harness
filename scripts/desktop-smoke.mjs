@@ -1408,6 +1408,11 @@ try {
         await page
           .getByRole('button', { name: 'Draft on ' + side + ' line 1', exact: true })
           .click();
+        // GitHub only applies suggestions to updated lines.
+        assert.equal(
+          await page.getByRole('button', { name: 'Suggest change', exact: true }).isDisabled(),
+          side === 'old',
+        );
         await page.getByLabel('Comment', { exact: true }).fill(body);
         await page.getByRole('button', { name: 'Save draft', exact: true }).click();
       }
@@ -1434,6 +1439,27 @@ try {
       assert.equal(await region.locator('.diff-line[data-selected=true]').count(), 3);
       await page.getByRole('button', { name: 'Comment on lines 40–42' }).click();
       const inline = region.getByRole('form', { name: 'Draft line comment' });
+      // Suggest change fills a fence with the selected new-side lines and keeps the caret inside.
+      const suggest = inline.getByRole('button', { name: 'Suggest change', exact: true });
+      await inline.getByLabel('Comment', { exact: true }).fill('Prefer this.');
+      await suggest.focus();
+      await page.keyboard.press('Enter');
+      const field = await inline.getByLabel('Comment', { exact: true }).evaluate((el) => ({
+        value: el.value,
+        caret: el.selectionStart,
+        focused: el === globalThis.document.activeElement,
+      }));
+      assert.ok(field.focused);
+      assert.match(field.value, /^Prefer this\.\n\n```suggestion\n[^]+\n```$/);
+      assert.equal(field.value.slice(field.caret), '\n```');
+      await inline.getByRole('button', { name: 'Save draft' }).click();
+      const figure = region.getByRole('figure', { name: 'Suggested change' });
+      await figure.getByText('Original', { exact: true }).waitFor();
+      await figure.getByText('Replacement', { exact: true }).waitFor();
+      await region.getByText('Prefer this.', { exact: true }).waitFor();
+      await region.getByRole('button', { name: 'Discard', exact: true }).click();
+      await figure.waitFor({ state: 'detached' });
+      await page.getByRole('button', { name: 'Comment on lines 40–42' }).click();
       await inline.getByRole('button', { name: 'Cancel', exact: true }).click();
       for (const [from, to] of [
         [43, 45],

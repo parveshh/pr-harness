@@ -1098,7 +1098,7 @@ export function Reader({
                       }
                       selection={selection}
                       onLine={selectLine}
-                      notes={(oldLine, newLine, comments) => {
+                      notes={(oldLine, newLine, comments, hunk) => {
                         if (!editor && !comments.length) return null;
                         if (!bundle) return null;
                         const matches = (a: CommentAnchor) =>
@@ -1120,6 +1120,7 @@ export function Reader({
                             url={url}
                             bundle={bundle}
                             comments={comments}
+                            hunk={hunk}
                             editor={editing}
                             setEditor={setEditor}
                             onClose={() => {
@@ -1190,7 +1191,12 @@ function InlinePlacement({
 }
 
 type Published = (oldLine: number | null, newLine: number | null) => ReactNode;
-type Notes = (oldLine: number | null, newLine: number | null, comments: Draft[]) => ReactNode;
+type Notes = (
+  oldLine: number | null,
+  newLine: number | null,
+  comments: Draft[],
+  hunk: string,
+) => ReactNode;
 type Compose = ((anchor: CommentAnchor, excerpt: string, draft?: Draft) => void) | undefined;
 type Move = (file: ReaderFile, change: Partial<Position>) => void;
 function Patch({
@@ -1527,7 +1533,7 @@ function Hunk({
                   )}
               </div>
               {published(line.oldLine, line.newLine)}
-              {notes(line.oldLine, line.newLine, comments)}
+              {notes(line.oldLine, line.newLine, comments, text)}
             </Fragment>
           );
         })}

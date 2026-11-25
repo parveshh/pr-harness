@@ -2640,3 +2640,79 @@ body,
   flex-wrap: wrap;
   gap: 6px;
 }
+
+.draft-prose {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.suggestion {
+  display: grid;
+  gap: 1px;
+  margin: 6px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  font:
+    0.75rem/1.5 var(--code-font, ui-monospace),
+    monospace;
+}
+.suggestion figcaption {
+  padding: 3px 8px;
+  color: var(--muted);
+  background: var(--raised);
+  font:
+    600 0.6875rem/1.4 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+}
+.suggestion-side {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  align-items: start;
+}
+.suggestion-side[data-kind='before'] {
+  background: var(--deletion);
+}
+.suggestion-side[data-kind='after'] {
+  background: var(--addition);
+}
+.suggestion-side span {
+  padding: 4px 8px;
+  color: var(--muted);
+  font:
+    0.6875rem/1.7 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+}
+.suggestion-side pre {
+  margin: 0;
+  padding: 4px 8px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: transparent;
+  font: inherit;
+}
+.suggestion-warning {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.suggest-change {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.dialog-actions .suggest-change {
+  margin-right: auto;
+}
+.inline-composer .suggest-change {
+  margin-left: auto;
+}
+.suggest-change:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

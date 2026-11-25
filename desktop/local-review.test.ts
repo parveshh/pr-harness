@@ -412,3 +412,28 @@ await test('backticks in code, paths and comments cannot break the brief’s Mar
   assert.match(text, /\n> Use ```` fences ````\n> # not a heading\n$/);
   assert.equal(inlineCode('a\nb'), '`a b`');
 });
+
+await test('the agent brief shows a suggestion as a replacement block under the comment', () => {
+  const revision = 'b...c';
+  const text = brief({
+    revision,
+    comments: [
+      draft({
+        revision,
+        body: 'Cap it.\r\n\r\n````suggestion\r\nreturn retry(Math.min(count, 3));\r\nconst s = ```x```;\r\n````',
+      }),
+      draft({ revision, line: 20, body: '```suggestion\n```\nUnused.' }),
+    ],
+  });
+  assert.match(
+    text,
+    /> Cap it\.\n\n\*\*Suggested replacement\*\* for the commented lines:\n\n````\nreturn retry\(Math\.min\(count, 3\)\);\nconst s = ```x```;\n````\n/,
+  );
+  assert.match(
+    text,
+    /\*\*Suggested replacement:\*\* delete the commented lines\.\n\n> Unused\.\n$/,
+  );
+  assert.doesNotMatch(text, /```suggestion|> `/);
+  // Comments without a suggestion are unchanged.
+  assert.match(brief({ revision, comments: [draft({ revision })] }), /\n> Cap the retries\.\n$/);
+});

@@ -9,6 +9,8 @@ import {
   MessageSquarePlus,
 } from 'lucide-react';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
+import { DraftBody, SuggestChangeButton } from './components/SuggestedChange.js';
+import { excerptSource } from '../../shared/suggestions.js';
 import { readableError } from '../../shared/assistant.js';
 import type { Bundle, Draft, Edit, CommentAnchor } from '../../shared/publish.js';
 import type { ReaderView } from '../../shared/reader.js';
@@ -52,6 +54,7 @@ export function DraftReview({
   approveRequest: number | null;
 }) {
   const [editor, setEditor] = useState<DraftEditor | null>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
   const [panel, setPanel] = useState<'closed' | 'review' | 'preview'>('closed');
   const [summary, setSummary] = useState(bundle.summary),
     [event, setEvent] = useState(bundle.event);
@@ -233,6 +236,7 @@ export function DraftReview({
             <label htmlFor="draft-body">Comment</label>
             <textarea
               id="draft-body"
+              ref={field}
               autoFocus
               rows={5}
               required
@@ -242,6 +246,14 @@ export function DraftReview({
             />
             {error && <p role="alert">{error}</p>}
             <div className="dialog-actions">
+              <SuggestChangeButton
+                side={editor.location.side}
+                source={editor.excerpt ? excerptSource(editor.excerpt) : null}
+                unavailable="Save the draft on its new lines first, then add a suggestion."
+                body={editor.body}
+                textarea={field}
+                onBody={(body) => setEditor({ ...editor, body })}
+              />
               <button
                 type="button"
                 className="quiet"
@@ -387,7 +399,9 @@ export function DraftReview({
                     <div className="draft-card" key={d.id}>
                       <strong className="draft-location">{locationLabel(d)}</strong>
                       <pre className="draft-excerpt">{d.excerpt}</pre>
-                      <div className="draft-body">{d.body}</div>
+                      <div className="draft-body">
+                        <DraftBody draft={d} />
+                      </div>
                       {d.revision !== view.revision && (
                         <p>
                           {local
