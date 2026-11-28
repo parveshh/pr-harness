@@ -121,7 +121,40 @@ await test('version 15 workspaces gain local reviews and keep their saved PRs, d
   );
   const reopened = new DatabaseSync(path);
   t.after(() => reopened.close());
-  assert.equal(reopened.prepare('PRAGMA user_version').get()?.user_version, 27);
+  assert.equal(reopened.prepare('PRAGMA user_version').get()?.user_version, 29);
+});
+
+await test('upgrading saved local reviews registers each clone once', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'local-folders-v28-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'workspace.sqlite');
+  const first = openStore(file);
+  const folder = { path: '/work/project', repository: 'project' };
+  for (const branch of ['topic', 'fix'])
+    first.local.save({
+      ...folder,
+      baseRef: 'refs/heads/main',
+      baseName: 'main',
+      branch,
+      detached: null,
+    });
+  first.local.save({
+    path: '/',
+    repository: '',
+    branch: 'root',
+    baseRef: 'refs/heads/main',
+    baseName: 'main',
+    detached: null,
+  });
+  const saved = first.list();
+  first.close();
+  const legacy = new DatabaseSync(file);
+  legacy.exec('DROP TABLE local_folders; PRAGMA user_version=28');
+  legacy.close();
+  const upgraded = openStore(file);
+  t.after(() => upgraded.close());
+  assert.deepEqual(upgraded.local.folders(), [{ path: '/', repository: '/' }, folder]);
+  assert.deepEqual(upgraded.list(), saved);
 });
 
 await test('a version 16 workspace without the local table still opens and gains it', (t) => {

@@ -1,5 +1,5 @@
 import type { TreeFile } from './ChangedFiles.js';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { QuestionLinks } from './PinnedQuestions.js';
 import { shortRevision, splitHunks } from '../../shared/reader.js';
 import { isLocalReview } from '../../shared/reviews.js';
@@ -15,21 +15,50 @@ const labels = {
   'head-only': 'Changed between commits',
 };
 function SavedPatch({ title, patch }: { title: string; patch: string | null }) {
+  const offsets = useMemo(() => {
+    const starts = [0];
+    if (patch) {
+      let rows = 0;
+      for (let at = patch.indexOf('\n'); at >= 0; at = patch.indexOf('\n', at + 1)) {
+        if (++rows % 1000 === 0 && at + 1 < patch.length) starts.push(at + 1);
+      }
+    }
+    return starts;
+  }, [patch]);
+  const [chosen, setPage] = useState(0);
+  const page = Math.min(chosen, offsets.length - 1);
   return (
     <section>
       <h3>{title}</h3>
+      {offsets.length > 1 && (
+        <div className="hunk-nav">
+          <button disabled={!page} onClick={() => setPage(page - 1)}>
+            Previous page
+          </button>
+          <span>
+            Page {page + 1} of {offsets.length}
+          </span>
+          <button disabled={page + 1 === offsets.length} onClick={() => setPage(page + 1)}>
+            Next page
+          </button>
+        </div>
+      )}
       {patch ? (
         <pre>
-          {patch.split('\n').map((line, i) => (
-            <span
-              key={i}
-              className={
-                line.startsWith('+') ? 'addition' : line.startsWith('-') ? 'deletion' : undefined
-              }
-            >
-              {line}
-            </span>
-          ))}
+          {patch
+            .slice(offsets[page], offsets[page + 1])
+            .replace(/\n$/, '')
+            .split('\n')
+            .map((line, i) => (
+              <span
+                key={i}
+                className={
+                  line.startsWith('+') ? 'addition' : line.startsWith('-') ? 'deletion' : undefined
+                }
+              >
+                {line}
+              </span>
+            ))}
         </pre>
       ) : (
         <p>{patch === null ? 'Outside the saved file list.' : 'No text patch available.'}</p>
@@ -80,6 +109,7 @@ export function RevisionChanges({
   view,
   comparison,
   inspectQuestion,
+  fileConversations,
   openFile,
   mark,
   markAbsent,
@@ -91,6 +121,7 @@ export function RevisionChanges({
   inspectQuestion: (id: string) => void;
   path: string | undefined;
   openFile: (file: ReaderFile) => void;
+  fileConversations: ReactNode;
   markAbsent: (path: string, reviewed: boolean) => void;
   mark: (file: ReaderFile) => void;
 }) {
@@ -131,7 +162,7 @@ export function RevisionChanges({
         {comparison.ancestry === 'rewritten' && <strong>Rewritten history</strong>}
         {comparison.ancestry === 'unknown' &&
           (isLocalReview(url) ? (
-            <span>Compared using the saved diffs</span>
+            <span>Local revision comparison</span>
           ) : (
             <span>Commit ancestry unavailable</span>
           ))}
@@ -159,16 +190,26 @@ export function RevisionChanges({
               {!data && !error && <p role="status">Loading saved comparison…</p>}
               {data && (
                 <>
-                  {data.incremental !== null && (
-                    <SavedPatch title="Changes between heads" patch={data.incremental} />
-                  )}
+                  {data.incremental !== null &&
+                    (data.incremental ? (
+                      <SavedPatch title="Changes between heads" patch={data.incremental} />
+                    ) : (
+                      <p>No text changes between these revisions.</p>
+                    ))}
                   {!change ? (
-                    <SavedPatch
-                      title={file?.reviewed ? 'Current PR diff' : 'Previously unread PR diff'}
-                      patch={data.after}
-                    />
+                    <p>
+                      {comparison.partial
+                        ? 'No change recorded for this file in the available comparison.'
+                        : 'No changes to this file since the checkpoint.'}
+                    </p>
                   ) : data.incremental === null || comparison.baseChanged ? (
                     <>
+                      {data.incremental === null && (
+                        <p>
+                          The direct comparison is unavailable. Showing changes in the saved PR
+                          diffs.
+                        </p>
+                      )}
                       <SavedPatch
                         title="Changed hunks at checkpoint"
                         patch={changedHunks(data.before, data.after)}
@@ -181,6 +222,7 @@ export function RevisionChanges({
                   ) : null}
                 </>
               )}
+              {fileConversations}
             </div>
             {!file && change && (
               <div className="file-actions">

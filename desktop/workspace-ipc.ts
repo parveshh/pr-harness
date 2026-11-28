@@ -332,6 +332,7 @@ export function registerWorkspace(
       return localReviewSource(store.local, key.url, pinnedRevision(view)).fullFile(
         file,
         shutdown.signal,
+        file.kind === 'text' ? store.reader.patch(key) : undefined,
       );
     try {
       return await pinnedSource(join(userData, 'pr-source'), key.url).fullFile(

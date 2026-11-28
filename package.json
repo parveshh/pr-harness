@@ -1,14 +1,14 @@
 {
   "name": "local-reviewer",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22.21.1"
   },
   "scripts": {
-    "dev": "electron-vite dev --watch",
-    "start": "electron .",
+    "dev": "node --import ./scripts/local-electron.mjs ./node_modules/electron-vite/bin/electron-vite.js dev --watch",
+    "start": "node --import ./scripts/local-electron.mjs ./node_modules/electron-vite/bin/electron-vite.js preview --skipBuild --",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write \"**/*.{ts,tsx,mjs,css,html,json,yml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,mjs,css,html,json,yml}\"",

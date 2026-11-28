@@ -272,10 +272,10 @@ await test('opening a newer schema preserves its version and contents', (t) => {
   const db = new DatabaseSync(path);
   t.after(() => db.close());
   db.exec(
-    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=28",
+    "CREATE TABLE future (value TEXT); INSERT INTO future VALUES ('preserve'); PRAGMA user_version=30",
   );
   assert.throws(() => openStore(path), /newer Local Reviewer/);
-  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 28);
+  assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 30);
   assert.equal(db.prepare('SELECT value FROM future').get()?.value, 'preserve');
 });
 
@@ -329,7 +329,7 @@ await test('upgrading a version 26 workspace turns single-key shortcuts on and k
   assert.equal(reopened.getSingleKeyShortcuts(), true);
   const raw = new DatabaseSync(path);
   t.after(() => raw.close());
-  assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 27);
+  assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 29);
 });
 
 await test('an unknown saved palette opens with Ink and can be replaced in Settings', (t) => {

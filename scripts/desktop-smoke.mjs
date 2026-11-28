@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
-import electron from 'electron';
+import { localElectron } from './local-electron.mjs';
 import { _electron as launcher } from 'playwright-core';
 import { largePr } from '../fixtures/github/large-pr.mjs';
 
@@ -28,7 +28,7 @@ const switchedAccount = join(directory, 'switched-account');
 const revisionFixture = join(directory, 'revision.json');
 const releaseAnswer = join(directory, 'release-answer');
 // A second pull request with a hunk and a file list long enough to be windowed.
-const largeShape = { files: 400, addedLines: 3000, modifiedRows: 1500 };
+const largeShape = { files: 400, addedLines: 103000, modifiedRows: 1500 };
 const env = { ...process.env };
 if (!live) {
   // Exercise the same gh subprocess contract as production using isolated, repeatable responses.
@@ -175,7 +175,7 @@ if (!live) {
       // Review threads and whether each is resolved.
       'const resolvedFile = ' + JSON.stringify(join(directory, 'resolved')) + ';',
       "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('ReviewThread('))){const on=process.argv.some(a=>a.includes('mutation($thread:ID!){resolveReviewThread'));if(on)fs.writeFileSync(resolvedFile,'');else if(fs.existsSync(resolvedFile))fs.unlinkSync(resolvedFile);console.log(JSON.stringify({data:{[on?'resolveReviewThread':'unresolveReviewThread']:{thread:{isResolved:on}}}}));return;}",
-      "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('reviewThreads('))){const done=fs.existsSync(resolvedFile);console.log(JSON.stringify({data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:'PRRT_fixture56',isResolved:done,viewerCanResolve:!done,viewerCanUnresolve:done,comments:{nodes:[{databaseId:56}]}}]}}}}}));return;}",
+      "if(process.argv.includes('graphql') && process.argv.some(a=>a.includes('reviewThreads('))){const done=fs.existsSync(resolvedFile);console.log(JSON.stringify({data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:'PRRT_fixture56',isResolved:done,viewerCanResolve:!done,viewerCanUnresolve:done,comments:{nodes:[{id:'COMMENT_56'}]}},{id:'PRRT_old',isResolved:true,viewerCanResolve:false,viewerCanUnresolve:true,comments:{nodes:[{id:'COMMENT_94'}]}}]}}}}}));return;}",
       'const repliesFile = ' + JSON.stringify(repliesFile) + ';',
       'const loginRelease = ' + JSON.stringify(loginRelease) + ';',
       'const signedOut = ' + JSON.stringify(signedOut) + ';',
@@ -186,9 +186,12 @@ if (!live) {
       "if(process.argv.includes('user') && fs.existsSync(signedOut)){console.error('gh auth login');process.exit(1);}",
       'const threadFile = ' + JSON.stringify(join(directory, 'discussion-replies.jsonl')) + ';',
       "const prior = fs.existsSync(threadFile) ? fs.readFileSync(threadFile,'utf8').trim().split('\\n').map(JSON.parse) : [];",
-      "const rootComment = {id:56,user:{login:'alice'},created_at:'2025-01-01T00:00:00Z',body:'Where is the caller tested?',path:'src/reader.ts',line:1,side:'RIGHT'};",
+      "const rootComment = {id:56,node_id:'COMMENT_56',user:{login:'alice'},created_at:'2025-01-01T00:00:00Z',body:'Where is the caller tested?',path:'src/reader.ts',line:1,side:'RIGHT'};",
       "if(process.argv.some(a=>a.endsWith('/comments/56/replies') || a.endsWith('/issues/12/comments')) && process.argv.includes('POST')) {const inline=process.argv.some(a=>a.endsWith('/replies'));const row={...rootComment,id:1000+prior.length, user:{login:'fixture-reviewer'},body:JSON.parse(fs.readFileSync(0,'utf8')).body,in_reply_to_id:inline?56:null};if(row.body.startsWith('Undelivered fixture.'))process.exit(1);fs.appendFileSync(threadFile,JSON.stringify(row)+'\\n');if(row.body.startsWith('Lost receipt fixture.'))process.exit(1);if(row.body.startsWith('Refresh during reply.')){setTimeout(()=>console.log(JSON.stringify(row)),800);return;}console.log(JSON.stringify(row));return;}",
-      "if(process.argv.some(a=>a.includes('/pulls/12/comments?per_page='))) {console.log(JSON.stringify([rootComment,{...rootComment,id:91,path:'partial.ts',body:'Earlier omitted line?',line:12},{...rootComment,id:92,path:'partial.ts',body:'Later visible line?',line:850,side:'LEFT'},...prior.filter(r=>r.in_reply_to_id)]));return;}",
+      "if(endpoint.includes('/pulls/12/comments?') && fs.existsSync(" +
+        JSON.stringify(join(directory, 'inline-unavailable')) +
+        '))process.exit(1);',
+      "if(process.argv.some(a=>a.includes('/pulls/12/comments?per_page='))) {console.log(JSON.stringify([rootComment,{...rootComment,id:94,node_id:'COMMENT_94',line:null,original_line:2,body:'Fixed before the latest push.'},{...rootComment,id:91,node_id:'COMMENT_91',path:'partial.ts',body:'Earlier omitted line?',line:12},{...rootComment,id:92,node_id:'COMMENT_92',path:'partial.ts',body:'Later visible line?',line:850,side:'LEFT'},...prior.filter(r=>r.in_reply_to_id)]));return;}",
       "if(process.argv.some(a=>a.includes('/issues/12/comments?'))) {console.log(JSON.stringify([{...rootComment,id:61,path:null,body:'Is this ready to ship?'},...prior.filter(r=>!r.in_reply_to_id)].map(({path,...row})=>row)));return;}",
       "if(process.argv.some(arg=>arg.includes('/comments?'))){console.log(fs.existsSync(repliesFile)?fs.readFileSync(repliesFile,'utf8'):'[]');return;}",
       "if(process.argv.includes('auth') && process.argv.includes('token')){if(fs.existsSync(signedOut))process.exit(1);console.log('fixture-only');return;}",
@@ -221,7 +224,7 @@ const url = live
   : 'https://github.com/example/project/pull/12';
 const launch = () =>
   launcher.launch({
-    executablePath: electron,
+    executablePath: localElectron,
     chromiumSandbox: true,
     env,
     args: ['--user-data-dir=' + profile, '.'],
@@ -280,10 +283,26 @@ const paneOrder = (page) =>
 const changedFiles = (page) => page.getByRole('navigation', { name: 'Changed files' });
 const ask = (page) => page.getByRole('button', { name: 'Ask about PR', exact: true }).click();
 const back = (page) => page.getByRole('button', { name: 'Pull requests', exact: true }).click();
+let savedSidebarWidth;
 try {
   const app = await launch();
   try {
     const page = await app.firstWindow();
+    if (process.platform === 'darwin') {
+      const plist = resolve(localElectron, '../../Info.plist');
+      for (const key of ['CFBundleName', 'CFBundleDisplayName']) {
+        assert.equal(
+          execFileSync('/usr/bin/plutil', ['-extract', key, 'raw', plist], {
+            encoding: 'utf8',
+          }).trim(),
+          'Local Reviewer',
+        );
+      }
+      assert.equal(
+        await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items[0]?.label),
+        'Local Reviewer',
+      );
+    }
     page.setDefaultTimeout(15000);
     await resize(app, page, 1380, 720);
     await page.getByRole('heading', { name: 'Add your first repository' }).waitFor();
@@ -458,16 +477,74 @@ try {
     await repositories.waitFor();
     assert.equal(await page.getByRole('region', { name: 'Review chat' }).count(), 0);
     if (!live) {
-      const trigger = page.getByRole('button', { name: 'Add repository', exact: true });
+      const trigger = page.getByRole('button', { name: 'Repository actions' });
       await trigger.focus();
       await trigger.press('Enter');
+      assert.equal(
+        await page.getByRole('menuitem', { name: 'Remove repository' }).isDisabled(),
+        true,
+      );
+      const addRepository = page.getByRole('menuitem', { name: 'Add repository' });
+      await page.keyboard.press('Home');
+      await addRepository.and(page.locator(':focus-visible')).waitFor();
+      assert.equal(
+        await addRepository.evaluate((item) => globalThis.getComputedStyle(item).outlineWidth),
+        '1px',
+      );
+      assert.equal(
+        await addRepository.evaluate(
+          (item) => globalThis.getComputedStyle(item, '::after').borderBottomWidth,
+        ),
+        '1px',
+      );
+      await capture(page, 'repository-menu');
+      await addRepository.press('Enter');
       const dialog = page.getByRole('dialog', { name: 'Add repository' });
+      const modal = page.locator('.repo-dialog').filter({ has: dialog });
+      await modal.waitFor();
+      assert.equal((await modal.boundingBox()).width, 544);
+      await resize(app, page, 570, 440);
+      const narrowModal = await modal.boundingBox();
+      assert.ok(narrowModal.x >= 16 && narrowModal.x + narrowModal.width <= 554);
+      await resize(app, page, 1380, 720);
+      const repoInput = dialog.getByLabel('Repository', { exact: true });
+      const validation = page.getByText('Enter owner/repository or its GitHub URL.', {
+        exact: true,
+      });
+      await repoInput.fill('invalid');
+      await dialog.getByRole('button', { name: 'Add repository' }).click();
+      await dialog.getByRole('alert').waitFor();
+      await repoInput.fill('example/project');
+      await validation.waitFor({ state: 'detached' });
+      await repoInput.fill('invalid');
+      await dialog.getByRole('button', { name: 'Add repository' }).click();
+      await validation.waitFor();
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await validation.waitFor({ state: 'detached' });
+      await trigger.click();
+      await page.getByRole('menuitem', { name: 'Add repository' }).click();
       await dialog.getByLabel('Repository', { exact: true }).fill('not-a-repo');
       await dialog.getByRole('button', { name: 'Add repository' }).click();
       await dialog.getByRole('alert').waitFor();
       await page.keyboard.press('Escape');
       await dialog.waitFor({ state: 'hidden' });
       await trigger.and(page.locator(':focus')).waitFor();
+      await validation.waitFor({ state: 'detached' });
+      const open = page.getByRole('button', { name: 'Open review', exact: true });
+      await open.hover();
+      await page.waitForFunction(() => {
+        const button = globalThis.document.querySelector('.open-review');
+        const style = globalThis.getComputedStyle(button);
+        const sample = globalThis.document.createElement('span');
+        sample.style.backgroundColor = 'var(--hover)';
+        sample.style.color = 'var(--ink-bright)';
+        button.append(sample);
+        const expected = globalThis.getComputedStyle(sample);
+        const matches =
+          style.backgroundColor === expected.backgroundColor && style.color === expected.color;
+        sample.remove();
+        return matches;
+      });
     }
     if (!live)
       await page.evaluate(() =>
@@ -533,7 +610,8 @@ try {
         await page.locator('.shell').evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
       );
       await resize(app, page, 1380, 720);
-      await page.getByRole('button', { name: 'Add repository', exact: true }).click();
+      await page.getByRole('button', { name: 'Repository actions' }).click();
+      await page.getByRole('menuitem', { name: 'Add repository' }).click();
       await page.getByLabel('Repository', { exact: true }).fill('example/project');
       await capture(page, 'add-repository');
       await page
@@ -745,7 +823,7 @@ try {
       );
       assert.equal(await page.getByRole('button', { name: 'PR discussions' }).count(), 0);
       await page.keyboard.press('Control+f');
-      const diffSearch = page.getByRole('search', { name: 'Search PR diff' });
+      const diffSearch = page.getByRole('search', { name: 'Search review diff' });
       const query = diffSearch.getByRole('searchbox', { name: 'Search changed lines' });
       const scope = diffSearch.getByLabel('Lines to search');
       const match = region.locator('.code-line mark');
@@ -799,6 +877,19 @@ try {
         await capture(page, 'repository-review');
         await resize(app, page, 1380, 720);
       }
+      const fileComments = page.getByRole('region', { name: 'File conversations' });
+      const historical = fileComments
+        .getByRole('article')
+        .filter({ hasText: 'Fixed before the latest push.' });
+      await historical.getByText('Resolved', { exact: true }).waitFor();
+      assert.equal(
+        await historical.locator('.discussion-heading').innerText(),
+        'src/reader.ts:2 · original diff\nResolved',
+      );
+      assert.equal(
+        await region.locator('.diff-content').getByText('Fixed before the latest push.').count(),
+        0,
+      );
       const discussions = page.locator('.pr-conversation');
       await page.getByRole('button', { name: 'Discussion', exact: true }).click();
       const discussionThread = page
@@ -811,8 +902,7 @@ try {
         ),
         '1',
       );
-      await page.getByRole('button', { name: 'Full file', exact: true }).click();
-      const fullFile = page.getByRole('region', { name: 'Full file with changes' });
+      const fullFile = page.getByRole('region', { name: 'File diff' });
       await fullFile.getByText('unchanged caller 12', { exact: true }).waitFor();
       await fullFile.locator('.deletion').getByText('-old line').waitFor();
       await fullFile.locator('.addition').getByText('+first change').waitFor();
@@ -820,7 +910,6 @@ try {
       await discussionThread.getByRole('textbox').fill('See the caller integration test.');
       await discussionThread.getByRole('button', { name: 'Post reply to GitHub' }).click();
       await discussionThread.getByText('See the caller integration test.').waitFor();
-      await page.getByRole('button', { name: 'Diff only', exact: true }).click();
       await discussionThread.getByText('See the caller integration test.').waitFor();
       // A review thread can be resolved on GitHub from its place in the diff, and reopened.
       await discussionThread
@@ -956,7 +1045,20 @@ try {
       await general.getByRole('button', { name: 'Reply', exact: true }).click();
       await general.getByRole('textbox').fill('Ready after CI.');
       await general.getByRole('button', { name: 'Post reply to GitHub' }).click();
-      await discussions.getByText('Ready after CI.').waitFor();
+      await discussions.locator('.discussion-message').getByText('Ready after CI.').waitFor();
+      await writeFile(join(directory, 'inline-unavailable'), '');
+      await discussions.getByRole('button', { name: 'Refresh discussions' }).click();
+      await discussions
+        .getByRole('alert')
+        .filter({ hasText: 'Could not load inline comments' })
+        .waitFor();
+      await discussionThread.getByText('See the caller integration test.').waitFor();
+      assert.equal(
+        await discussionThread.getByRole('button', { name: 'Reply', exact: true }).isDisabled(),
+        true,
+      );
+      await historical.getByText('Resolved', { exact: true }).waitFor();
+      await rm(join(directory, 'inline-unavailable'));
       await discussions.getByRole('button', { name: 'Refresh discussions' }).click();
       await discussions.getByRole('button', { name: 'Refresh discussions' }).click({ trial: true });
       await discussionThread.getByText('See the caller integration test.').waitFor();
@@ -970,13 +1072,19 @@ try {
       await discussionThread.getByRole('textbox').fill('Refresh during reply.');
       await discussionThread.getByRole('button', { name: 'Post reply to GitHub' }).click();
       await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-      await discussionThread.getByText('Refresh during reply.', { exact: true }).waitFor();
+      await discussionThread
+        .locator('.discussion-message')
+        .getByText('Refresh during reply.', { exact: true })
+        .waitFor();
       await discussionThread.getByRole('button', { name: 'Reply', exact: true }).click();
       await discussionThread.getByRole('textbox').fill('Lost receipt fixture.');
       await discussionThread.getByRole('button', { name: 'Post reply to GitHub' }).click();
       await discussions.getByRole('alert').filter({ hasText: 'did not confirm' }).waitFor();
       await discussions.getByRole('button', { name: 'Refresh discussions' }).click();
-      await discussionThread.getByText('Lost receipt fixture.', { exact: true }).waitFor();
+      await discussionThread
+        .locator('.discussion-message')
+        .getByText('Lost receipt fixture.', { exact: true })
+        .waitFor();
       assert.equal(await discussionThread.getByText(/Delivery is unconfirmed/).count(), 0);
       await discussionThread.getByRole('button', { name: 'Reply', exact: true }).click();
       assert.equal(await discussionThread.getByRole('textbox').inputValue(), '');
@@ -1024,19 +1132,16 @@ try {
         .locator('.published-threads [role="article"]')
         .filter({ hasText: 'Later visible line?' });
       await oldQuestion.waitFor();
-      await discussions.getByText('Earlier omitted line?').waitFor();
+      await region.getByText('Earlier omitted line?').waitFor();
       assert.equal(await page.getByText('Later visible line?', { exact: true }).count(), 1);
       assert.equal(
         await oldQuestion.evaluate((el) => el.parentElement.previousElementSibling.dataset.oldLine),
         '850',
       );
       await page.getByRole('button', { name: 'Select old line 850', exact: true }).click();
-      await page.getByRole('button', { name: 'Full file', exact: true }).click();
-      await page.getByText('Page 3 of 3', { exact: true }).waitFor();
+      await region.getByText('fixture row 860', { exact: true }).waitFor({ state: 'attached' });
       await oldQuestion.waitFor();
-      await page.getByRole('button', { name: 'Previous page' }).click();
-      await discussions.getByText('Later visible line?').waitFor();
-      await page.getByRole('button', { name: 'Diff only', exact: true }).click();
+      await region.getByText('+updated early', { exact: true }).waitFor({ state: 'attached' });
       await page.getByRole('button', { name: 'Changes', exact: true }).click();
       await page.getByRole('button', { name: 'README.md, added', exact: true }).click();
       const chat = page.getByRole('region', { name: 'Review chat' });
@@ -1127,7 +1232,14 @@ try {
       const railDivider = page.getByRole('separator', { name: 'Resize repository sidebar' });
       const sidebarWidth = await sidebar.evaluate((el) => el.clientWidth);
       await railDivider.press('ArrowRight');
-      assert.ok((await sidebar.evaluate((el) => el.clientWidth)) > sidebarWidth);
+      const adjustedWidth = await sidebar.evaluate((el) => el.clientWidth);
+      assert.ok(adjustedWidth > sidebarWidth);
+      const windowWidth = await page.evaluate(() => globalThis.innerWidth);
+      await resize(app, page, windowWidth + 300, 720);
+      const widerWidth = await sidebar.evaluate((el) => el.clientWidth);
+      assert.ok(Math.abs(widerWidth - (adjustedWidth * (windowWidth + 300)) / windowWidth) < 2);
+      await resize(app, page, windowWidth, 720);
+      assert.ok(Math.abs((await sidebar.evaluate((el) => el.clientWidth)) - adjustedWidth) <= 1);
       await railDivider.press('ArrowLeft');
       const chatDivider = page.getByRole('separator', { name: 'Resize diff and chat' });
       const chatBefore = await chat.evaluate((el) => el.clientWidth);
@@ -1445,7 +1557,7 @@ try {
         .click();
       await page.getByLabel('Review summary').fill('Grouped review summary');
       await page.getByRole('button', { name: 'Save and close' }).click();
-      // j moves to the next hunk, as Next hunk does, and focuses it for screen readers.
+      // j moves to the next hunk, as Next change does, and focuses it for screen readers.
       await page.getByRole('dialog', { name: 'Review drafts' }).waitFor({ state: 'detached' });
       await page.keyboard.press('j');
       await region.getByText('+new line 60', { exact: true }).waitFor({ state: 'attached' });
@@ -1477,7 +1589,11 @@ try {
       await figure.getByText('Original', { exact: true }).waitFor();
       await figure.getByText('Replacement', { exact: true }).waitFor();
       await region.getByText('Prefer this.', { exact: true }).waitFor();
-      await region.getByRole('button', { name: 'Discard', exact: true }).click();
+      await region
+        .locator('.inline-note')
+        .filter({ hasText: 'Prefer this.' })
+        .getByRole('button', { name: 'Discard', exact: true })
+        .click();
       await figure.waitFor({ state: 'detached' });
       await page.getByRole('button', { name: 'Comment on lines 40–42' }).click();
       await inline.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -1486,7 +1602,8 @@ try {
         [42, 40],
       ]) {
         const icon = region.getByRole('button', { name: 'Draft on new line ' + from, exact: true });
-        await icon.scrollIntoViewIfNeeded();
+        // Keep both ends of the short drag away from the diff's auto-scroll edges.
+        await icon.evaluate((el) => el.scrollIntoView({ block: 'center', inline: 'nearest' }));
         const start = await icon.boundingBox();
         const end = await region
           .getByRole('button', { name: 'Draft on new line ' + to, exact: true })
@@ -1565,6 +1682,18 @@ try {
       );
       await chooseLayout(page, 'Chat → Diff → Files');
       assert.equal(await region.evaluate((el) => el.scrollTop), 160, 'checkpoint after reordering');
+      // Set a custom width in a differently sized window just before quitting.
+      await resize(app, page, 1220, 720);
+      const divider = page.getByRole('separator', { name: 'Resize repository sidebar' });
+      const handle = await divider.boundingBox();
+      const sidebar = page.locator('#workspace-sidebar');
+      const beforeDrag = (await sidebar.boundingBox()).width;
+      await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(handle.x + handle.width / 2 + 28, handle.y + handle.height / 2);
+      await page.mouse.up();
+      savedSidebarWidth = (await sidebar.boundingBox()).width;
+      assert.ok(savedSidebarWidth > beforeDrag + 20);
     }
   } finally {
     await app.close();
@@ -1574,6 +1703,19 @@ try {
   try {
     const page = await reopened.firstWindow();
     page.setDefaultTimeout(15000);
+    if (!live) {
+      const sidebar = page.locator('#workspace-sidebar');
+      await sidebar.waitFor();
+      const available =
+        (await page.locator('#workspace-layout').boundingBox()).width -
+        (await page.getByRole('separator', { name: 'Resize repository sidebar' }).boundingBox())
+          .width;
+      const expected = Math.min(savedSidebarWidth, available * 0.36);
+      assert.ok(
+        Math.abs((await sidebar.boundingBox()).width - expected) <= 1,
+        'repository pane width after relaunch',
+      );
+    }
     await resize(reopened, page, 1380, 720);
     if (!live) {
       await changedFiles(page).waitFor();
@@ -1635,7 +1777,7 @@ try {
         await page.getByRole('region', { name: 'Review chat' }).locator('.exchange').count(),
         5,
       );
-      await page.getByText('Hunk 2 of 2').waitFor();
+      await page.getByText('Change 2 of 2').waitFor();
       await page
         .getByRole('button', { name: 'Could concurrent retries bypass this guard?', exact: true })
         .waitFor();
@@ -1706,7 +1848,7 @@ try {
       await page.evaluate(() => globalThis.dispatchEvent(new globalThis.Event('focus')));
       await page.getByRole('button', { name: 'Open update' }).waitFor();
       await page.getByRole('button', { name: 'Reviewed ✓' }).waitFor();
-      await page.getByText('Hunk 2 of 2').waitFor();
+      await page.getByText('Change 2 of 2').waitFor();
       const fullChat = page.getByRole('region', { name: 'Review chat' });
       const fullChatWidth = await fullChat.evaluate((el) => el.clientWidth);
       await page.getByRole('button', { name: 'Open update' }).click();
@@ -1943,7 +2085,7 @@ try {
       const reminder = page.getByRole('region', { name: 'Review lessons for these changes' });
       await reminder.getByText('Check the callers before changing this behaviour.').waitFor();
       await reminder.getByRole('button', { name: 'Source discussion · PR #12' }).waitFor();
-      await page.getByRole('button', { name: 'Next hunk' }).click();
+      await page.getByRole('button', { name: 'Next change' }).click();
       assert.equal(await reminder.count(), 0);
       await page.getByRole('button', { name: 'Overview', exact: true }).click();
       const library = page.getByRole('region', { name: 'Repository review lessons' });
@@ -1983,14 +2125,29 @@ try {
         },
         join(directory, 'source'),
       );
-      await page.getByRole('button', { name: 'Open review', exact: true }).click();
+      const actions = page.getByRole('button', { name: 'Repository actions' });
+      await actions.click();
+      await page.getByRole('menuitem', { name: 'Add local folder' }).click();
+      const localFolders = page.getByRole('navigation', { name: 'Local folders' });
+      const folder = localFolders.getByRole('button', { name: /source$/ });
+      await page.getByRole('heading', { name: 'Local reviews', exact: true }).waitFor();
+      await folder.waitFor();
+      await page.reload();
+      await folder.click();
       await page.getByRole('button', { name: 'Review local branch', exact: true }).click();
       const localDialog = page.getByRole('dialog', { name: 'Review local branch' });
       await localDialog.getByLabel('Base branch').selectOption({ label: 'pair-21' });
       await localDialog.getByRole('button', { name: 'Start review' }).click();
       await changedFiles(page).waitFor();
-      await page.getByRole('button', { name: 'Ask about branch' }).waitFor();
-      assert.equal(await page.getByRole('region', { name: 'Review chat' }).count(), 0);
+      const branchChat = page.getByRole('region', { name: 'Review chat' });
+      await branchChat.getByLabel('Ask about the diff').fill('Check fresh conversation context');
+      await branchChat.getByRole('button', { name: 'Send', exact: true }).click();
+      await branchChat.getByText('Prior exchanges received: 0', { exact: true }).waitFor();
+      await branchChat.getByRole('button', { name: 'Close review chat' }).click();
+      const askBranch = page.getByRole('button', { name: 'Ask about branch' });
+      await askBranch.click();
+      await branchChat.getByText('Prior exchanges received: 0', { exact: true }).waitFor();
+      await branchChat.getByRole('button', { name: 'Close review chat' }).click();
       // Single-key shortcuts work in a local review: j reports the last hunk, v marks the file
       // reviewed, c opens the comment editor, and Esc closes it and returns focus to the hunk.
       const shortcutDiff = page.getByRole('region', { name: 'File diff' });
@@ -2046,6 +2203,101 @@ try {
         .getByRole('region', { name: 'Saved reviews' })
         .getByRole('button', { name: /pair-21/ })
         .waitFor();
+      await localFolders.getByRole('button', { name: /pair-21/ }).waitFor();
+      assert.equal(
+        await page
+          .getByRole('navigation', { name: 'Repositories', exact: true })
+          .getByRole('button', { name: /pair-21/ })
+          .count(),
+        0,
+      );
+      // A dirty local review shows both changes and the intervening base lines together.
+      const callersFile = join(directory, 'source', 'callers.txt');
+      const originalCallers = await readFile(callersFile, 'utf8');
+      const pinnedCallers = originalCallers
+        .replace('fixture row 11\n', 'earlier local edit\n')
+        .replace('fixture row 51\n', 'later local edit\n');
+      await writeFile(callersFile, pinnedCallers);
+      const largeLocalFile = join(directory, 'source', 'zz-large-local.txt');
+      await writeFile(largeLocalFile, 'old first line\n' + ('x'.repeat(1023) + '\n').repeat(1100));
+      await page.getByRole('button', { name: 'Review local branch', exact: true }).click();
+      await localDialog.getByLabel('Base branch').selectOption({ label: 'pair-22' });
+      await localDialog.getByRole('button', { name: 'Start review' }).click();
+      const localTree = changedFiles(page);
+      const callersRow = localTree.getByRole('button', { name: /^callers\.txt,/ });
+      const largeRow = localTree.getByRole('button', { name: /^zz-large-local\.txt,/ });
+      const localDiff = page.getByRole('region', { name: 'File diff' });
+      await callersRow.click();
+      await localDiff
+        .getByText('+earlier local edit', { exact: true })
+        .waitFor({ state: 'attached' });
+      await localDiff
+        .getByText('+later local edit', { exact: true })
+        .waitFor({ state: 'attached' });
+      await localDiff.getByText('fixture row 30', { exact: true }).waitFor({ state: 'attached' });
+      await page.keyboard.press('ControlOrMeta+f');
+      const localSearch = page.getByRole('search', { name: 'Search review diff' });
+      await localSearch.getByLabel('Search changed lines').fill('later local edit');
+      await localDiff.locator('mark').filter({ hasText: 'later local edit' }).waitFor();
+      await page.keyboard.press('Escape');
+      // Model a volume that misses notifications. Manual retry still refreshes a partial patch.
+      await reopened.evaluate(({ BrowserWindow }) => {
+        const web = BrowserWindow.getAllWindows()[0].webContents;
+        const send = web.send;
+        web.send = function (channel, ...args) {
+          if (channel !== 'reader:local-changed') return send.call(this, channel, ...args);
+        };
+        globalThis.restoreLocalNotifications = () => {
+          web.send = send;
+        };
+      });
+      await writeFile(largeLocalFile, 'manually refreshed line\n');
+      await largeRow.click();
+      await page.getByRole('button', { name: 'Refresh and retry file diff' }).click();
+      await localDiff.getByText('+manually refreshed line', { exact: true }).waitFor();
+      await reopened.evaluate(() => globalThis.restoreLocalNotifications());
+      await callersRow.click();
+      // Hold a draft open while another process edits two files. The staged revision
+      // waits for the draft, then opens on the same file without an update or retry click.
+      await localDiff.getByRole('button', { name: 'Draft on new line 11', exact: true }).click();
+      const localEditor = localDiff.getByRole('form', { name: 'Draft line comment' });
+      const localComment = localEditor.getByLabel('Comment', { exact: true });
+      await localComment.fill('Keep this local draft');
+      await writeFile(callersFile, pinnedCallers.replace('earlier local edit', 'newer local edit'));
+      await writeFile(largeLocalFile, 'new first line\n');
+      await page.getByText('Local changes available', { exact: true }).waitFor();
+      assert.equal(await localComment.inputValue(), 'Keep this local draft');
+      await localDiff
+        .getByText('+earlier local edit', { exact: true })
+        .waitFor({ state: 'attached' });
+      await localEditor.getByRole('button', { name: 'Save draft', exact: true }).click();
+      const refreshed = page.getByText('Diff refreshed', { exact: true });
+      await refreshed.waitFor();
+      await localDiff
+        .getByText('+newer local edit', { exact: true })
+        .waitFor({ state: 'attached' });
+      await page.getByRole('heading', { name: 'callers.txt', exact: true }).waitFor();
+      await largeRow.click();
+      await localDiff.getByText('+new first line', { exact: true }).waitFor();
+      // Editors commonly save by renaming a temporary file over the original.
+      await page.keyboard.press('ControlOrMeta+f');
+      await localSearch.getByLabel('Lines to search').selectOption('added');
+      await localSearch.getByLabel('Search changed lines').fill('first line');
+      await localDiff.locator('mark').filter({ hasText: 'first line' }).waitFor();
+      await writeFile(largeLocalFile + '.saving', 'atomic save with first line\n');
+      await rename(largeLocalFile + '.saving', largeLocalFile);
+      await localDiff
+        .locator('.diff-line')
+        .filter({ hasText: 'atomic save with first line' })
+        .locator('mark')
+        .waitFor();
+      assert.equal(await localSearch.getByLabel('Search changed lines').inputValue(), 'first line');
+      assert.equal(await localSearch.getByLabel('Lines to search').inputValue(), 'added');
+      await page.keyboard.press('Escape');
+      await refreshed.waitFor();
+      await page.getByRole('heading', { name: 'zz-large-local.txt', exact: true }).waitFor();
+      await refreshed.waitFor({ state: 'hidden' });
+      await page.getByRole('button', { name: 'Local reviews', exact: true }).click();
       const otherPr = 'https://github.com/another/project/pull/88';
       await page.getByRole('button', { name: 'Open review', exact: true }).click();
       await page.getByLabel('GitHub pull request URL').fill(otherPr);
@@ -2250,7 +2502,7 @@ try {
       assert.equal(await deepNote.count(), 1, 'a row with a draft stays rendered');
       assert.equal(await newLine(lastSettled).count(), 0);
       await page.keyboard.press('ControlOrMeta+f');
-      const largeSearch = page.getByRole('search', { name: 'Search PR diff' });
+      const largeSearch = page.getByRole('search', { name: 'Search review diff' });
       await largeSearch
         .getByLabel('Search changed lines')
         .fill('settled(' + (lastSettled - 1) + ')');
@@ -2284,6 +2536,7 @@ try {
       // Dragging the comment icon past the edge of the window scrolls the hunk and keeps the
       // gesture, although the row it started on is no longer near the viewport.
       await largeDiff.evaluate((el, top) => (el.scrollTop = top), deepScroll);
+      await scrollSettled();
       const dragFrom = deepLine + 1;
       const dragIcon = largeDiff.getByRole('button', {
         name: 'Draft on new line ' + dragFrom,
@@ -2291,10 +2544,10 @@ try {
       });
       await dragIcon.waitFor();
       assert.ok(await inView(dragIcon));
+      await dragIcon.hover();
       const dragStart = await dragIcon.boundingBox();
       const paneBox = await largeDiff.boundingBox();
       assert.ok(dragStart && paneBox);
-      await page.mouse.move(dragStart.x + dragStart.width / 2, dragStart.y + dragStart.height / 2);
       await page.mouse.down();
       await page.mouse.move(dragStart.x + dragStart.width / 2, paneBox.y + paneBox.height - 10, {
         steps: 5,
@@ -2319,15 +2572,16 @@ try {
       await deepEditor.getByText(new RegExp(dragFrom + '[–-]' + dragEnd.line)).waitFor();
       await deepEditor.getByRole('button', { name: 'Cancel', exact: true }).click();
       // The same upwards: the window leaves the starting row below it.
+      await scrollSettled();
       const upFrom = (await (await middleLine()).jsonValue()).line;
       const upIcon = largeDiff.getByRole('button', {
         name: 'Draft on new line ' + upFrom,
         exact: true,
       });
+      await upIcon.hover();
       const upStart = await upIcon.boundingBox();
       const upScroll = await largeDiff.evaluate((el) => el.scrollTop);
       assert.ok(upStart);
-      await page.mouse.move(upStart.x + upStart.width / 2, upStart.y + upStart.height / 2);
       await page.mouse.down();
       await page.mouse.move(upStart.x + upStart.width / 2, paneBox.y + 10, { steps: 5 });
       await page.waitForFunction(
@@ -2357,7 +2611,23 @@ try {
       await page.keyboard.press('k');
       await page.getByRole('heading', { name: largePr.addedPath, exact: true }).waitFor();
       await largeDiff.and(page.locator(':focus')).waitFor();
-      await largeDiff.getByRole('list', { name: largeShape.addedLines + ' diff lines' }).waitFor();
+      await page.getByText('Page 1 of 2', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Next page', exact: true }).click();
+      await largeDiff.getByRole('list', { name: '3000 diff lines' }).waitFor();
+      await page.keyboard.press('c');
+      await largeDiff.getByRole('form', { name: 'Draft line comment' }).waitFor();
+      await page.getByText('Page 1 of 2', { exact: true }).waitFor();
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('ControlOrMeta+f');
+      await largeSearch.getByLabel('Search changed lines').fill('route100001 =');
+      await newLine(100001).locator('mark').waitFor();
+      await page.getByText('Page 2 of 2', { exact: true }).waitFor();
+      await page.keyboard.press('Escape');
+      await largeSearch.waitFor({ state: 'detached' });
+      await page.waitForFunction(async (url) => {
+        const view = await globalThis.reviewer.cachedReview(url);
+        return view.files.find((file) => file.path === view.selected)?.scroll >= 100_000_000;
+      }, largePr.url);
       assert.ok((await renderedLines.count()) < 200);
       // The reading position in a windowed hunk is restored when the review is reopened,
       // here at the very end of the hunk.
@@ -2396,6 +2666,16 @@ try {
       await page.keyboard.press('Escape');
       await back(page);
 
+      await actions.click();
+      await page.getByRole('menuitem', { name: 'Remove repository' }).click();
+      const removal = page.getByRole('dialog', { name: 'Remove repository' });
+      await removal.getByLabel('Repository', { exact: true }).selectOption('example/project');
+      await removal.getByRole('button', { name: 'Remove repository' }).click();
+      await removal.waitFor({ state: 'hidden' });
+      assert.equal(
+        await page.getByRole('button', { name: 'Manage authors for example/project' }).count(),
+        0,
+      );
       // Saved reviews remain usable when repository monitoring is unavailable at startup.
       await reopened.evaluate(({ ipcMain }) => {
         ipcMain.removeHandler('repos:list');

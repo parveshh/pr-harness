@@ -1,11 +1,51 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { z } from 'zod';
-import type { ReaderView, ReviewMeta } from '../../shared/reader.js';
+import type { ReviewMeta } from '../../shared/reader.js';
 import type { Discussions, DiscussionThread } from '../../shared/discussions.js';
 import { readableError } from '../../shared/assistant.js';
 import { ChatMarkdown } from './components/ChatMarkdown.js';
 
 const keyOf = (thread: DiscussionThread) => thread.kind + '-' + thread.id;
+
+const sectionForKind = {
+  inline: 'inline comments',
+  review: 'review summaries',
+  conversation: 'PR conversation',
+} as const;
+
+function mergePartialRead(previous: Discussions | null, fresh: Discussions): Discussions {
+  const missing = fresh.unavailable;
+  const base = fresh.anchorRevision;
+  const prior = previous?.anchorRevision;
+  if (
+    !missing?.length ||
+    !previous ||
+    previous.account !== fresh.account ||
+    !base ||
+    !prior ||
+    base.head !== prior.head ||
+    base.base !== prior.base ||
+    base.baseBranch !== prior.baseBranch
+  )
+    return fresh;
+  const remaining = new Map(previous.threads.map((thread) => [keyOf(thread), thread]));
+  const threads = fresh.threads.map((thread) => {
+    const key = keyOf(thread);
+    const old = remaining.get(key);
+    remaining.delete(key);
+    if (!old) return thread;
+    const resolution =
+      thread.resolution ?? (missing.includes('thread status') ? old.resolution : null);
+    if (!missing.includes(sectionForKind[thread.kind])) return { ...thread, resolution };
+    const messages = new Map(old.messages.map((m) => [m.id, m]));
+    for (const m of thread.messages) messages.set(m.id, m);
+    return { ...thread, resolution, messages: [...messages.values()].sort((a, b) => a.id - b.id) };
+  });
+  for (const old of remaining.values()) {
+    if (missing.includes(sectionForKind[old.kind])) threads.push(old);
+  }
+  return { ...fresh, threads };
+}
 
 const pendingReplies = z.record(z.string(), z.object({ token: z.uuid(), body: z.string() }));
 type PendingReplies = z.infer<typeof pendingReplies>;
@@ -49,6 +89,7 @@ export function usePrDiscussions(
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<PendingReplies>({});
   const [needsRefresh, setNeedsRefresh] = useState(false);
+  const [trackingUnavailable, setTrackingUnavailable] = useState(false);
   // The thread being resolved or reopened, and the last failure to do so.
   const [resolving, setResolving] = useState('');
   const [resolveError, setResolveError] = useState<{ key: string; message: string } | null>(null);
@@ -75,7 +116,12 @@ export function usePrDiscussions(
       .discussions(url)
       .then((result) => {
         if (current) {
-          setLoaded({ epoch, value: result });
+          setLoaded((prev) => ({
+            epoch,
+            value: mergePartialRead(prev?.epoch === epoch ? prev.value : null, result),
+          }));
+          setError('');
+          setTrackingUnavailable(false);
           let saved: PendingReplies;
           try {
             saved = pendingReplies.parse(
@@ -83,6 +129,7 @@ export function usePrDiscussions(
             );
           } catch {
             setNeedsRefresh(true);
+            setTrackingUnavailable(true);
             setActive('');
             setDrafts({});
             setPending({});
@@ -128,7 +175,11 @@ export function usePrDiscussions(
         }
       })
       .catch((e: unknown) => {
-        if (current) setError(readableError(e));
+        if (current) {
+          // A failed read may mean the active GitHub account or its access changed.
+          setLoaded(null);
+          setError(readableError(e));
+        }
       })
       .finally(() => {
         if (current) setLoading(false);
@@ -223,7 +274,6 @@ export function usePrDiscussions(
       }
       setError(reason);
       setNeedsRefresh(true);
-      setLoaded(null);
     } finally {
       setPosting(false);
     }
@@ -277,7 +327,6 @@ export function usePrDiscussions(
   const reload = useCallback(() => {
     version.current++;
     setLoading(true);
-    setLoaded(null);
     setError('');
     setRefresh((n) => n + 1);
   }, []);
@@ -285,7 +334,12 @@ export function usePrDiscussions(
     if (!data) return null;
     const key = keyOf(thread);
     const resolution = thread.resolution ?? null;
-    const idle = !resolving && !posting && !loading && !needsRefresh;
+    const canReply =
+      !posting &&
+      !loading &&
+      !needsRefresh &&
+      !data.unavailable?.includes(sectionForKind[thread.kind]);
+    const idle = !resolving && canReply && !data.unavailable?.includes('thread status');
     return (
       <section
         role="article"
@@ -373,10 +427,7 @@ export function usePrDiscussions(
               >
                 Cancel
               </button>
-              <button
-                type="submit"
-                disabled={posting || !!resolving || loading || needsRefresh || !drafts[key]?.trim()}
-              >
+              <button type="submit" disabled={!canReply || !!resolving || !drafts[key]?.trim()}>
                 {pending[key] ? 'Retry unconfirmed reply' : 'Post reply to GitHub'}
               </button>
             </div>
@@ -386,7 +437,7 @@ export function usePrDiscussions(
             <button
               type="button"
               className="secondary"
-              disabled={posting || loading || needsRefresh}
+              disabled={!canReply}
               ref={(node) => {
                 if (node) replyButtons.current.set(key, node);
                 else replyButtons.current.delete(key);
@@ -405,7 +456,11 @@ export function usePrDiscussions(
                 {resolving === key ? 'Resolving…' : 'Resolve conversation'}
               </button>
             )}
-            {resolution?.resolved && thread.path && lessonAction(thread)}
+            {resolution?.resolved &&
+              thread.path &&
+              !data.unavailable?.includes('inline comments') &&
+              !data.unavailable?.includes('thread status') &&
+              lessonAction(thread)}
             {resolution?.resolved && resolution.canUnresolve && (
               <button
                 type="button"
@@ -422,15 +477,15 @@ export function usePrDiscussions(
       </section>
     );
   }
-  function overview(view: ReaderView, inlineIds: ReadonlySet<number>) {
-    const files = new Map(view.files.map((f) => [f.path, f]));
+  const problem =
+    error ||
+    (data?.unavailable?.length ? 'Could not load ' + data.unavailable.join(', ') + '.' : '');
+  function overview(displayedPath: string | undefined) {
+    // The selected file owns all its threads, including ones without a visible line.
     const threads =
-      data?.threads.filter((t) => {
-        const file = t.path ? files.get(t.path) : undefined;
-        return (
-          !canAnchor(t, data, view.meta) || !file || (file.kind !== 'text' && !inlineIds.has(t.id))
-        );
-      }) ?? [];
+      data?.threads.filter(
+        (t) => t.kind !== 'inline' || !displayedPath || t.path !== displayedPath,
+      ) ?? [];
     return (
       <div className="pr-conversation" aria-label="PR conversation">
         <h2>PR conversation{threads.length ? ' · ' + threads.length : ''}</h2>
@@ -440,8 +495,8 @@ export function usePrDiscussions(
             Refresh discussions
           </button>
         </div>
-        {error && <p role="alert">{error}</p>}
-        {data && needsRefresh && (
+        {problem && <p role="alert">{problem}</p>}
+        {data && trackingUnavailable && (
           <button
             type="button"
             className="secondary"
@@ -464,12 +519,33 @@ export function usePrDiscussions(
           </button>
         )}
         {loading && <p role="status">Loading discussions…</p>}
-        {data && !loading && !threads.length && <p>No additional PR conversations.</p>}
+        {data && !loading && !problem && !threads.length && <p>No additional PR conversations.</p>}
         <div className="pr-discussions">{threads.map(renderThread)}</div>
       </div>
     );
   }
-  return { data, renderThread, overview, reload, posting, error };
+  function fileConversations(path: string | undefined, placed?: ReadonlySet<number>) {
+    const threads = data?.threads.filter(
+      (t) => t.kind === 'inline' && t.path === path && !placed?.has(t.id),
+    );
+    if (!threads?.length) return null;
+    return (
+      <section className="file-conversations" aria-label="File conversations">
+        <h3>File conversations</h3>
+        {threads.map(renderThread)}
+      </section>
+    );
+  }
+  return {
+    data,
+    renderThread,
+    fileConversations,
+    overview,
+    reload,
+    posting,
+    loading,
+    error: problem,
+  };
 }
 
 function canAnchor(thread: DiscussionThread, data: Discussions, meta: ReviewMeta) {

@@ -5,8 +5,14 @@ import { discussionMessage, discussions, resolveResult } from '../shared/discuss
 import { typography, signIn, inbox } from '../shared/workspace.js';
 import { accent, appearance } from '../shared/appearance.js';
 import { contextBridge, ipcRenderer } from 'electron';
-import { pullRequestUrl, reviewKey, reviewList, type ReviewerBridge } from '../shared/reviews.js';
-import { localBrief, localCandidate, localStarted } from '../shared/local.js';
+import {
+  localReviewKey,
+  pullRequestUrl,
+  reviewKey,
+  reviewList,
+  type ReviewerBridge,
+} from '../shared/reviews.js';
+import { localBrief, localCandidate, localFolder, localStarted } from '../shared/local.js';
 import { reviewBundle } from '../shared/publish.js';
 import { pinnedQuestion, questionEvidence } from '../shared/questions.js';
 import { changeEvidence } from '../shared/rereview.js';
@@ -160,6 +166,18 @@ const reviewer: ReviewerBridge = {
   },
   cachedReview: async (url) =>
     readerView.nullable().parse(await ipcRenderer.invoke('reader:cached', url)),
+  onLocalFilesChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      const key = localReviewKey.safeParse(input);
+      if (key.success) callback(key.data);
+    };
+    ipcRenderer.on('reader:local-changed', listener);
+    return () => {
+      ipcRenderer.removeListener('reader:local-changed', listener);
+    };
+  },
+  refreshLocalFile: async (key, incoming) =>
+    readerView.parse(await ipcRenderer.invoke('reader:refresh-local-file', { ...key, incoming })),
   refreshReview: async (url) =>
     readerView.nullable().parse(await ipcRenderer.invoke('reader:refresh', url)),
   comparisonPosition: async (url, revision, since, path) => {
@@ -190,8 +208,11 @@ const reviewer: ReviewerBridge = {
     await ipcRenderer.invoke('reader:remember', value);
   },
   listReviews: async () => reviewList.parse(await ipcRenderer.invoke('reviews:list')),
-  chooseLocalRepository: async () =>
-    localCandidate.nullable().parse(await ipcRenderer.invoke('local:choose')),
+  localFolders: async () => localFolder.array().parse(await ipcRenderer.invoke('local:folders')),
+  addLocalFolder: async () =>
+    localFolder.nullable().parse(await ipcRenderer.invoke('local:add-folder')),
+  chooseLocalRepository: async (savedPath) =>
+    localCandidate.nullable().parse(await ipcRenderer.invoke('local:choose', savedPath)),
   startLocalReview: async (id, base) =>
     localStarted.parse(await ipcRenderer.invoke('local:start', { id, base })),
   localBrief: async (url) => localBrief.parse(await ipcRenderer.invoke('local:brief', url)),

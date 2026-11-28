@@ -8,16 +8,24 @@ import {
 } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { watchLocalChanges } from './local-watch.js';
 import { openStore } from './store.js';
 import { z } from 'zod';
 import { pinQuestion, questionKey } from '../shared/questions.js';
-import { fileKey } from '../shared/reader.js';
+import { fileKey, revisionHead } from '../shared/reader.js';
 import { fetchSnapshot, compareHeads, probeRevision } from './github.js';
 import { registerWorkspace } from './workspace-ipc.js';
 import { prAlerts } from './pr-alerts.js';
 import { isLocalReview, reviewKey } from '../shared/reviews.js';
 import { registerLocalReviews } from './local-ipc.js';
-import { localReviewRevision, localReviewSnapshot } from './local-branch.js';
+import {
+  localReviewRevision,
+  localReviewSnapshot,
+  localReviewSource,
+  pinnedRevision,
+} from './local-branch.js';
+
+import { pinnedSource } from './pr-source.js';
 
 const html = join(import.meta.dirname, '../renderer/index.html');
 const appIcon = join(app.getAppPath(), 'resources', 'local-reviewer.png');
@@ -130,6 +138,30 @@ function startWorkspace() {
     app.getPath('documents'),
     shutdown.signal,
   );
+  let watched: { url: string; close: () => void } | undefined;
+  function stopWatching() {
+    watched?.close();
+    watched = undefined;
+  }
+  function watchReview(url: string) {
+    if (watched?.url === url) return;
+    stopWatching();
+    try {
+      const close = watchLocalChanges(
+        store.local.require(url).path,
+        () => {
+          if (watched?.close === close) window?.webContents.send('reader:local-changed', url);
+        },
+        () => {
+          if (watched?.close === close) stopWatching();
+        },
+      );
+      watched = { url, close };
+    } catch {
+      // Filesystem notifications may be unavailable. The periodic Git probe still runs.
+    }
+  }
+  app.on('window-all-closed', stopWatching);
   let diffSearchController: AbortController | undefined;
   let fetchController: AbortController | undefined;
   ipcMain.handle('reader:active', (event) => {
@@ -140,6 +172,7 @@ function startWorkspace() {
     verifySender(event);
     // Answers keep running for the PR they belong to while another PR is open.
     reader.select(url);
+    if (url !== watched?.url) stopWatching();
     if (typeof url === 'string') assistant.seen(url);
     diffSearchController?.abort();
     fetchController?.abort();
@@ -181,7 +214,7 @@ function startWorkspace() {
     if (url !== reader.active()) throw Error('Select this saved review before fetching.');
     return url;
   }
-  // A local branch has no head-to-head comparison, so an update compares the saved diffs.
+  // Stage the saved diff inventory. The reader loads direct local commit comparisons on demand.
   const savedDiffs = { ancestry: 'unknown' as const, partial: false, files: [] };
   async function refreshLocal(url: string, controller: AbortController) {
     const snapshot = await localReviewSnapshot(store.local, url, controller.signal);
@@ -192,7 +225,10 @@ function startWorkspace() {
     return reader.read(url);
   }
   async function refresh(url: string, controller: AbortController) {
-    if (isLocalReview(url)) return refreshLocal(url, controller);
+    if (isLocalReview(url)) {
+      watchReview(url);
+      return refreshLocal(url, controller);
+    }
     const snapshot = await fetchSnapshot(url, controller.signal);
     controller.signal.throwIfAborted();
     reader.observePullState(url, snapshot.state, snapshot.updatedAt);
@@ -219,11 +255,40 @@ function startWorkspace() {
     etags.delete(url);
     return refresh(url, nextFetch());
   });
+  ipcMain.handle('reader:refresh-local-file', async (event, input: unknown) => {
+    verifySender(event);
+    const key = fileKey.extend({ incoming: z.string().optional() }).parse(input);
+    const url = activeUrl(key.url);
+    if (!isLocalReview(url)) throw Error('Choose a local review first.');
+    function checkFile() {
+      const current = reader.read(url);
+      const file = current?.files.find((item) => item.path === key.path);
+      if (
+        !file ||
+        current?.revision !== key.revision ||
+        current.selected !== key.path ||
+        current.since
+      )
+        throw Error('Reopen the selected file before retrying.');
+      return file;
+    }
+    const selected = checkFile();
+    if (key.incoming !== undefined) {
+      const { snapshot, heads } = reader.revisions.pending(url, key.incoming);
+      fetchController?.abort();
+      return reader.install(url, snapshot, heads, selected);
+    }
+    const controller = nextFetch();
+    const snapshot = await localReviewSnapshot(store.local, url, controller.signal);
+    controller.signal.throwIfAborted();
+    return reader.install(url, snapshot, savedDiffs, checkFile());
+  });
   ipcMain.handle('reader:probe', async (event, input: unknown) => {
     verifySender(event);
     const url = activeUrl(input);
     const controller = nextFetch();
     if (isLocalReview(url)) {
+      watchReview(url);
       const revision = await localReviewRevision(store.local, url, controller.signal);
       controller.signal.throwIfAborted();
       const current = reader.read(url);
@@ -278,9 +343,36 @@ function startWorkspace() {
     reader.revisions.markAbsent(key, z.boolean().parse(value));
     return reader.read(key.url);
   });
-  ipcMain.handle('reader:evidence', (event, input: unknown) => {
+  ipcMain.handle('reader:evidence', async (event, input: unknown) => {
     verifySender(event);
-    return reader.revisions.evidence(input);
+    const key = fileKey.parse(input);
+    activeUrl(key.url);
+    const evidence = reader.revisions.evidence(key);
+    if (evidence.incremental !== null) return evidence;
+    const view = reader.read(key.url);
+    const comparison = view?.comparison;
+    if (!view || !comparison || !comparison.files.some((file) => file.path === key.path))
+      return evidence;
+    const before = revisionHead(comparison.baseline);
+    try {
+      const incremental = isLocalReview(key.url)
+        ? await localReviewSource(store.local, key.url, pinnedRevision(view)).changesBetween(
+            before,
+            key.path,
+            shutdown.signal,
+          )
+        : await pinnedSource(join(app.getPath('userData'), 'pr-source'), key.url).changesBetween(
+            before,
+            view.meta.head,
+            key.path,
+            shutdown.signal,
+          );
+      return { ...evidence, incremental };
+    } catch {
+      shutdown.signal.throwIfAborted();
+      // Missing objects and older working-tree snapshots can still be compared by saved hunks.
+      return evidence;
+    }
   });
   ipcMain.handle('appearance:sidebar-vibrancy', (event) => {
     verifySender(event);
@@ -334,6 +426,7 @@ function startWorkspace() {
     return store.save(url);
   });
   app.once('will-quit', () => {
+    stopWatching();
     assistant.close();
     shutdown.abort();
     fetchController?.abort();

@@ -103,6 +103,8 @@ export interface ReviewerBridge
   activeReview(): Promise<string | null>;
   selectReview(url: string | null): Promise<void>;
   cachedReview(url: string): Promise<ReaderView | null>;
+  onLocalFilesChanged(listener: (url: string) => void): () => void;
+  refreshLocalFile(key: FileKey, incoming?: string): Promise<ReaderView>;
   refreshReview(url: string): Promise<ReaderView | null>;
   comparisonPosition(
     url: string,

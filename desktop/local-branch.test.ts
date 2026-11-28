@@ -284,6 +284,11 @@ await test('source reads follow the pinned revision and refuse a changed working
   assert.deepEqual('lines' in page && page.lines, [{ line: 2, text: 'export const two = 23;' }]);
   // The agent keeps editing: uncommitted content no longer matches the reviewed revision.
   write(root, 'src/app.ts', 'export const one = 1;\nexport const two = 24;\n');
+  const savedPatch = fileAt(snapshot, 'src/app.ts').patch;
+  assert.equal(
+    await source.fullFile(file, signal, savedPatch),
+    '@@ -1,2 +1,2 @@\n export const one = 1;\n-export const two = 2;\n+export const two = 23;',
+  );
   await assert.rejects(source.fullFile(file, signal), StaleLocalRevision);
   await assert.rejects(source.text(snapshot.meta.head, 'src/app.ts', signal), StaleLocalRevision);
   const stale = await source.read(snapshot.meta.head, 'src/app.ts', 1, signal, undefined, 'head');
@@ -538,4 +543,28 @@ await test('git output helpers parse quoted paths, renames and new-file hunks', 
   const patch = '@@ -1 +1 @@\n-a\n+b\n@@ -9 +9 @@\n-c\n+d';
   assert.deepEqual(truncatePatch(patch, 1000), { patch, truncated: false });
   assert.deepEqual(truncatePatch(patch, 20), { patch: '@@ -1 +1 @@\n-a\n+b', truncated: true });
+});
+
+await test('full file exceeds the agent source budget and a renamed file compares just the new edit', async (t) => {
+  const root = repository(t);
+  const middle = ('a'.repeat(1023) + '\n').repeat(2200);
+  write(root, 'large.txt', 'first\n' + middle + 'last\n');
+  git(root, 'add', 'large.txt');
+  git(root, 'commit', '-qm', 'Add large file');
+  const before = git(root, 'rev-parse', 'HEAD');
+  git(root, 'mv', 'large.txt', 'renamed.txt');
+  write(root, 'renamed.txt', 'first\n' + middle + 'changed last\n');
+  git(root, 'commit', '-qam', 'Rename and edit');
+  const head = git(root, 'rev-parse', 'HEAD');
+  const source = localSource(root, { revision: before + '...' + head, head, mergeBase: before });
+  const full = await source.fullFile(
+    { path: 'renamed.txt', previousPath: 'large.txt', status: 'renamed' },
+    signal,
+  );
+  assert.match(full, /\n first\n/);
+  assert.match(full, /\n-last\n\+changed last$/);
+  const delta = await source.changesBetween(before, 'renamed.txt', signal);
+  assert.match(delta ?? '', /rename from large.txt/);
+  assert.match(delta ?? '', /-last\n\+changed last$/);
+  assert.doesNotMatch(delta ?? '', /\n first\n/);
 });

@@ -1,3 +1,4 @@
+import type { LocalFolder } from './local.js';
 import type { Repository } from './assistant.js';
 import { isInactivePull, type LocalReviewInfo, type SavedReview } from './reviews.js';
 
@@ -6,6 +7,7 @@ export function reviewRepository(url: string, local?: LocalReviewInfo) {
 }
 
 export interface RepositoryGroup {
+  kind: 'github' | 'local';
   key: string;
   label: string;
   monitored?: Repository;
@@ -13,7 +15,11 @@ export interface RepositoryGroup {
   saved: SavedReview[];
 }
 
-export function groupReviews(repositories: Repository[], reviews: SavedReview[]) {
+export function groupReviews(
+  repositories: Repository[],
+  reviews: SavedReview[],
+  folders: LocalFolder[] = [],
+) {
   const groups = new Map<string, RepositoryGroup>();
   const listed = new Map<string, RepositoryGroup['pulls'][number]>();
   const inactive = new Set(
@@ -26,7 +32,23 @@ export function groupReviews(repositories: Repository[], reviews: SavedReview[])
       .map((pull) => ({ url: 'https://github.com/' + key + '/pull/' + pull.number, pull }))
       .filter(({ url }) => !inactive.has(url));
     for (const row of pulls) listed.set(row.url, row);
-    groups.set(key, { key, label: key.split('/')[1] ?? key, monitored, pulls, saved: [] });
+    groups.set(key, {
+      kind: 'github',
+      key,
+      label: key.split('/')[1] ?? key,
+      monitored,
+      pulls,
+      saved: [],
+    });
+  }
+  for (const folder of folders) {
+    groups.set(folder.path, {
+      kind: 'local',
+      key: folder.path,
+      label: folder.repository,
+      pulls: [],
+      saved: [],
+    });
   }
   for (const review of reviews) {
     const monitoredRow = listed.get(review.url);
@@ -48,6 +70,7 @@ export function groupReviews(repositories: Repository[], reviews: SavedReview[])
     }
     const key = reviewRepository(review.url, review.local);
     const group: RepositoryGroup = groups.get(key) ?? {
+      kind: review.local ? 'local' : 'github',
       key,
       label: review.local?.repository ?? key.split('/')[1] ?? key,
       pulls: [],
@@ -58,12 +81,13 @@ export function groupReviews(repositories: Repository[], reviews: SavedReview[])
   }
   const labels = new Set<string>();
   const ambiguous = new Set<string>();
-  for (const { label } of groups.values()) {
-    if (labels.has(label)) ambiguous.add(label);
-    labels.add(label);
+  for (const { kind, label } of groups.values()) {
+    const identity = kind + ':' + label;
+    if (labels.has(identity)) ambiguous.add(identity);
+    labels.add(identity);
   }
   for (const group of groups.values()) {
-    if (ambiguous.has(group.label)) group.label = group.key;
+    if (ambiguous.has(group.kind + ':' + group.label)) group.label = group.key;
   }
   return groups;
 }

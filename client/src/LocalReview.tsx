@@ -8,9 +8,11 @@ import type { SavedReview } from '../../shared/reviews.js';
 // Choose a local clone, pick the branch to compare with, and start a read-only review.
 export function LocalReviewStart({
   disabled,
+  savedPath,
   onStarted,
 }: {
   disabled: boolean;
+  savedPath?: string;
   onStarted: (url: string, reviews: SavedReview[]) => void;
 }) {
   const [candidate, setCandidate] = useState<LocalCandidate | null>(null);
@@ -23,7 +25,7 @@ export function LocalReviewStart({
     setBusy(true);
     setError('');
     window.reviewer
-      .chooseLocalRepository()
+      .chooseLocalRepository(savedPath)
       .then((chosen) => {
         if (!chosen) return;
         setCandidate(chosen);
@@ -62,7 +64,11 @@ export function LocalReviewStart({
       >
         <FolderGit2 size={16} aria-hidden /> Review local branch
       </button>
-      <small>Read a coding agent’s work in a local clone before it becomes a pull request.</small>
+      {savedPath ? (
+        <small>{savedPath}</small>
+      ) : (
+        <small>Read a coding agent’s work in a local clone before it becomes a pull request.</small>
+      )}
       {error && !candidate && <p role="alert">{error}</p>}
       {candidate && (
         <WorkspaceDialog

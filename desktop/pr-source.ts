@@ -1,3 +1,5 @@
+import { commitFileDiff } from './commit-file-diff.js';
+import { fullContext, reviewDiffBytes, reviewFileBytes } from './file-diff-limits.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir } from 'node:fs/promises';
@@ -13,9 +15,9 @@ const cacheWrites = new Map<string, Promise<void>>();
 
 const exec = promisify(execFile);
 const sha = /^[0-9a-f]{40}$/;
-type Git = (args: string[], signal: AbortSignal) => Promise<Buffer>;
+type Git = (args: string[], signal: AbortSignal, maxBuffer?: number) => Promise<Buffer>;
 
-const git: Git = async (args, signal) =>
+const git: Git = async (args, signal, maxBuffer = 8 * 1024 * 1024) =>
   (
     await exec(
       'git',
@@ -32,7 +34,7 @@ const git: Git = async (args, signal) =>
         encoding: 'buffer',
         signal,
         timeout: 120000,
-        maxBuffer: 8 * 1024 * 1024,
+        maxBuffer,
         env: {
           ...Object.fromEntries(
             Object.entries(githubEnvironment()).filter(
@@ -52,8 +54,8 @@ const git: Git = async (args, signal) =>
 export function pinnedSource(root: string, url: string, run: Git = git) {
   const repo = new URL(pullRequestUrl.parse(url)).pathname.split('/').slice(1, 3).join('/');
   const directory = join(root, createHash('sha256').update(repo).digest('hex'));
-  const inRepo = (args: string[], signal: AbortSignal) =>
-    run(['--git-dir=' + directory, ...args], signal);
+  const inRepo = (args: string[], signal: AbortSignal, maxBuffer?: number) =>
+    run(['--git-dir=' + directory, ...args], signal, maxBuffer);
   const ready = new Set<string>();
   async function ensure(commit: string, signal: AbortSignal) {
     if (!sha.test(commit)) throw Error('The requested commit is unavailable.');
@@ -102,7 +104,12 @@ export function pinnedSource(root: string, url: string, run: Git = git) {
       void current.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
     });
   }
-  async function regularFile(commit: string, path: string, signal: AbortSignal) {
+  async function regularFile(
+    commit: string,
+    path: string,
+    signal: AbortSignal,
+    limit = 2 * 1024 * 1024,
+  ) {
     await ensure(commit, signal);
     const entry = (
       await inRepo(['ls-tree', '-z', commit, '--', ':(literal)' + path], signal)
@@ -111,15 +118,22 @@ export function pinnedSource(root: string, url: string, run: Git = git) {
     if (!blob || entry.slice(entry.indexOf('\t') + 1) !== path + '\0')
       throw new UnsupportedFile('No regular file at that path in this commit.');
     const size = Number((await inRepo(['cat-file', '-s', blob], signal)).toString());
-    if (size > 2 * 1024 * 1024)
-      throw new UnsupportedFile('File exceeds the 2 MiB source-read limit.');
-    const bytes = await inRepo(['cat-file', 'blob', blob], signal);
+    if (size > limit)
+      throw new UnsupportedFile('File exceeds the ' + limit / (1024 * 1024) + ' MiB read limit.');
+    const bytes = await inRepo(['cat-file', 'blob', blob], signal, limit);
     if (bytes.includes(0)) throw new UnsupportedFile('Binary file.');
     return { blob, text: bytes.toString('utf8') };
   }
   return {
     async text(commit: string, path: string, signal: AbortSignal) {
       return (await regularFile(commit, path, signal)).text;
+    },
+    async changesBetween(before: string, head: string, path: string, signal: AbortSignal) {
+      await ensure(before, signal);
+      await ensure(head, signal);
+      return commitFileDiff(before, head, path, async (args) =>
+        (await inRepo(args, signal, reviewDiffBytes)).toString('utf8'),
+      );
     },
     async fullFile(
       head: string,
@@ -129,10 +143,17 @@ export function pinnedSource(root: string, url: string, run: Git = git) {
     ) {
       const oldPath = file.previousPath ?? file.path;
       const old =
-        file.status === 'added' ? null : before ? await regularFile(before, oldPath, signal) : null;
+        file.status === 'added'
+          ? null
+          : before
+            ? await regularFile(before, oldPath, signal, reviewFileBytes)
+            : null;
       if (file.status !== 'added' && !old)
         throw Error('The merge base is unavailable. Refresh the PR to load its full file.');
-      const current = file.status === 'removed' ? null : await regularFile(head, file.path, signal);
+      const current =
+        file.status === 'removed'
+          ? null
+          : await regularFile(head, file.path, signal, reviewFileBytes);
       if (!old || !current || old.blob === current.blob) {
         const text = (current ?? old)?.text ?? '';
         if (!text) return '';
@@ -147,11 +168,12 @@ export function pinnedSource(root: string, url: string, run: Git = git) {
           '--no-textconv',
           '--no-color',
           '--text',
-          '--unified=4194304',
+          fullContext,
           old.blob,
           current.blob,
         ],
         signal,
+        reviewDiffBytes,
       );
       const patch = diff.toString('utf8');
       const start = patch.indexOf('\n@@ ');

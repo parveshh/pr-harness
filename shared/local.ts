@@ -4,6 +4,9 @@ import { revisionHead, uncommittedDigest } from './reader.js';
 import { localReviewKey, reviewList } from './reviews.js';
 import { parseBody } from './suggestions.js';
 
+export const localFolder = z.object({ path: z.string().min(1), repository: z.string().min(1) });
+export type LocalFolder = z.infer<typeof localFolder>;
+
 export const baseOption = z.object({ ref: z.string().min(1), name: z.string().min(1) });
 // A repository the reviewer chose in the folder dialog. The main process keeps the path
 // for `id`; starting a review names only the id and one of the listed base refs.
@@ -28,7 +31,9 @@ export type LocalCandidate = z.infer<typeof localCandidate>;
 export type LocalStarted = z.infer<typeof localStarted>;
 export type LocalBrief = z.infer<typeof localBrief>;
 export interface LocalBridge {
-  chooseLocalRepository(): Promise<LocalCandidate | null>;
+  localFolders(): Promise<LocalFolder[]>;
+  addLocalFolder(): Promise<LocalFolder | null>;
+  chooseLocalRepository(savedPath?: string): Promise<LocalCandidate | null>;
   startLocalReview(id: string, base: string): Promise<LocalStarted>;
   localBrief(url: string): Promise<LocalBrief>;
   // Both name the previewed brief, so a changed draft or revision is refused.

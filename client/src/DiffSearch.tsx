@@ -43,6 +43,10 @@ export function DiffSearch({
 
   function show(hunks: MatchingHunk[], total: number, index: number) {
     setResults({ hunks, total, index });
+    if (index < 0) {
+      jump(null);
+      return;
+    }
     let occurrence = index;
     for (const hunk of hunks) {
       if (occurrence < hunk.count) {
@@ -60,15 +64,30 @@ export function DiffSearch({
       .filter((file) => file.kind === 'text' || file.kind === 'partial')
       .map((file) => file.path),
   );
-  const finish = useEffectEvent((hunks: MatchingHunk[]) => {
+  const lastScan = useRef({ revision, query, filter });
+  const finish = useEffectEvent((hunks: MatchingHunk[], keepFile: boolean) => {
+    let index = 0;
+    if (keepFile) {
+      // A refresh can remove a match or introduce an earlier one in a different file.
+      // Only explicit search navigation should take the reader away from the open file.
+      const currentHunk = view.files.find((f) => f.path === view.selected)?.hunk;
+      const match =
+        hunks.find((h) => h.path === view.selected && h.hunk === currentHunk) ??
+        hunks.find((h) => h.path === view.selected);
+      index = match ? hunks.slice(0, hunks.indexOf(match)).reduce((n, h) => n + h.count, 0) : -1;
+    }
     show(
       hunks,
-      hunks.reduce((sum, hunk) => sum + hunk.count, 0),
-      0,
+      hunks.reduce((n, h) => n + h.count, 0),
+      index,
     );
   });
   useEffect(() => {
     if (!query) return;
+    const previous = lastScan.current;
+    const keepFile =
+      previous.revision !== revision && previous.query === query && previous.filter === filter;
+    lastScan.current = { revision, query, filter };
     let live = true;
     async function search() {
       const paths = searchablePaths();
@@ -84,7 +103,7 @@ export function DiffSearch({
         if (!live) return;
         for (const hunk of batch) hunks.push(hunk);
       }
-      if (live) finish(hunks);
+      if (live) finish(hunks, keepFile);
     }
     const timer = window.setTimeout(() => {
       search().catch((cause: unknown) => {
@@ -103,8 +122,10 @@ export function DiffSearch({
     jump(null);
   }
   function step(by: number) {
-    if (results?.total)
-      show(results.hunks, results.total, (results.index + by + results.total) % results.total);
+    if (results?.total) {
+      const from = results.index < 0 && by < 0 ? 0 : results.index;
+      show(results.hunks, results.total, (from + by + results.total) % results.total);
+    }
   }
 
   const navigateFromDiff = useEffectEvent((event: KeyboardEvent) => {
@@ -130,7 +151,7 @@ export function DiffSearch({
     <div
       className="diff-search"
       role="search"
-      aria-label="Search PR diff"
+      aria-label="Search review diff"
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
         if (event.key === 'Escape') {
@@ -179,7 +200,11 @@ export function DiffSearch({
           : !results
             ? 'Searching…'
             : results.total
-              ? results.index + 1 + ' of ' + results.total
+              ? results.index < 0
+                ? results.total === 1
+                  ? '1 match'
+                  : results.total + ' matches'
+                : results.index + 1 + ' of ' + results.total
               : 'No matches'}
       </span>
       <button

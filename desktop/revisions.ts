@@ -72,7 +72,7 @@ export function revisionStore(db: DatabaseSync) {
       'INSERT OR REPLACE INTO revision_files SELECT url,revision,path,signature,patch FROM snapshots JOIN review_files USING(url) WHERE url=?',
     ).run(url);
   }
-  function compare(url: string, snapshot: Snapshot, heads: HeadComparison) {
+  function compare(url: string, snapshot: Snapshot, heads: HeadComparison, showComparison = true) {
     const baseline = String(state(url)?.baseline);
     if (baseline === snapshot.revision) {
       db.prepare(
@@ -120,8 +120,9 @@ export function revisionStore(db: DatabaseSync) {
       partial: incomplete || baselineIncomplete || heads.partial,
       files: [...files].map(([path, state]) => ({ path, state })),
     };
-    db.prepare('UPDATE revision_state SET comparison=?,since=1,change_path=NULL WHERE url=?').run(
+    db.prepare('UPDATE revision_state SET comparison=?,since=?,change_path=NULL WHERE url=?').run(
       JSON.stringify(result),
+      Number(showComparison),
       url,
     );
   }

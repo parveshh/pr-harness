@@ -208,3 +208,57 @@ await test('opening a staged revision offline preserves a newer observed approva
   assert.equal(store.list()[0]?.approvalStage, undefined);
   assert.equal(store.list()[0]?.commitCount, 4);
 });
+
+await test('file retry follows a rename and preserves the selected revision when the file disappears', async (t) => {
+  const store = openStore(':memory:');
+  t.after(() => store.close());
+  store.save(url);
+  store.reader.select(url);
+  const original = await fetchSnapshot(url, signal, api);
+  const file = original.files.find((f) => f.info.path === 'src/reader.ts');
+  assert.ok(file);
+  store.reader.install(url, original);
+  store.reader.checkpoint({
+    url,
+    revision: original.revision,
+    path: file.info.path,
+    hunk: 1,
+    scroll: 182,
+    reviewed: false,
+  });
+  const renamed = {
+    ...file,
+    info: {
+      ...file.info,
+      path: 'src/renamed.ts',
+      previousPath: file.info.path,
+      status: 'renamed' as const,
+    },
+  };
+  const next = {
+    ...original,
+    revision: 'base...new',
+    files: original.files.map((f) => (f === file ? renamed : f)),
+  };
+  const view = store.reader.install(url, next, undefined, file.info);
+  assert.equal(view?.selected, renamed.info.path);
+  const currentFile = view?.files.find((f) => f.path === renamed.info.path);
+  assert.equal(currentFile?.hunk, 1);
+  assert.equal(currentFile.scroll, 182);
+  assert.equal(view?.since, false);
+  assert.throws(
+    () =>
+      store.reader.install(
+        url,
+        {
+          ...next,
+          revision: 'base...reverted',
+          files: next.files.filter((f) => f !== renamed),
+        },
+        undefined,
+        renamed.info,
+      ),
+    /Could not find this file/,
+  );
+  assert.deepEqual(store.reader.read(url), view);
+});

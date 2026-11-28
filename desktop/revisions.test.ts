@@ -84,7 +84,8 @@ await test('upgrade both revision-state layouts from v9 and reopen a saved PR wi
       assert.equal(view?.comparison?.baseline, start.revision);
       assert.equal(view?.since, !legacy);
       assert.equal(view?.changePath, legacy ? null : first.info.path);
-      assert.equal(view?.files[0]?.scroll, 42);
+      assert.equal(view?.files[0]?.scroll, 0);
+      assert.equal(view?.files[0]?.hunk, cursor.hunk);
       assert.equal(view?.files[0]?.reviewed, true);
       assert.equal(upgraded.reader.patch({ ...cursor, revision: next.revision }), patch);
       assert.equal(upgraded.reader.install(url, start)?.files.length, start.files.length);

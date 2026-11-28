@@ -1,3 +1,6 @@
+import { expandSavedFileDiff } from './saved-file-diff.js';
+import { commitFileDiff } from './commit-file-diff.js';
+import { fullContext, reviewDiffBytes, reviewFileBytes } from './file-diff-limits.js';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -489,7 +492,7 @@ export async function inspectRepository(folder: string, signal: AbortSignal) {
       ).trim() || null;
     return {
       root,
-      repository: basename(root),
+      repository: basename(root) || root,
       branch,
       head,
       bases,
@@ -893,7 +896,12 @@ export type LocalRevision = {
 // A path from the reader or an agent, resolved inside the repository root. Symbolic links
 // may not lead outside it, Git's own directory is never read, and only files that are part of
 // the review (tracked, or untracked and not ignored) are served.
-export async function workingTreeFile(root: string, path: string, signal: AbortSignal) {
+export async function workingTreeFile(
+  root: string,
+  path: string,
+  signal: AbortSignal,
+  limit = limits.sourceFile,
+) {
   const outside = () => new UnsupportedFile('That path is outside the repository.');
   if (
     !path ||
@@ -957,11 +965,11 @@ export async function workingTreeFile(root: string, path: string, signal: AbortS
     const info = await stat(target);
     if (!info.isFile())
       throw new UnsupportedFile('No regular file at that path in the working tree.');
-    if (info.size > limits.sourceFile)
-      throw new UnsupportedFile('File exceeds the 2 MiB source-read limit.');
-    const bytes = await readPrefix(target, limits.sourceFile + 1);
-    if (bytes.length > limits.sourceFile)
-      throw new UnsupportedFile('File exceeds the 2 MiB source-read limit.');
+    if (info.size > limit)
+      throw new UnsupportedFile('File exceeds the ' + limit / (1024 * 1024) + ' MiB read limit.');
+    const bytes = await readPrefix(target, limit + 1);
+    if (bytes.length > limit)
+      throw new UnsupportedFile('File exceeds the ' + limit / (1024 * 1024) + ' MiB read limit.');
     if (bytes.includes(0)) throw new UnsupportedFile('Binary file.');
     return bytes.toString('utf8');
   } catch (error) {
@@ -986,7 +994,12 @@ export function localSource(root: string, pinned: LocalRevision) {
     const state = await workingState(root, signal);
     if (workingStateId(state) !== expected) throw new StaleLocalRevision();
   }
-  async function commitFile(commit: string, path: string, signal: AbortSignal) {
+  async function commitFile(
+    commit: string,
+    path: string,
+    signal: AbortSignal,
+    limit = limits.sourceFile,
+  ) {
     if (!/^[0-9a-f]{40}$/.test(commit))
       throw new UnsupportedFile('The requested commit is unavailable.');
     const entry = (
@@ -998,9 +1011,9 @@ export function localSource(root: string, pinned: LocalRevision) {
     let size: number, bytes: Buffer;
     try {
       size = Number(await text(root, ['cat-file', '-s', blob], { signal }));
-      if (size > limits.sourceFile)
-        throw new UnsupportedFile('File exceeds the 2 MiB source-read limit.');
-      bytes = (await runGit(root, ['cat-file', 'blob', blob], { signal })).stdout;
+      if (size > limit)
+        throw new UnsupportedFile('File exceeds the ' + limit / (1024 * 1024) + ' MiB read limit.');
+      bytes = (await runGit(root, ['cat-file', 'blob', blob], { signal, limit })).stdout;
     } catch (error) {
       if (!(error instanceof GitFailure)) throw error;
       // A partial clone can lack the blob. It is never fetched on the reviewer's behalf.
@@ -1011,9 +1024,9 @@ export function localSource(root: string, pinned: LocalRevision) {
   }
   // A clean revision is exactly its HEAD commit, so it is read from Git objects. Uncommitted
   // content is read from the working tree, then checked against the pinned revision.
-  async function headFile(path: string, signal: AbortSignal) {
-    if (!dirty) return commitFile(pinned.head, path, signal);
-    const content = await workingTreeFile(root, path, signal);
+  async function headFile(path: string, signal: AbortSignal, limit = limits.sourceFile) {
+    if (!dirty) return commitFile(pinned.head, path, signal, limit);
+    const content = await workingTreeFile(root, path, signal, limit);
     await verify(signal);
     return content;
   }
@@ -1037,17 +1050,26 @@ export function localSource(root: string, pinned: LocalRevision) {
         throw gitFailureMessage(error);
       }
     },
+    async changesBetween(before: string, path: string, signal: AbortSignal) {
+      if (!/^[0-9a-f]{40}$/.test(before) || !/^[0-9a-f]{40}$/.test(pinned.head)) return null;
+      // Untracked files are absent from a working-tree git diff.
+      if (dirty) return null;
+      return commitFileDiff(before, pinned.head, path, (args) =>
+        text(root, args, { signal, limit: reviewDiffBytes }),
+      );
+    },
     async fullFile(
       info: { path: string; previousPath: string | null; status: string },
       signal: AbortSignal,
+      savedPatch?: string,
     ) {
       try {
         const oldPath = info.previousPath ?? info.path;
         if (info.status === 'added' || info.status === 'removed') {
           const added = info.status === 'added';
           const content = added
-            ? await headFile(info.path, signal)
-            : await commitFile(pinned.mergeBase ?? '', oldPath, signal);
+            ? await headFile(info.path, signal, reviewFileBytes)
+            : await commitFile(pinned.mergeBase ?? '', oldPath, signal, reviewFileBytes);
           if (!content) return '';
           const marker = added ? '+' : '-';
           return (
@@ -1063,10 +1085,14 @@ export function localSource(root: string, pinned: LocalRevision) {
         if (!pinned.mergeBase)
           throw new LocalReviewError('The merge base is unavailable. Refresh the review.');
         // Both sides must be readable regular text files within the size limit.
-        await commitFile(pinned.mergeBase, oldPath, signal);
+        const base = await commitFile(pinned.mergeBase, oldPath, signal, reviewFileBytes);
+        if (dirty && savedPatch) {
+          const full = expandSavedFileDiff(base, savedPatch);
+          if (full !== null) return full;
+        }
         const current = await (dirty
-          ? workingTreeFile(root, info.path, signal)
-          : commitFile(pinned.head, info.path, signal));
+          ? workingTreeFile(root, info.path, signal, reviewFileBytes)
+          : commitFile(pinned.head, info.path, signal, reviewFileBytes));
         const result = await runGit(
           root,
           [
@@ -1079,15 +1105,14 @@ export function localSource(root: string, pinned: LocalRevision) {
             '--no-color',
             '--no-relative',
             '--text',
-            '--unified=4194304',
+            fullContext,
             '--',
             ':(literal)' + oldPath,
             ':(literal)' + info.path,
           ],
-          { signal, limit: 4 * limits.sourceFile + 65536 },
+          { signal, limit: reviewDiffBytes },
         );
-        if (result.truncated)
-          throw new UnsupportedFile('File exceeds the 2 MiB source-read limit.');
+        if (result.truncated) throw new UnsupportedFile('The full diff exceeds the display limit.');
         const diff = result.stdout.toString('utf8');
         if (dirty) await verify(signal);
         const patch = sectionPatch(diff);

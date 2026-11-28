@@ -46,7 +46,9 @@ export function registerLocalReviews(
       verify(event);
       return fn(...args);
     });
-  handle('local:choose', () => operations.choose());
+  handle('local:folders', () => store.local.folders());
+  handle('local:add-folder', () => operations.addFolder());
+  handle('local:choose', (savedPath) => operations.choose(savedPath));
   handle('local:start', (input) => operations.start(input));
   handle('local:brief', (input) => operations.brief(input));
   handle('local:copy-brief', (input, version, revision) =>

@@ -38,6 +38,9 @@ export const discussionRevision = z.object({
 export const discussions = z.object({
   anchorRevision: discussionRevision.nullish(),
   account: z.string(),
+  unavailable: z
+    .array(z.enum(['inline comments', 'PR conversation', 'review summaries', 'thread status']))
+    .optional(),
   threads: z.array(discussionThread),
 });
 export const discussionReply = z.object({

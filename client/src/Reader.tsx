@@ -35,6 +35,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useEffectEvent,
   useId,
   useLayoutEffect,
   useMemo,
@@ -44,7 +45,13 @@ import {
 import type { ReaderFile, ReaderView } from '../../shared/reader.js';
 import { shortRevision, splitHunks, uncommittedDigest } from '../../shared/reader.js';
 import { isLocalReview, type LocalReviewInfo } from '../../shared/reviews.js';
-import { diffLines } from '../../shared/diff.js';
+import {
+  fileDiff,
+  fileDiffPage,
+  filePageRows,
+  filePageScroll,
+  type FileDiff,
+} from '../../shared/file-diff.js';
 import { highlightRows, languageFor } from '../../shared/highlight.js';
 import { ChatMarkdown } from './components/ChatMarkdown.js';
 import { CommitLink, DraftLabel, PrNumberLink, formatPrDate } from './components/PrMetadata.js';
@@ -112,8 +119,7 @@ export function Reader({
   // The Single-key shortcuts setting.
   singleKeyShortcuts: boolean;
 }) {
-  const [fullFile, setFullFile] = useState(false);
-  const [fullFocus, setFullFocus] = useState<(FileFocus & { path: string }) | null>(null);
+  const [jump, setJump] = useState<{ path: string; hunk: number } | null>(null);
   const [source, setSource] = useState<(SourceCitation & { run: string; visit: number }) | null>(
     null,
   );
@@ -121,7 +127,6 @@ export function Reader({
     () => source && { side: 'new', line: source.line },
     [source],
   );
-  const diffPanel = useRef<HTMLElement>(null);
   const [inlineIds, setInlineIds] = useState(new Set<number>());
   const registerThread = useCallback((id: number, mounted: boolean) => {
     setInlineIds((prev) => {
@@ -157,7 +162,9 @@ export function Reader({
     [lessons.items, url],
   );
   const codeLessons = useCallback(
-    (lines: string[]) => {
+    (hunk: string) => {
+      if (!earlierLessons.length) return null;
+      const lines = hunk.split('\n').slice(1);
       return (
         <LessonList
           title="Review lessons for these changes"
@@ -189,7 +196,7 @@ export function Reader({
   const expandChatButton = useRef<HTMLButtonElement>(null);
   const closeChatButton = useRef<HTMLButtonElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
-  const [chatOpen, setChatOpen] = useState(!local);
+  const [chatOpen, setChatOpen] = useState(true);
   const hasView = !!view;
   const [section, setSection] = useState<'Overview' | 'Changes' | 'Discussion'>('Changes');
   const pendingFocus = useRef<RefObject<HTMLElement | null> | null>(null);
@@ -285,7 +292,7 @@ export function Reader({
     if (paneName === 'diff' && searchOpen) searchRegion.current?.querySelector('input')?.focus();
   }, [paneName, searchOpen]);
   useEffect(() => {
-    if (!hasView || local) return;
+    if (!hasView) return;
     function find(event: KeyboardEvent) {
       if (
         event.defaultPrevented ||
@@ -312,7 +319,7 @@ export function Reader({
     }
     window.addEventListener('keydown', find);
     return () => window.removeEventListener('keydown', find);
-  }, [hasView, local]);
+  }, [hasView]);
   useEffect(() => {
     let live = true;
     window.reviewer
@@ -356,10 +363,16 @@ export function Reader({
     if (loading || transition || !hasView) return;
     let live = true,
       checking = false,
+      queued = false,
       nextCheck = 0,
       delay = 60000;
-    async function check() {
-      if (checking || document.hidden || !document.hasFocus() || Date.now() < nextCheck) return;
+    async function check(force = false) {
+      if (!live || document.hidden || (!local && !document.hasFocus())) return;
+      if (checking) {
+        if (force) queued = true;
+        return;
+      }
+      if (!force && Date.now() < nextCheck) return;
       checking = true;
       try {
         const { incoming, isDraft, statusChanged } = await window.reviewer.checkUpdate(url);
@@ -375,33 +388,64 @@ export function Reader({
       } finally {
         nextCheck = Date.now() + delay;
         checking = false;
+        if (queued && live) {
+          queued = false;
+          void check(true);
+        }
       }
     }
-    const trigger = () => {
-      void check();
-    };
+    const trigger = () => void check(local);
+    const unsubscribe = local
+      ? window.reviewer.onLocalFilesChanged((changedUrl) => {
+          if (changedUrl === url) void check(true);
+        })
+      : undefined;
+    // Catch changes during initial load, a revision transition, or while the window was hidden.
+    if (local) trigger();
     window.addEventListener('focus', trigger);
-    const timer = window.setInterval(trigger, 60000);
+    document.addEventListener('visibilitychange', trigger);
+    const timer = window.setInterval(() => void check(), 60000);
     return () => {
       live = false;
+      unsubscribe?.();
       window.removeEventListener('focus', trigger);
+      document.removeEventListener('visibilitychange', trigger);
       window.clearInterval(timer);
     };
-  }, [url, loading, transition, hasView, onSnapshotSaved]);
-  async function changeRevision(open: boolean) {
+  }, [url, local, loading, transition, hasView, onSnapshotSaved]);
+
+  const [refreshHint, setRefreshHint] = useState<{ path: string; revision: string } | null>(null);
+  useEffect(() => {
+    if (!refreshHint) return;
+    const timer = window.setTimeout(() => setRefreshHint(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [refreshHint]);
+  async function changeRevision(action: 'update' | 'checkpoint' | 'retry-file' | 'auto-refresh') {
     if (!view || transition) return;
     setTransition(true);
     try {
-      const next =
-        open && view.incoming
-          ? await window.reviewer.openUpdate(url, view.incoming)
-          : await window.reviewer.finishRevision(url, view.revision);
+      let next: ReaderView;
+      if (action === 'retry-file' || action === 'auto-refresh') {
+        if (!view.selected || editor || (action === 'auto-refresh' && !view.incoming)) return;
+        next = await window.reviewer.refreshLocalFile(
+          { url, revision: view.revision, path: view.selected },
+          action === 'auto-refresh' ? (view.incoming ?? undefined) : undefined,
+        );
+        if (action === 'auto-refresh' && next.selected && next.revision !== view.revision)
+          setRefreshHint({ path: next.selected, revision: next.revision });
+        setGeneration((n) => n + 1);
+      } else if (action === 'update') {
+        if (!view.incoming) return;
+        next = await window.reviewer.openUpdate(url, view.incoming);
+      } else next = await window.reviewer.finishRevision(url, view.revision);
       setView(next);
 
-      if (open) {
+      if (action !== 'checkpoint') {
         if (!local) onSnapshotSaved();
-        setSection('Changes');
-        setPaneName('diff');
+        if (action !== 'auto-refresh') {
+          setSection('Changes');
+          setPaneName('diff');
+        }
         setSource(null);
         setLine(null);
         setEditor(null);
@@ -416,9 +460,40 @@ export function Reader({
       setTransition(false);
     }
   }
+  const selectedPath = view?.selected;
+  const revision = view?.revision;
+  const incoming = view?.incoming;
+  const canAutoRefresh =
+    local && !loading && !transition && !editor && !since && !source && section === 'Changes';
+  const attemptedRefresh = useRef('');
+  const applyIncoming = useEffectEvent(() => {
+    const key = JSON.stringify([revision, selectedPath, incoming]);
+    if (attemptedRefresh.current === key) return;
+    attemptedRefresh.current = key;
+    void changeRevision('auto-refresh');
+  });
+  useEffect(() => {
+    if (!incoming) attemptedRefresh.current = '';
+    if (!canAutoRefresh || !incoming || !selectedPath) return;
+    let timer: number | undefined;
+    function applyWhenReady() {
+      // A modal can contain an unsaved review summary or a draft being relocated.
+      if (document.querySelector('[role="dialog"], dialog[open]')) {
+        timer = window.setTimeout(applyWhenReady, 400);
+        return;
+      }
+      applyIncoming();
+    }
+    applyWhenReady();
+    return () => window.clearTimeout(timer);
+  }, [canAutoRefresh, incoming, revision, selectedPath]);
+
   const move = useCallback(
     (file: ReaderFile, change: Partial<Position> = {}) => {
       if (!view) return;
+      if (change.hunk !== undefined && change.scroll === 0)
+        setJump({ path: file.path, hunk: change.hunk });
+      else if (change.scroll !== undefined || file.path !== view.selected) setJump(null);
       const updated = { ...file, ...change };
       if (change.reviewed !== undefined) delete updated.needsReview;
       setView((current) =>
@@ -480,7 +555,6 @@ export function Reader({
       </div>
     );
   };
-  const showFullFile = fullFile && selected?.kind !== 'binary';
   const selection =
     line &&
     line.revision === view?.revision &&
@@ -492,30 +566,6 @@ export function Reader({
   const nextUnread = [...files.slice(index + 1), ...files.slice(0, index)].find(
     (file) => !file.reviewed,
   );
-  function chooseFileView(full: boolean) {
-    if (!selected) return;
-    if (!full) {
-      setFullFile(false);
-      return;
-    }
-    if (selected.kind === 'binary') return;
-    const pane = diffPanel.current?.querySelector('.diff-scroll');
-    const top = pane?.getBoundingClientRect().top ?? 0;
-    const row = pane
-      ? Array.from(pane.querySelectorAll<HTMLElement>('.diff-line')).find(
-          (r) => r.getBoundingClientRect().bottom > top,
-        )
-      : undefined;
-    const focus =
-      selection ??
-      (row?.dataset.newLine
-        ? { side: 'new' as const, line: Number(row.dataset.newLine) }
-        : row?.dataset.oldLine
-          ? { side: 'old' as const, line: Number(row.dataset.oldLine) }
-          : null);
-    setFullFocus(focus ? { ...focus, path: selected.path } : null);
-    setFullFile(true);
-  }
   // Keyboard shortcuts drive the same handlers as the on-screen controls.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [announcement, setAnnouncement] = useState('');
@@ -549,8 +599,7 @@ export function Reader({
   }
   function goTo(file: ReaderFile, hunk: number, hunkCount: number | null) {
     const hasHunks = file.kind === 'text' || file.kind === 'partial';
-    hunkFocus.current =
-      hasHunks && !fullFile ? { path: file.path, hunk, until: Date.now() + 5000 } : null;
+    hunkFocus.current = hasHunks ? { path: file.path, hunk, until: Date.now() + 5000 } : null;
     move(file, file.hunk === hunk ? {} : { hunk, scroll: 0 });
     setAnnouncement(
       file.path +
@@ -563,10 +612,6 @@ export function Reader({
   }
   async function stepBy(direction: 1 | -1) {
     if (!view || !selected) return;
-    if (showFullFile) {
-      setAnnouncement('Switch to Diff only to move between hunks.');
-      return;
-    }
     const token = ++navigation.current;
     try {
       const target = await stepHunk(
@@ -633,11 +678,6 @@ export function Reader({
         if (selection) openChat();
         else setAnnouncement('Select a line to ask the assistant about it.');
         return;
-      case 'toggle-full-file':
-        if (selected.kind === 'binary') return;
-        chooseFileView(!showFullFile);
-        setAnnouncement(showFullFile ? 'Diff only' : 'Full file');
-        return;
       default: {
         const unreachable: never = action;
         return unreachable;
@@ -670,6 +710,7 @@ export function Reader({
   );
   function selectLine(anchor: Anchor, extend: boolean) {
     if (!view) return;
+    if (selected && selected.hunk !== anchor.hunk) move(selected, { hunk: anchor.hunk });
     const origin = rangeOrigin.current;
     if (
       extend &&
@@ -749,7 +790,6 @@ export function Reader({
             if (target && view) {
               setSource(null);
               if (since) showComparison(false);
-              setFullFile(false);
               setSection('Changes');
               setPaneName('diff');
               move(target, { hunk: cite.hunk, scroll: 0 });
@@ -832,7 +872,6 @@ export function Reader({
             const f = view.files.find((f) => f.path === path);
             if (f) {
               setSource(null);
-              setFullFile(false);
               move(f, { hunk: hunk ?? f.hunk, scroll: 0 });
               showComparison(false);
               setPaneName('diff');
@@ -1017,24 +1056,22 @@ export function Reader({
                       revision={view.revision}
                     />
                   )}
-                  {!local && (
-                    <button
-                      ref={searchButton}
-                      aria-expanded={searchOpen}
-                      title="Search the PR diff (Ctrl+F or ⌘F)"
-                      onClick={() => {
-                        if (searchOpen) closeSearch();
-                        else setSearchOpen(true);
-                      }}
-                    >
-                      <Search size={14} /> Search diff
-                    </button>
-                  )}
+                  <button
+                    ref={searchButton}
+                    aria-expanded={searchOpen}
+                    title="Search changed lines (Ctrl+F or ⌘F)"
+                    onClick={() => {
+                      if (searchOpen) closeSearch();
+                      else setSearchOpen(true);
+                    }}
+                  >
+                    <Search size={14} /> Search diff
+                  </button>
                 </div>
-                {!local && searchOpen && (
+                {searchOpen && (
                   <div ref={searchRegion}>
                     <DiffSearch
-                      key={view.revision}
+                      key={local ? url : view.revision}
                       url={url}
                       view={view}
                       generation={generation}
@@ -1047,7 +1084,6 @@ export function Reader({
                         setPaneName('diff');
                         setSection('Changes');
                         setSource(null);
-                        setFullFile(false);
                         if (since) showComparison(false);
                         if (selected?.path !== hit.path || selected.hunk !== hit.hunk)
                           move(file, { hunk: hit.hunk, scroll: 0 });
@@ -1077,7 +1113,11 @@ export function Reader({
                   </section>
                 )}
                 {section === 'Discussion' && !local && (
-                  <section className="pr-detail">{discussions.overview(view, inlineIds)}</section>
+                  <section className="pr-detail">
+                    {discussions.overview(
+                      since ? queue?.path : source ? undefined : selected?.path,
+                    )}
+                  </section>
                 )}
               </>
             )}
@@ -1119,7 +1159,7 @@ export function Reader({
                 <button
                   disabled={transition || loading || !!editor}
                   title={editor ? 'Save or close your inline draft first' : undefined}
-                  onClick={() => void changeRevision(true)}
+                  onClick={() => void changeRevision('update')}
                 >
                   Open update
                 </button>
@@ -1136,9 +1176,20 @@ export function Reader({
                 <button
                   className="secondary"
                   disabled={transition || loading || !!view.incoming}
-                  onClick={() => void changeRevision(false)}
+                  onClick={() => void changeRevision('checkpoint')}
                 >
                   Save review checkpoint
+                </button>
+              </div>
+            )}
+            {view && !local && discussions.loading && !discussions.data && (
+              <p role="status">Loading review comments…</p>
+            )}
+            {discussions.error && (
+              <div className="discussion-error" role="status">
+                {discussions.error}{' '}
+                <button disabled={discussions.posting} onClick={discussions.reload}>
+                  Refresh threads
                 </button>
               </div>
             )}
@@ -1150,6 +1201,7 @@ export function Reader({
                 comparison={view.comparison}
                 inspectQuestion={inspectQuestion}
                 path={queue?.path}
+                fileConversations={discussions.fileConversations(queue?.path)}
                 mark={(f) => move(f, { reviewed: !f.reviewed })}
                 markAbsent={(path, reviewed) => {
                   window.reviewer
@@ -1192,7 +1244,7 @@ export function Reader({
                   />
                 </article>
               ) : selected ? (
-                <article ref={diffPanel}>
+                <article>
                   <div className="file-heading">
                     <h2>
                       <FileCode2 size={16} />
@@ -1201,6 +1253,12 @@ export function Reader({
                     <small>
                       {index + 1} of {files.length} files
                     </small>
+                    {refreshHint?.revision === view.revision &&
+                      refreshHint.path === selected.path && (
+                        <small className="diff-refresh-hint" role="status">
+                          <RotateCw size={12} aria-hidden /> Diff refreshed
+                        </small>
+                      )}
                     <p>
                       {selected.status}{' '}
                       {selected.previousPath && (
@@ -1211,147 +1269,114 @@ export function Reader({
                       <span className="plus">+{selected.additions}</span>{' '}
                       <span className="minus">−{selected.deletions}</span>
                     </p>
-                    <div className="file-view-toggle" role="group" aria-label="File view">
-                      <button aria-pressed={!showFullFile} onClick={() => chooseFileView(false)}>
-                        Diff only
-                      </button>
-                      <button
-                        aria-pressed={showFullFile}
-                        disabled={selected.kind === 'binary'}
-                        onClick={() => chooseFileView(true)}
-                      >
-                        Full file
-                      </button>
-                    </div>
                   </div>
-                  {discussions.error && (
-                    <div className="discussion-error" role="status">
-                      {discussions.error}{' '}
-                      <button disabled={discussions.posting} onClick={discussions.reload}>
-                        Refresh threads
-                      </button>
-                    </div>
-                  )}
                   <LessonList
                     title="Review lessons for this file"
                     items={earlierLessons.filter((item) => matchesLessonFile(item, selected))}
                   />
-                  {showFullFile ? (
-                    <FullFile
-                      key={JSON.stringify([view.revision, selected.path])}
-                      url={url}
-                      target={view.revision}
-                      path={selected.path}
-                      discussions={renderThreads}
-                      codeLessons={codeLessons}
-                      focus={fullFocus?.path === selected.path ? fullFocus : null}
-                    />
-                  ) : (
-                    <Patch
-                      key={JSON.stringify([generation, view.revision, selected.path])}
-                      searchHit={
-                        searchOpen &&
-                        searchHit?.revision === view.revision &&
-                        searchHit.generation === generation &&
-                        searchHit.path === selected.path &&
-                        searchHit.hunk === selected.hunk
-                          ? searchHit
-                          : null
-                      }
-                      local={local}
-                      url={url}
-                      revision={view.revision}
-                      file={selected}
-                      ask={openChat}
-                      controlRef={hunkControl}
-                      claimFocus={claimHunkFocus}
-                      codeLessons={codeLessons}
-                      pinnedLinks={
-                        <QuestionLinks
-                          questions={questions.filter(
-                            (q) =>
-                              !q.addressed &&
-                              q.current?.path === selected.path &&
-                              q.current.hunk === selected.hunk,
-                          )}
-                          inspect={inspectQuestion}
-                        />
-                      }
-                      drafts={
-                        bundle?.comments.filter(
-                          (d) =>
-                            d.revision === view.revision &&
-                            d.path === selected.path &&
-                            d.hunk === selected.hunk,
-                        ) ?? []
-                      }
-                      compose={
-                        bundle && !bundle.pending
-                          ? (anchor, excerpt, draft) => {
-                              setLine({ ...anchor, revision: view.revision });
-                              setEditor({
-                                id: draft?.id ?? null,
-                                target: draft ? null : { ...anchor, revision: view.revision },
-                                location: anchor,
-                                body: draft?.body ?? '',
-                                excerpt,
-                              });
-                            }
-                          : undefined
-                      }
-                      selection={selection}
-                      publishedLines={threadsByLine}
-                      editorAnchor={
-                        editor &&
-                        editor.location.path === selected.path &&
-                        editor.location.hunk === selected.hunk
-                          ? editor.location
-                          : null
-                      }
-                      onLine={selectLine}
-                      notes={(oldLine, newLine, comments, hunk) => {
-                        if (!editor && !comments.length) return null;
-                        if (!bundle) return null;
-                        const matches = (a: CommentAnchor) =>
-                          a.path === selected.path &&
-                          a.hunk === selected.hunk &&
-                          a.line === (a.side === 'old' ? oldLine : newLine);
+                  <Patch
+                    key={JSON.stringify([generation, view.revision, selected.path])}
+                    searchHit={
+                      searchOpen &&
+                      searchHit?.revision === view.revision &&
+                      searchHit.generation === generation &&
+                      searchHit.path === selected.path &&
+                      searchHit.hunk === selected.hunk
+                        ? searchHit
+                        : null
+                    }
+                    jump={jump}
+                    url={url}
+                    revision={view.revision}
+                    file={selected}
+                    retryLocal={local ? () => void changeRevision('retry-file') : undefined}
+                    retryDisabled={transition || loading || !!editor}
+                    retryingRevision={transition}
+                    ask={openChat}
+                    controlRef={hunkControl}
+                    claimFocus={claimHunkFocus}
+                    codeLessons={codeLessons}
+                    pinnedLinks={
+                      <QuestionLinks
+                        questions={questions.filter(
+                          (q) =>
+                            !q.addressed &&
+                            q.current?.path === selected.path &&
+                            q.current.hunk === selected.hunk,
+                        )}
+                        inspect={inspectQuestion}
+                      />
+                    }
+                    drafts={
+                      bundle?.comments.filter(
+                        (d) => d.revision === view.revision && d.path === selected.path,
+                      ) ?? []
+                    }
+                    compose={
+                      bundle && !bundle.pending && !transition
+                        ? (anchor, excerpt, draft) => {
+                            if (selected.hunk !== anchor.hunk)
+                              move(selected, { hunk: anchor.hunk });
+                            setLine({ ...anchor, revision: view.revision });
+                            setEditor({
+                              id: draft?.id ?? null,
+                              target: draft ? null : { ...anchor, revision: view.revision },
+                              location: anchor,
+                              body: draft?.body ?? '',
+                              excerpt,
+                            });
+                          }
+                        : undefined
+                    }
+                    selection={selection}
+                    publishedLines={threadsByLine}
+                    editorAnchor={
+                      editor && editor.location.path === selected.path ? editor.location : null
+                    }
+                    onLine={selectLine}
+                    notes={(oldLine, newLine, comments, hunk, index) => {
+                      if (!editor && !comments.length) return null;
+                      if (!bundle) return null;
+                      const matches = (a: CommentAnchor) =>
+                        a.path === selected.path &&
+                        a.hunk === index &&
+                        a.line === (a.side === 'old' ? oldLine : newLine);
 
-                        const editing =
-                          editor &&
-                          matches(editor.location) &&
-                          (editor.target?.revision ??
-                            bundle.comments.find((c) => c.id === editor.id)?.revision) ===
-                            view.revision
-                            ? editor
-                            : null;
-                        if (!editing && !comments.length) return null;
-                        return (
-                          <InlineComments
-                            url={url}
-                            bundle={bundle}
-                            comments={comments}
-                            hunk={hunk}
-                            editor={editing}
-                            setEditor={setEditor}
-                            onClose={() => {
-                              setEditor((current) => (current === editing ? null : current));
-                              const a = editing?.location;
-                              if (a)
-                                document
-                                  .querySelector<HTMLButtonElement>(
-                                    '[aria-label="Select ' + a.side + ' line ' + a.line + '"]',
-                                  )
-                                  ?.focus({ preventScroll: true });
-                            }}
-                            onChange={setBundle}
-                          />
-                        );
-                      }}
-                      published={renderThreads}
-                      move={move}
-                    />
-                  )}
+                      const editing =
+                        editor &&
+                        matches(editor.location) &&
+                        (editor.target?.revision ??
+                          bundle.comments.find((c) => c.id === editor.id)?.revision) ===
+                          view.revision
+                          ? editor
+                          : null;
+                      if (!editing && !comments.length) return null;
+                      return (
+                        <InlineComments
+                          url={url}
+                          bundle={bundle}
+                          comments={comments}
+                          hunk={hunk}
+                          editor={editing}
+                          setEditor={setEditor}
+                          onClose={() => {
+                            setEditor((current) => (current === editing ? null : current));
+                            const a = editing?.location;
+                            if (a)
+                              document
+                                .querySelector<HTMLButtonElement>(
+                                  '[aria-label="Select ' + a.side + ' line ' + a.line + '"]',
+                                )
+                                ?.focus({ preventScroll: true });
+                          }}
+                          onChange={setBundle}
+                        />
+                      );
+                    }}
+                    fileConversations={discussions.fileConversations(selected.path, inlineIds)}
+                    published={renderThreads}
+                    move={move}
+                  />
                   {rangeHint && (
                     <small role="status" className="range-hint">
                       {rangeHint}
@@ -1407,6 +1432,7 @@ type Notes = (
   newLine: number | null,
   comments: Draft[],
   hunk: string,
+  index: number,
 ) => ReactNode;
 type Compose = ((anchor: CommentAnchor, excerpt: string, draft?: Draft) => void) | undefined;
 type Move = (file: ReaderFile, change: Partial<Position>) => void;
@@ -1415,12 +1441,15 @@ type PublishedLines = ReadonlyMap<string, unknown>;
 type EditorAnchor = Pick<CommentAnchor, 'side' | 'line'> | null;
 function Patch({
   searchHit,
-  local,
+  jump,
   codeLessons,
   ask,
   controlRef,
   claimFocus,
   pinnedLinks,
+  retryLocal,
+  retryDisabled,
+  retryingRevision,
   url,
   revision,
   file,
@@ -1429,137 +1458,264 @@ function Patch({
   notes,
   published,
   publishedLines,
+  fileConversations,
   editorAnchor,
   selection,
   onLine,
   move,
 }: {
   searchHit: SearchHit | null;
-  local: boolean;
+  jump: { path: string; hunk: number } | null;
   url: string;
   revision: string;
   file: ReaderFile;
   ask: () => void;
   controlRef: RefObject<HunkControl | null>;
   claimFocus: (path: string, hunk: number) => boolean;
-  codeLessons: (lines: string[]) => ReactNode;
+  codeLessons: (hunk: string) => ReactNode;
   pinnedLinks: ReactNode;
+  retryLocal: (() => void) | undefined;
+  retryDisabled: boolean;
+  retryingRevision: boolean;
   drafts: Draft[];
   compose: Compose;
   notes: Notes;
   published: Published;
   publishedLines: PublishedLines;
+  fileConversations: ReactNode;
   editorAnchor: EditorAnchor;
   move: Move;
   selection: CommentAnchor | null;
   onLine: (a: Anchor, extend: boolean) => void;
 }) {
-  const [patch, setPatch] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  const hasText = file.kind === 'text' || file.kind === 'partial';
+  const [loaded, setLoaded] = useState<{
+    full: string | null;
+    saved: string;
+    error: string;
+    attempt: number;
+  } | null>(null);
+  const [attempt, retry] = useState(0);
   useEffect(() => {
+    if (file.kind === 'binary') return;
     let live = true;
-    if (hasText)
-      window.reviewer
-        .filePatch({ url, revision, path: file.path })
-        .then((text) => {
-          if (live) setPatch(text);
-        })
-        .catch(() => {
-          if (live) setError(true);
-        });
+    const key = { url, revision, path: file.path };
+    async function load() {
+      const hasPatch = file.kind === 'text' || file.kind === 'partial';
+      const completePatch =
+        file.kind === 'text' && (file.status === 'added' || file.status === 'removed');
+      const [saved, full] = await Promise.allSettled([
+        hasPatch ? window.reviewer.filePatch(key) : Promise.resolve(''),
+        completePatch ? Promise.resolve(null) : window.reviewer.fullFile(key),
+      ]);
+      if (!live) return;
+      const patch = saved.status === 'fulfilled' ? saved.value : '';
+      setLoaded({
+        attempt,
+        full: full.status === 'fulfilled' ? full.value : null,
+        saved: patch,
+        error:
+          full.status === 'rejected'
+            ? message(full.reason)
+            : saved.status === 'rejected'
+              ? message(saved.reason)
+              : '',
+      });
+    }
+    void load();
     return () => {
       live = false;
     };
-  }, [url, revision, file.path, hasText]);
-  const hunks = useMemo(() => splitHunks(patch ?? ''), [patch]);
-  const hunk = hunks[file.hunk];
-  const reminders = useMemo(
-    () => hunk && codeLessons(hunk.split('\n').slice(1)),
-    [hunk, codeLessons],
-  );
-  if (!hasText)
-    return (
-      <p className="patch-note">
-        {file.kind === 'binary'
-          ? 'Binary file. A line diff is unavailable.'
-          : file.kind === 'metadata'
-            ? 'File metadata changed. There are no changed text lines.'
-            : local
-              ? 'No diff is available for this file. It may be unreadable or beyond the local size limit.'
-              : 'GitHub did not provide a diff for this file.'}
-      </p>
+  }, [url, revision, file.path, file.kind, file.status, attempt]);
+  const diff = useMemo(() => loaded && fileDiff(loaded.full, loaded.saved), [loaded]);
+  const hunk = diff?.savedHunks[file.hunk];
+  const [found, setFound] = useState<{ hit: SearchHit; span: MatchSpan } | null>(null);
+  const match = found && found.hit === searchHit ? found.span : null;
+  useEffect(() => {
+    if (!searchHit || !hunk || !diff) return;
+    const controller = new AbortController();
+    const pause = searchTimeSlice(
+      () => new Promise((resolve) => window.setTimeout(resolve, 0)),
+      controller.signal,
     );
-  if (error) return <p role="alert">Could not read this saved diff. Refresh to try again.</p>;
-  if (hunk === undefined) return <p role="status">Loading diff…</p>;
+    scanHunk(hunk, literalPattern(searchHit.query), searchHit.filter, pause, searchHit.occurrence)
+      .then(({ match }) => {
+        const row = match ? diff.displayPosition(searchHit.hunk, match.row) : undefined;
+        if (!controller.signal.aborted && match && row !== undefined && row >= 0)
+          setFound({ hit: searchHit, span: { ...match, row } });
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted)
+          console.error('Could not locate the diff search match.', message(cause));
+      });
+    return () => controller.abort();
+  }, [searchHit, hunk, diff]);
+  const [page, setPage] = useState(Math.floor(file.scroll / filePageScroll));
+  const [previous, setPrevious] = useState({ diff, jump, selection, match });
+  if (
+    diff !== previous.diff ||
+    jump !== previous.jump ||
+    selection !== previous.selection ||
+    match !== previous.match
+  ) {
+    setPrevious({ diff, jump, selection, match });
+    if (diff && diff.length > filePageRows) {
+      let row: number | undefined;
+      if (match && previous.match !== match) row = match.row;
+      else if (selection && (selection !== previous.selection || !previous.diff))
+        row = diff.find(selection.side, selection.startLine ?? selection.line);
+      else if (jump?.path === file.path && (jump !== previous.jump || !previous.diff))
+        row = diff.displayPosition(jump.hunk);
+      else if (!previous.diff && !file.scroll && file.hunk) row = diff.displayPosition(file.hunk);
+      if (row !== undefined) setPage(Math.floor(row / filePageRows));
+    }
+  }
+  const pageCount = Math.max(1, Math.ceil((diff?.length ?? 0) / filePageRows));
+  const currentPage = Math.min(page, pageCount - 1);
+  const section = useMemo(() => diff && fileDiffPage(diff, currentPage), [diff, currentPage]);
+  const offsetBase = currentPage * filePageScroll;
+  useLayoutEffect(() => {
+    // A jump to the top of a new page does not fire a native scroll event.
+    if (diff && Math.floor(file.scroll / filePageScroll) !== currentPage)
+      move(file, { scroll: offsetBase });
+  }, [currentPage, diff, file, move, offsetBase]);
+  const localMatch = useMemo(() => {
+    if (!match || Math.floor(match.row / filePageRows) !== currentPage) return null;
+    return { ...match, row: match.row - currentPage * filePageRows };
+  }, [match, currentPage]);
+  function choosePage(next: number) {
+    setPage(next);
+    move(file, { scroll: next * filePageScroll });
+  }
+  const reminders = useMemo(() => hunk && codeLessons(hunk), [hunk, codeLessons]);
+  if (file.kind === 'binary')
+    return (
+      <div className="diff-scroll">
+        <p className="patch-note">Binary file. A line diff is unavailable.</p>
+        {fileConversations}
+      </div>
+    );
+  if (!diff || !loaded || !section)
+    return (
+      <div className="diff-scroll">
+        <p role="status">Loading file diff…</p>
+        {fileConversations}
+      </div>
+    );
+  const { savedHunks: hunks } = diff;
   return (
     <>
-      {file.kind === 'partial' && (
+      {loaded.error && (
         <p role="status">
-          {local
-            ? 'This diff exceeds the local size limit. Only part of it is shown.'
-            : 'GitHub supplied only part of this diff.'}
+          {loaded.error}{' '}
+          {loaded.full === null &&
+            loaded.saved &&
+            (file.kind === 'partial'
+              ? 'Showing the available part of the saved diff.'
+              : 'Showing the saved diff.')}{' '}
+          <button
+            disabled={retryDisabled || attempt !== loaded.attempt}
+            title={
+              retryLocal ? 'Refresh the local review and reopen the full file diff' : undefined
+            }
+            onClick={retryLocal ?? (() => retry((n) => n + 1))}
+          >
+            {retryingRevision || attempt !== loaded.attempt
+              ? 'Retrying file diff…'
+              : retryLocal
+                ? 'Refresh and retry file diff'
+                : 'Retry file diff'}
+          </button>
         </p>
       )}
-      <div className="hunk-nav">
-        <span>
-          Hunk {file.hunk + 1} of {hunks.length}
-        </span>
-        <button
-          className="secondary"
-          disabled={file.hunk === 0}
-          onClick={() => move(file, { hunk: file.hunk - 1, scroll: 0 })}
-        >
-          Previous hunk
-        </button>
-        <button
-          className="secondary"
-          disabled={file.hunk + 1 >= hunks.length}
-          onClick={() => move(file, { hunk: file.hunk + 1, scroll: 0 })}
-        >
-          Next hunk
-        </button>
-      </div>
+      {hunks.length > 1 && (
+        <div className="hunk-nav">
+          <span>
+            Change {file.hunk + 1} of {hunks.length}
+          </span>
+          <button
+            className="secondary"
+            disabled={file.hunk === 0}
+            onClick={() => move(file, { hunk: file.hunk - 1, scroll: 0 })}
+          >
+            Previous change
+          </button>
+          <button
+            className="secondary"
+            disabled={file.hunk + 1 >= hunks.length}
+            onClick={() => move(file, { hunk: file.hunk + 1, scroll: 0 })}
+          >
+            Next change
+          </button>
+        </div>
+      )}
+      {pageCount > 1 && (
+        <div className="hunk-nav">
+          <button disabled={currentPage === 0} onClick={() => choosePage(currentPage - 1)}>
+            Previous page
+          </button>
+          <span>
+            Page {currentPage + 1} of {pageCount}
+          </span>
+          <button
+            disabled={currentPage + 1 === pageCount}
+            onClick={() => choosePage(currentPage + 1)}
+          >
+            Next page
+          </button>
+        </div>
+      )}
       {pinnedLinks}
       {reminders}
-      <Hunk
-        searchHit={searchHit}
-        ask={ask}
-        controlRef={controlRef}
-        claimFocus={claimFocus}
-        index={file.hunk}
-        key={file.hunk}
-        notes={notes}
-        published={published}
-        publishedLines={publishedLines}
-        editorAnchor={editorAnchor}
-        onRange={(range) => compose?.({ path: file.path, hunk: file.hunk, ...range }, '')}
-        drafts={drafts}
-        onComment={
-          compose
-            ? (side, line, excerpt, draft) =>
-                compose(
-                  draft ??
-                    (selection &&
-                    selection.side === side &&
-                    line >= (selection.startLine ?? selection.line) &&
-                    line <= selection.line
-                      ? selection
-                      : { path: file.path, hunk: file.hunk, side, line }),
-                  excerpt,
-                  draft,
-                )
-            : undefined
-        }
-        selection={selection}
-        onLine={(side, line, extend) =>
-          onLine({ path: file.path, hunk: file.hunk, side, line }, extend)
-        }
-        text={hunk}
-        path={file.path}
-        offset={file.scroll}
-        onScroll={(scroll) => move(file, { scroll })}
-      />
+      {!diff.length ? (
+        <div className="diff-scroll">
+          {!loaded.error && <p className="patch-note">This file is empty.</p>}
+          {fileConversations}
+        </div>
+      ) : (
+        <Hunk
+          key={currentPage}
+          match={localMatch}
+          ask={ask}
+          controlRef={controlRef}
+          claimFocus={claimFocus}
+          index={file.hunk}
+          jump={jump?.path === file.path ? jump : null}
+          notes={notes}
+          published={published}
+          fileConversations={fileConversations}
+          publishedLines={publishedLines}
+          editorAnchor={editorAnchor}
+          onRange={(range, hunk) => compose?.({ path: file.path, hunk, ...range }, '')}
+          drafts={drafts}
+          onComment={
+            compose
+              ? (side, line, hunk, excerpt, draft) =>
+                  compose(
+                    draft ??
+                      (selection &&
+                      selection.hunk === hunk &&
+                      selection.side === side &&
+                      line >= (selection.startLine ?? selection.line) &&
+                      line <= selection.line
+                        ? selection
+                        : { path: file.path, hunk, side, line }),
+                    excerpt,
+                    draft,
+                  )
+              : undefined
+          }
+          selection={selection}
+          onLine={(side, line, hunk, extend) =>
+            onLine({ path: file.path, hunk, side, line }, extend)
+          }
+          diff={section}
+          path={file.path}
+          offset={
+            Math.floor(file.scroll / filePageScroll) === currentPage ? file.scroll - offsetBase : 0
+          }
+          onScroll={(scroll) => move(file, { scroll: offsetBase + scroll })}
+        />
+      )}
     </>
   );
 }
@@ -1569,17 +1725,19 @@ interface HunkControl {
   comment(): void;
 }
 function Hunk({
-  searchHit,
+  match,
   ask,
   controlRef,
   claimFocus,
   index,
-  text,
+  diff,
+  jump,
   path,
   offset,
   notes,
   published,
   publishedLines,
+  fileConversations,
   editorAnchor,
   drafts,
   onComment,
@@ -1592,47 +1750,41 @@ function Hunk({
   controlRef: RefObject<HunkControl | null>;
   claimFocus: (path: string, hunk: number) => boolean;
   index: number;
-  searchHit: SearchHit | null;
-  text: string;
+  match: MatchSpan | null;
+  diff: FileDiff;
+  jump: { hunk: number } | null;
   path: string;
   offset: number;
   notes: Notes;
   published: Published;
   publishedLines: PublishedLines;
+  fileConversations: ReactNode;
   editorAnchor: EditorAnchor;
   drafts: Draft[];
-  onRange: (range: Pick<CommentAnchor, 'side' | 'line' | 'startLine'>) => void;
+  onRange: (range: Pick<CommentAnchor, 'side' | 'line' | 'startLine'>, hunk: number) => void;
   onComment:
-    ((side: Anchor['side'], line: number, excerpt: string, draft?: Draft) => void) | undefined;
+    | ((side: Anchor['side'], line: number, hunk: number, excerpt: string, draft?: Draft) => void)
+    | undefined;
   selection: CommentAnchor | null;
-  onLine: (side: Anchor['side'], line: number, extend: boolean) => void;
+  onLine: (side: Anchor['side'], line: number, hunk: number, extend: boolean) => void;
   onScroll: (n: number) => void;
 }) {
   const pane = useRef<HTMLDivElement>(null);
   const rowList = useRef<HTMLDivElement>(null);
-  const { heading, lines } = useMemo(() => diffLines(text), [text]);
+  const { savedHunks: hunks, hunkAt, displayPosition } = diff;
   // A long hunk renders only the rows near the viewport. See useRowWindow.
-  const windowed = shouldWindow(lines.length, hunkWindowThreshold);
-  const drag = useCommentDrag(pane, onRange, windowed);
+  const windowed = shouldWindow(diff.length, hunkWindowThreshold);
+  const drag = useCommentDrag(
+    pane,
+    (range) => {
+      const start = diff.find(range.side, range.startLine ?? range.line);
+      const end = diff.find(range.side, range.line);
+      const hunk = hunkAt(end ?? -1, range.side);
+      if (hunk >= 0 && hunk === hunkAt(start ?? -1, range.side)) onRange(range, hunk);
+    },
+    windowed,
+  );
   const highlighted = drag.preview ?? selection;
-  const rowOf = useMemo(() => {
-    if (!windowed) return null;
-    const old = new Map<number, number>(),
-      current = new Map<number, number>();
-    let widest = 0,
-      width = -1;
-    for (const [i, line] of lines.entries()) {
-      if (line.oldLine !== null) old.set(line.oldLine, i);
-      if (line.newLine !== null) current.set(line.newLine, i);
-      // A tab is at most four columns. See `tab-size` on .diff-content.
-      const columns = line.text.length + 3 * (line.text.split('\t').length - 1);
-      if (columns > width) {
-        width = columns;
-        widest = i;
-      }
-    }
-    return { old, new: current, widest: lines[widest]?.text ?? '' };
-  }, [windowed, lines]);
   const notesByEnd = useMemo(() => {
     const byEnd = new Map<string, Draft[]>();
     for (const d of drafts) {
@@ -1646,10 +1798,10 @@ function Hunk({
   // Rows with a draft, an open editor, a published thread or an active drag stay rendered:
   // they hold state, and their measured heights keep every row's offset exact.
   const pinned = useMemo(() => {
-    if (!rowOf) return [];
+    if (!windowed) return [];
     const rows = new Set<number>();
     const pin = (side: Anchor['side'], line: number) => {
-      const row = rowOf[side].get(line);
+      const row = diff.find(side, line);
       if (row !== undefined) rows.add(row);
     };
     for (const d of drafts) pin(d.side, d.line);
@@ -1658,11 +1810,11 @@ function Hunk({
     if (editorAnchor) pin(editorAnchor.side, editorAnchor.line);
     if (drag.origin) pin(drag.origin.side, drag.origin.line);
     return [...rows];
-  }, [rowOf, drafts, publishedLines, editorAnchor, drag.origin]);
+  }, [diff, windowed, drafts, publishedLines, editorAnchor, drag.origin]);
   const [initialScroll] = useState(offset);
   const { segments, reveal } = useRowWindow({
     enabled: windowed,
-    count: lines.length,
+    count: diff.length,
     scroller: pane,
     list: rowList,
     pinned,
@@ -1672,36 +1824,32 @@ function Hunk({
     // A windowed hunk restores its position once its rows are measured.
     if (pane.current && !windowed) pane.current.scrollTop = initialScroll;
   }, [windowed, initialScroll]);
+  const [initialHunk] = useState(initialScroll === 0 ? index : 0);
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    if (mounted.current && !jump) return;
+    mounted.current = true;
+    const hunk = jump?.hunk ?? initialHunk;
+    if (!jump && !hunk) return;
+    const row = displayPosition(hunk);
+    if (row === undefined) return;
+    if (windowed) reveal(row);
+    else
+      pane.current
+        ?.querySelector('[data-diff-row="' + row + '"]')
+        ?.scrollIntoView({ block: 'nearest' });
+  }, [jump, initialHunk, displayPosition, windowed, reveal]);
   useLayoutEffect(() => {
     const composer = pane.current?.querySelector('.inline-composer textarea:focus');
     if (composer) composer.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    else if (selection && rowOf) {
-      const row = rowOf[selection.side].get(selection.startLine ?? selection.line);
+    else if (selection && windowed) {
+      const row = diff.find(selection.side, selection.startLine ?? selection.line);
       if (row !== undefined) reveal(row, '.diff-line');
     } else if (selection)
       pane.current
         ?.querySelector('[data-selected="true"]')
         ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [selection, rowOf, reveal]);
-  const [found, setFound] = useState<{ hit: SearchHit; span: MatchSpan } | null>(null);
-  const match = found && found.hit === searchHit ? found.span : null;
-  useEffect(() => {
-    if (!searchHit) return;
-    const controller = new AbortController();
-    const pause = searchTimeSlice(
-      () => new Promise((resolve) => window.setTimeout(resolve, 0)),
-      controller.signal,
-    );
-    scanHunk(text, literalPattern(searchHit.query), searchHit.filter, pause, searchHit.occurrence)
-      .then(({ match }) => {
-        if (!controller.signal.aborted && match) setFound({ hit: searchHit, span: match });
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted)
-          console.error('Could not locate the diff search match.', message(cause));
-      });
-    return () => controller.abort();
-  }, [searchHit, text]);
+  }, [selection, diff, windowed, reveal]);
   useLayoutEffect(() => {
     if (!match) return;
     if (windowed) reveal(match.row, '.code-line mark');
@@ -1710,27 +1858,36 @@ function Hunk({
         ?.querySelector('.code-line mark')
         ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [match, windowed, reveal]);
+  const lines = useMemo(() => {
+    // Syntax highlighting has a character budget. Keep large, short-line files indexed too.
+    if (diff.length > 50_000) return [];
+    return Array.from({ length: diff.length }, (_, i) => diff.rowAt(i)).filter(
+      (row) => row !== undefined,
+    );
+  }, [diff]);
   const syntax = useMemo(() => highlightRows(lines, languageFor(path)), [lines, path]);
   useEffect(() => {
     const api: HunkControl = {
       comment() {
         if (!onComment) return;
         if (selection) {
-          const row = lines.find(
-            (l) => (selection.side === 'old' ? l.oldLine : l.newLine) === selection.line,
-          );
-          if (row) onComment(selection.side, selection.line, row.text);
-          return;
+          const at = diff.find(selection.side, selection.line);
+          const row = diff.rowAt(at ?? -1);
+          if (row && hunkAt(at ?? -1, selection.side) === selection.hunk) {
+            onComment(selection.side, selection.line, selection.hunk, row.text);
+            return;
+          }
         }
-        const first = firstChangedLine(lines);
-        if (first) onComment(first.side, first.line, first.text);
+        const changed = diff.firstChange(index);
+        const first = changed && firstChangedLine([changed]);
+        if (first) onComment(first.side, first.line, index, first.text);
       },
     };
     controlRef.current = api;
     return () => {
       if (controlRef.current === api) controlRef.current = null;
     };
-  }, [controlRef, onComment, selection, lines]);
+  }, [controlRef, onComment, selection, index, diff, hunkAt]);
   useLayoutEffect(() => {
     // Moving here by keyboard puts focus on the hunk so assistive technology follows.
     if (!claimFocus(path, index)) return;
@@ -1741,21 +1898,30 @@ function Hunk({
   // The line itself, then anything published or drafted beneath it. `plain` is true when
   // the row is only the line, so its height is the one every such row shares.
   function renderRow(line: (typeof lines)[number], i: number) {
-    const number = line.newLine ?? line.oldLine;
-    const side = line.newLine === null ? 'old' : 'new';
-    const comments =
-      notesByEnd.get('old:' + line.oldLine) ?? notesByEnd.get('new:' + line.newLine) ?? [];
-    const local = comments[0];
+    const oldHunk = hunkAt(i, 'old'),
+      newHunk = hunkAt(i, 'new');
+    const side = newHunk >= 0 ? 'new' : 'old';
+    const hunk = side === 'new' ? newHunk : oldHunk;
+    const number = side === 'new' ? line.newLine : line.oldLine;
+    const oldComments = oldHunk < 0 ? [] : (notesByEnd.get('old:' + line.oldLine) ?? []);
+    const newComments = newHunk < 0 ? [] : (notesByEnd.get('new:' + line.newLine) ?? []);
+    const local = newComments[0] ?? oldComments[0];
     const selectedLine = highlighted?.side === 'old' ? line.oldLine : line.newLine;
     const tools =
-      !!selection && (selection.side === 'old' ? line.oldLine : line.newLine) === selection.line;
+      !!selection &&
+      selection.hunk === (selection.side === 'old' ? oldHunk : newHunk) &&
+      (selection.side === 'old' ? line.oldLine : line.newLine) === selection.line;
     const threads = published(line.oldLine, line.newLine);
-    const drafted = notes(line.oldLine, line.newLine, comments, text);
+    const oldNotes =
+      oldHunk < 0 ? null : notes(line.oldLine, null, oldComments, hunks[oldHunk] ?? '', oldHunk);
+    const newNotes =
+      newHunk < 0 ? null : notes(null, line.newLine, newComments, hunks[newHunk] ?? '', newHunk);
     return {
-      plain: !tools && !threads && !drafted,
+      plain: !tools && !threads && !oldNotes && !newNotes,
       content: (
         <>
           <div
+            data-diff-row={i}
             data-old-line={line.oldLine ?? undefined}
             data-new-line={line.newLine ?? undefined}
             data-selected={
@@ -1767,7 +1933,7 @@ function Hunk({
             className={'diff-line ' + line.kind}
           >
             <span className="comment-gutter">
-              {onComment && number !== null && (
+              {onComment && hunk >= 0 && number !== null && (
                 <button
                   className={local ? 'has-draft' : ''}
                   aria-label={
@@ -1786,7 +1952,7 @@ function Hunk({
                   }}
                   onClick={(e) => {
                     if (e.detail && drag.suppressClick.current) return;
-                    onComment(local?.side ?? side, local?.line ?? number, line.text, local);
+                    onComment(local?.side ?? side, local?.line ?? number, hunk, line.text, local);
                   }}
                 >
                   <MessageSquarePlus size={13} />
@@ -1794,30 +1960,34 @@ function Hunk({
               )}
             </span>
             <span className="gutter">
-              {line.oldLine !== null && (
-                <button
-                  aria-label={'Select old line ' + line.oldLine}
-                  title="Shift-click to select a range"
-                  onClick={(e) => {
-                    if (line.oldLine !== null) onLine('old', line.oldLine, e.shiftKey);
-                  }}
-                >
-                  {line.oldLine}
-                </button>
-              )}
+              {oldHunk < 0
+                ? line.oldLine
+                : line.oldLine !== null && (
+                    <button
+                      aria-label={'Select old line ' + line.oldLine}
+                      title="Shift-click to select a range"
+                      onClick={(e) => {
+                        if (line.oldLine !== null) onLine('old', line.oldLine, oldHunk, e.shiftKey);
+                      }}
+                    >
+                      {line.oldLine}
+                    </button>
+                  )}
             </span>
             <span className="gutter">
-              {line.newLine !== null && (
-                <button
-                  aria-label={'Select new line ' + line.newLine}
-                  title="Shift-click to select a range"
-                  onClick={(e) => {
-                    if (line.newLine !== null) onLine('new', line.newLine, e.shiftKey);
-                  }}
-                >
-                  {line.newLine}
-                </button>
-              )}
+              {newHunk < 0
+                ? line.newLine
+                : line.newLine !== null && (
+                    <button
+                      aria-label={'Select new line ' + line.newLine}
+                      title="Shift-click to select a range"
+                      onClick={(e) => {
+                        if (line.newLine !== null) onLine('new', line.newLine, newHunk, e.shiftKey);
+                      }}
+                    >
+                      {line.newLine}
+                    </button>
+                  )}
             </span>
             <CodeLine
               text={line.text}
@@ -1834,7 +2004,9 @@ function Hunk({
                       ? 'Comment on lines ' + selection.startLine + '–' + selection.line
                       : 'Comment on line'
                   }
-                  onClick={() => onComment?.(selection.side, selection.line, line.text)}
+                  onClick={() =>
+                    onComment?.(selection.side, selection.line, selection.hunk, line.text)
+                  }
                 >
                   <MessageSquare size={13} /> Comment
                 </button>
@@ -1845,7 +2017,8 @@ function Hunk({
             )}
           </div>
           {threads}
-          {drafted}
+          {oldNotes}
+          {newNotes}
         </>
       ),
     };
@@ -1864,39 +2037,38 @@ function Hunk({
       }}
     >
       <div className="diff-content">
-        <div className="hunk-header">{heading}</div>
         {segments ? (
           <>
             <p id={windowHint} className="visually-hidden">
-              This hunk has {lines.length} lines. Lines load as you scroll. Use Search diff to find
-              text in lines that are not loaded.
+              This file diff has {diff.length} lines. Lines load as you scroll. Use Search diff to
+              find text in lines that are not loaded.
             </p>
             <div
               ref={rowList}
               className="diff-rows"
               role="list"
-              aria-label={lines.length + ' diff lines'}
+              aria-label={diff.length + ' diff lines'}
             >
               {/* Holds the pane as wide as the longest line while that line is not rendered. */}
               <div className="diff-sizer" role="presentation" aria-hidden="true">
                 <span className="comment-gutter" />
                 <span className="gutter" />
                 <span className="gutter" />
-                <span className="code-line">{rowOf?.widest}</span>
+                <span className="code-line">{diff.widest}</span>
               </div>
               {segments.map((segment) => {
                 if (segment.kind === 'gap')
                   return (
                     <div key={segment.key} role="presentation" style={{ height: segment.height }} />
                   );
-                const line = lines[segment.index];
+                const line = diff.rowAt(segment.index);
                 if (!line) return null;
                 const row = renderRow(line, segment.index);
                 return (
                   <div
                     key={segment.index}
                     role="listitem"
-                    aria-setsize={lines.length}
+                    aria-setsize={diff.length}
                     aria-posinset={segment.index + 1}
                     data-row={segment.index}
                     data-plain={row.plain ? '' : undefined}
@@ -1911,6 +2083,7 @@ function Hunk({
           lines.map((line, i) => <Fragment key={i}>{renderRow(line, i).content}</Fragment>)
         )}
       </div>
+      {fileConversations}
     </div>
   );
 }

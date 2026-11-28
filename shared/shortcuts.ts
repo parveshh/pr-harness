@@ -11,7 +11,6 @@ export type ShortcutAction =
   | 'toggle-reviewed'
   | 'comment'
   | 'ask'
-  | 'toggle-full-file'
   | 'show-help';
 
 const bindings: Record<string, ShortcutAction> = {
@@ -25,7 +24,6 @@ const bindings: Record<string, ShortcutAction> = {
   v: 'toggle-reviewed',
   c: 'comment',
   a: 'ask',
-  f: 'toggle-full-file',
   '?': 'show-help',
 };
 
@@ -45,7 +43,6 @@ export const shortcutHelp: readonly { keys: readonly string[]; action: string }[
   { keys: ['v'], action: 'Mark the file reviewed, or clear it' },
   { keys: ['c'], action: 'Comment on the selected lines, or the first changed line of the hunk' },
   { keys: ['a'], action: 'Ask the assistant about the selected lines' },
-  { keys: ['f'], action: 'Switch between Full file and Diff only' },
   { keys: ['?'], action: 'Show this list' },
   { keys: ['Esc'], action: 'Close the comment editor and return to the hunk' },
 ];

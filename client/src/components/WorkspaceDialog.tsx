@@ -6,6 +6,7 @@ export function WorkspaceDialog({
   title,
   onClose,
   children,
+  className,
   busy = false,
   icon,
   wide = false,
@@ -13,6 +14,7 @@ export function WorkspaceDialog({
   title: string;
   onClose: () => void;
   children: ReactNode;
+  className?: string;
   busy?: boolean;
   icon?: ReactNode;
   wide?: boolean;
@@ -27,7 +29,9 @@ export function WorkspaceDialog({
         if (!open) onClose();
       }}
     >
-      <Modal className={wide ? 'repo-dialog review-dialog' : 'repo-dialog'}>
+      <Modal
+        className={['repo-dialog', wide && 'review-dialog', className].filter(Boolean).join(' ')}
+      >
         <Dialog className="dialog-body" aria-label={title}>
           <div className="dialog-head">
             <span className="dialog-emblem">{icon ?? <FolderGit2 size={20} />}</span>

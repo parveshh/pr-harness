@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   discussionLink,
+  type Discussions,
   type DiscussionMessage,
   type DiscussionThread,
   type DiscussionReply,
@@ -10,18 +11,23 @@ import {
 import { pullRequestUrl } from '../shared/reviews.js';
 import { githubApi, replySession, UnconfirmedReply } from './github.js';
 
+// GitHub can omit line coordinates for file-level and outdated comments. An
+// unusable coordinate can prevent line placement without invalidating the message.
+const lineNumber = z.number().int().positive().nullish().catch(null);
+const diffSide = z.enum(['LEFT', 'RIGHT']).nullish().catch(null);
 const comment = z.object({
   id: z.number().int().positive(),
+  node_id: z.string().optional(),
   body: z.string().nullish(),
   user: z.object({ login: z.string() }).nullable(),
   created_at: z.string().optional(),
   submitted_at: z.string().nullish(),
-  path: z.string().optional(),
-  line: z.number().int().positive().nullish(),
-  side: z.enum(['LEFT', 'RIGHT']).nullish(),
-  start_line: z.number().int().positive().nullish(),
-  start_side: z.enum(['LEFT', 'RIGHT']).nullish(),
-  original_line: z.number().int().positive().nullish(),
+  path: z.string().nullish(),
+  line: lineNumber,
+  side: diffSide,
+  start_line: lineNumber,
+  start_side: diffSide,
+  original_line: lineNumber,
   in_reply_to_id: z.number().int().positive().nullish(),
   state: z.string().optional(),
 });
@@ -56,7 +62,7 @@ const reviewThreads = z.object({
               viewerCanResolve: z.boolean(),
               viewerCanUnresolve: z.boolean(),
               comments: z.object({
-                nodes: z.array(z.object({ databaseId: z.number().int().positive().nullable() })),
+                nodes: z.array(z.object({ id: z.string() })),
               }),
             }),
           ),
@@ -68,39 +74,52 @@ const reviewThreads = z.object({
 type Session = Awaited<ReturnType<typeof replySession>>;
 // Maps each review thread's first comment to its resolution. REST comments carry neither
 // the thread ID nor its resolved state, so this is a second, GraphQL read.
-async function threadResolutions(url: string, session: Session, signal: AbortSignal) {
+async function threadResolutions(
+  url: string,
+  session: Session,
+  signal: AbortSignal,
+  unavailable: () => void,
+) {
   const [, owner = '', name = '', , number = ''] = new URL(
     pullRequestUrl.parse(url),
   ).pathname.split('/');
-  const byRoot = new Map<number, ThreadResolution>();
+  const byRoot = new Map<string, ThreadResolution>();
   let after: string | null = null;
-  for (let page = 0; page < 50; page++) {
-    const query: string =
-      'query($owner:String!,$name:String!' +
-      (after ? ',$after:String!' : '') +
-      '){repository(owner:$owner,name:$name){pullRequest(number:' +
-      Number(number) +
-      '){reviewThreads(first:100' +
-      (after ? ',after:$after' : '') +
-      '){pageInfo{hasNextPage endCursor} nodes{id isResolved viewerCanResolve viewerCanUnresolve comments(first:1){nodes{databaseId}}}}}}}';
-    const result: z.infer<typeof reviewThreads> = reviewThreads.parse(
-      JSON.parse(
-        await session.graphql(query, { owner, name, ...(after ? { after } : {}) }, signal),
-      ),
-    );
-    const threads = result.data.repository.pullRequest.reviewThreads;
-    for (const thread of threads.nodes) {
-      const root = thread.comments.nodes[0]?.databaseId;
-      if (root)
-        byRoot.set(root, {
-          node: thread.id,
-          resolved: thread.isResolved,
-          canResolve: thread.viewerCanResolve,
-          canUnresolve: thread.viewerCanUnresolve,
-        });
+  const seen = new Set<string>();
+  try {
+    while (true) {
+      const query: string =
+        'query($owner:String!,$name:String!' +
+        (after ? ',$after:String!' : '') +
+        '){repository(owner:$owner,name:$name){pullRequest(number:' +
+        Number(number) +
+        '){reviewThreads(first:100' +
+        (after ? ',after:$after' : '') +
+        '){pageInfo{hasNextPage endCursor} nodes{id isResolved viewerCanResolve viewerCanUnresolve comments(first:1){nodes{id}}}}}}}';
+      const result: z.infer<typeof reviewThreads> = reviewThreads.parse(
+        JSON.parse(
+          await session.graphql(query, { owner, name, ...(after ? { after } : {}) }, signal),
+        ),
+      );
+      const threads = result.data.repository.pullRequest.reviewThreads;
+      for (const thread of threads.nodes) {
+        const root = thread.comments.nodes[0]?.id;
+        if (root)
+          byRoot.set(root, {
+            node: thread.id,
+            resolved: thread.isResolved,
+            canResolve: thread.viewerCanResolve,
+            canUnresolve: thread.viewerCanUnresolve,
+          });
+      }
+      after = threads.pageInfo.endCursor;
+      if (!threads.pageInfo.hasNextPage) break;
+      if (!after || seen.has(after)) throw Error('GitHub did not advance thread pagination.');
+      seen.add(after);
     }
-    after = threads.pageInfo.endCursor;
-    if (!threads.pageInfo.hasNextPage || !after) return byRoot;
+  } catch {
+    signal.throwIfAborted();
+    unavailable();
   }
   return byRoot;
 }
@@ -115,12 +134,12 @@ export async function listDiscussions(
   signal: AbortSignal,
   connect = replySession,
   identity = activeAccount,
-  pinLines = false,
-) {
+  forReader = false,
+): Promise<Discussions> {
   const session = await connect(signal);
   const routes = endpoints(url);
   async function revision() {
-    if (!pinLines) return null;
+    if (!forReader) return null;
     try {
       const meta = z
         .object({
@@ -135,27 +154,34 @@ export async function listDiscussions(
     }
   }
   const before = await revision();
-  async function pages(endpoint: string) {
+  const unavailable: NonNullable<Discussions['unavailable']> = [];
+  async function readComments(
+    endpoint: string,
+    section: 'inline comments' | 'PR conversation' | 'review summaries',
+  ) {
     const rows = new Map<number, Remote>();
-    for (let page = 1; ; page++) {
+    try {
+      for (let page = 1; ; page++) {
+        signal.throwIfAborted();
+        const batch = comment
+          .array()
+          .parse(JSON.parse(await session.api(endpoint + '?per_page=100&page=' + page, signal)));
+        for (const row of batch) rows.set(row.id, row);
+        if (batch.length < 100) break;
+      }
+    } catch (cause) {
       signal.throwIfAborted();
-      const batch = comment
-        .array()
-        .parse(JSON.parse(await session.api(endpoint + '?per_page=100&page=' + page, signal)));
-      for (const row of batch) rows.set(row.id, row);
-      if (batch.length < 100) break;
+      // Reply reconciliation and agent lookups still require a complete listing.
+      if (!forReader) throw cause;
+      unavailable.push(section);
     }
     return [...rows.values()];
   }
   const [inline, conversation, reviews, resolutions] = await Promise.all([
-    pages(routes.inline),
-    pages(routes.conversation),
-    pages(routes.review),
-    // Comments are still worth showing when their resolved state cannot be read.
-    threadResolutions(url, session, signal).catch(() => {
-      signal.throwIfAborted();
-      return null;
-    }),
+    readComments(routes.inline, 'inline comments'),
+    readComments(routes.conversation, 'PR conversation'),
+    readComments(routes.review, 'review summaries'),
+    threadResolutions(url, session, signal, () => unavailable.push('thread status')),
   ]);
   function thread(kind: DiscussionThread['kind'], row: Remote): DiscussionThread {
     return {
@@ -172,7 +198,10 @@ export async function listDiscussions(
   }
   const threads: DiscussionThread[] = inline
     .filter((r) => !r.in_reply_to_id)
-    .map((row) => ({ ...thread('inline', row), resolution: resolutions?.get(row.id) ?? null }));
+    .map((row) => ({
+      ...thread('inline', row),
+      resolution: row.node_id ? (resolutions.get(row.node_id) ?? null) : null,
+    }));
   const byRoot = new Map(threads.map((t) => [t.id, t]));
   for (const row of inline.filter((r) => r.in_reply_to_id).sort((a, b) => a.id - b.id)) {
     const root = byRoot.get(row.in_reply_to_id ?? 0);
@@ -198,7 +227,12 @@ export async function listDiscussions(
       : null;
   if ((await identity(signal)) !== session.actor)
     throw Error('GitHub account changed. Refresh discussions.');
-  return { account: session.actor, threads, anchorRevision };
+  return {
+    account: session.actor,
+    threads,
+    anchorRevision,
+    ...(unavailable.length && { unavailable }),
+  };
 }
 export async function sendDiscussionReply(
   req: DiscussionReply,

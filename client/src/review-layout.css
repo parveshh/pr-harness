@@ -108,6 +108,37 @@
 .review-menu [data-disabled] {
   opacity: 0.5;
 }
+.repository-actions-menu {
+  min-width: 190px;
+  box-shadow: 0 4px 14px rgb(8 18 20 / 16%);
+}
+.repository-actions-menu [role='menuitem'] {
+  position: relative;
+  gap: 10px;
+  padding: 9px 10px;
+}
+.repository-actions-menu [role='menuitem']:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  inset: auto 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  pointer-events: none;
+}
+.repository-actions-trigger:focus-visible,
+.repository-actions-menu :is([role='menu'], [role='menuitem']):focus-visible {
+  outline: 1px solid var(--control);
+  outline-offset: -1px;
+}
+.repository-actions-menu [role='menuitem']:focus-visible {
+  outline-offset: -2px;
+}
+.repository-actions-dialog :is(button, input, select):focus-visible {
+  outline: 1px solid var(--control);
+  outline-offset: 2px;
+}
+.repository-actions-dialog {
+  width: min(544px, 100%);
+}
 .review-studio .changed-tree .nav-heading {
   padding: 12px 12px 10px;
   gap: 8px;
@@ -221,6 +252,12 @@
   margin-left: auto;
   border: 0;
   padding: 0;
+}
+.file-heading .diff-refresh-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
 }
 .review-center .file-heading > p {
   font-size: 0.65rem;
@@ -547,6 +584,7 @@
   gap: 8px;
 }
 .local-entry small {
+  overflow-wrap: anywhere;
   color: var(--muted);
 }
 .local-repo {
@@ -599,6 +637,9 @@
 }
 .integrated-titlebar .repository-navigation > .sidebar-contents {
   padding-top: 4px;
+}
+.sidebar-contents > nav + nav {
+  margin-top: 16px;
 }
 .repository-navigation .sidebar-title {
   margin: 0 0 6px;
@@ -714,6 +755,14 @@
   border-radius: 8px;
   padding: 7px 8px 7px 30px;
 }
+.sidebar-review-row + .sidebar-review-row::before {
+  content: '';
+  position: absolute;
+  inset: 0 8px auto 30px;
+  height: 1px;
+  background: color-mix(in srgb, var(--line) 70%, transparent);
+  pointer-events: none;
+}
 .sidebar-review-row:hover {
   background: var(--hover);
 }
@@ -797,6 +846,11 @@
   border-radius: 6px;
   padding: 6px 10px;
   font-size: 0.875rem;
+}
+.open-review:enabled:hover,
+.ask-review:enabled:hover {
+  background: var(--hover);
+  color: var(--ink-bright);
 }
 .shell.queue-page main {
   padding: 0 24px 20px;

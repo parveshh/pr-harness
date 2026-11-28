@@ -25,6 +25,7 @@ import { readReviewLayout } from './reviewLayouts.js';
 import { ReviewLayoutPicker } from './components/ReviewLayoutPicker.js';
 import { RepositorySidebar } from './RepositorySidebar.js';
 import { GitPullRequest, Link2, Plus } from 'lucide-react';
+import type { LocalFolder } from '../../shared/local.js';
 import { LocalReviewStart } from './LocalReview.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 import { groupReviews, reviewRepository } from '../../shared/repository-groups.js';
@@ -32,6 +33,17 @@ import { PullRequestQueue } from './PullRequestQueue.js';
 import { ReviewRequests } from './ReviewRequests.js';
 import type { ReviewRequestInbox } from '../../shared/review-requests.js';
 import { Reader, type PrCommand } from './Reader.js';
+import { usePanelRef } from 'react-resizable-panels';
+
+const sidebarWidthKey = 'workspace-repository-width-px';
+function readSidebarWidth() {
+  try {
+    const width = Number(localStorage.getItem(sidebarWidthKey));
+    return Number.isFinite(width) && width > 0 ? width : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const emptyInbox: ReplyInbox = {
   account: null,
@@ -54,6 +66,8 @@ export function Workspace({
   initialType: Typography;
 }) {
   useScrollIndicators();
+  const sidebarPanel = usePanelRef();
+  const [initialSidebarWidth] = useState(readSidebarWidth);
   const [layout, setLayout] = useState(readReviewLayout);
   const [theme, setTheme] = useState(initialTheme);
   const [appearanceError, setAppearanceError] = useState('');
@@ -169,6 +183,7 @@ export function Workspace({
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [reviews, setReviews] = useState<SavedReview[] | null>(null);
   const [repos, setRepos] = useState<Repository[] | null>(null);
+  const [localFolders, setLocalFolders] = useState<LocalFolder[]>([]);
   const [chosenRepo, setChosenRepo] = useState<string | null>(null);
   const [newReview, setNewReview] = useState(false);
   // Which list the main pane shows while no review is open.
@@ -233,7 +248,10 @@ export function Workspace({
     };
   }, [activeUrl]);
   const listedRequests = requests?.state === 'listed' ? requests.requests : null;
-  const groups = useMemo(() => groupReviews(repos ?? [], reviews ?? []), [repos, reviews]);
+  const groups = useMemo(
+    () => groupReviews(repos ?? [], reviews ?? [], localFolders),
+    [repos, reviews, localFolders],
+  );
   const selectedRepo = activeUrl
     ? reviewRepository(activeUrl, reviews?.find((item) => item.url === activeUrl)?.local)
     : chosenRepo && groups.has(chosenRepo)
@@ -245,10 +263,18 @@ export function Workspace({
   const [error, setError] = useState('');
   useEffect(() => {
     let active = true;
-    Promise.all([window.reviewer.listReviews(), window.reviewer.activeReview()])
-      .then(([items, selected]) => {
+    Promise.all([
+      window.reviewer.listReviews(),
+      window.reviewer.activeReview(),
+      window.reviewer.localFolders(),
+    ])
+      .then(([items, selected, folders]) => {
         if (active) {
           setReviews(items);
+          setLocalFolders((added) => [
+            ...folders.filter((folder) => !added.some((item) => item.path === folder.path)),
+            ...added,
+          ]);
           setActiveUrl(selected);
           if (selected)
             setChosenRepo(
@@ -420,6 +446,12 @@ export function Workspace({
     setQueue('repository');
     select(pr);
   }
+  function localReviewStarted(started: string, items: SavedReview[]) {
+    setReviews(items);
+    setNewReview(false);
+    setChosenRepo(reviewRepository(started, items.find((item) => item.url === started)?.local));
+    openSaved(started);
+  }
   function chooseRepository(key: string) {
     setChosenRepo(key);
     setQueue('repository');
@@ -483,13 +515,28 @@ export function Workspace({
   useEffect(() => window.reviewer.onOpenPr((pr) => openFromAlert(pr)), []);
   return (
     <>
-      <ResizablePanelGroup id="workspace-layout" className="studio">
+      <ResizablePanelGroup
+        id="workspace-layout"
+        className="studio"
+        restoreLayout={initialSidebarWidth === undefined}
+        onLayoutChanged={(_, { isUserInteraction }) => {
+          if (!isUserInteraction) return;
+          const width = sidebarPanel.current?.getSize().inPixels;
+          if (width && width > 0) {
+            try {
+              localStorage.setItem(sidebarWidthKey, String(width));
+            } catch {
+              // The divider still works when the renderer cannot write preferences.
+            }
+          }
+        }}
+      >
         <ResizablePanel
           id="workspace-sidebar"
-          defaultSize="19%"
+          panelRef={sidebarPanel}
+          defaultSize={initialSidebarWidth ?? '25%'}
           minSize="202px"
           maxSize="36%"
-          groupResizeBehavior="preserve-pixel-size"
         >
           <RepositorySidebar
             layoutPicker={<ReviewLayoutPicker layout={layout} onChange={setLayout} />}
@@ -521,6 +568,12 @@ export function Workspace({
             repos={repos ?? []}
             setRepos={setRepos}
             groups={[...groups.values()]}
+            onFolderAdded={(folder) => {
+              setLocalFolders((current) =>
+                current.some((item) => item.path === folder.path) ? current : [...current, folder],
+              );
+              chooseRepository(folder.path);
+            }}
             openSaved={openSaved}
             openMonitored={openMonitored}
             selectedRepo={queue === 'requests' && !activeUrl ? null : selectedRepo}
@@ -593,7 +646,7 @@ export function Workspace({
                 <h1>
                   {queue === 'requests'
                     ? 'Review requests'
-                    : reviews?.some((item) => item.local?.path === selectedRepo)
+                    : selectedGroup?.kind === 'local'
                       ? 'Local reviews'
                       : 'Pull requests'}
                 </h1>
@@ -621,12 +674,22 @@ export function Workspace({
                 ) : (repos === null && !selectedRepo) || reviews === null ? (
                   <p role="status">{error ? 'Workspace unavailable.' : 'Loading workspace…'}</p>
                 ) : selectedGroup ? (
-                  <PullRequestQueue
-                    group={selectedGroup}
-                    onError={setError}
-                    open={openMonitored}
-                    openSaved={openSaved}
-                  />
+                  <>
+                    {selectedGroup.kind === 'local' && (
+                      <LocalReviewStart
+                        key={selectedGroup.key}
+                        savedPath={selectedGroup.key}
+                        disabled={false}
+                        onStarted={localReviewStarted}
+                      />
+                    )}
+                    <PullRequestQueue
+                      group={selectedGroup}
+                      onError={setError}
+                      open={openMonitored}
+                      openSaved={openSaved}
+                    />
+                  </>
                 ) : (
                   <div className="queue-empty">
                     <GitPullRequest size={26} />
@@ -666,21 +729,7 @@ export function Workspace({
                       </button>
                     </div>
                   </form>
-                  <LocalReviewStart
-                    disabled={reviews === null}
-                    onStarted={(started, items) => {
-                      setReviews(items);
-                      setNewReview(false);
-                      setQueue('repository');
-                      setChosenRepo(
-                        reviewRepository(
-                          started,
-                          items.find((item) => item.url === started)?.local,
-                        ),
-                      );
-                      select(started);
-                    }}
-                  />
+                  <LocalReviewStart disabled={reviews === null} onStarted={localReviewStarted} />
                   {error && <p role="alert">{error}</p>}
                 </WorkspaceDialog>
               )}

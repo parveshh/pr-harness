@@ -9,13 +9,25 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { Button, Dialog, DialogTrigger, Input, Popover, TextField } from 'react-aria-components';
+import {
+  Button,
+  Dialog,
+  DialogTrigger,
+  Input,
+  Menu,
+  MenuItem,
+  MenuTrigger,
+  Popover,
+  TextField,
+} from 'react-aria-components';
 import { login, readableError, repoName, type Repository } from '../../shared/assistant.js';
 
 import {
   Folder,
   Inbox,
   FolderOpen,
+  FolderPlus,
+  Minus,
   ChevronRight,
   ChevronDown,
   Search,
@@ -32,6 +44,7 @@ import {
 } from 'lucide-react';
 import type { ApprovalStage, SavedReview } from '../../shared/reviews.js';
 import { CommitLink, DraftLabel, PrNumberLink, formatPrDate } from './components/PrMetadata.js';
+import type { LocalFolder } from '../../shared/local.js';
 import type { RepositoryGroup } from '../../shared/repository-groups.js';
 import { WorkspaceDialog } from './components/WorkspaceDialog.js';
 
@@ -42,6 +55,7 @@ export function RepositorySidebar({
   groups,
   openSaved,
   openMonitored,
+  onFolderAdded,
   selectedRepo,
   chooseRepository,
   requestCount,
@@ -61,6 +75,7 @@ export function RepositorySidebar({
   repos: Repository[];
   setRepos: Dispatch<SetStateAction<Repository[] | null>>;
   groups: RepositoryGroup[];
+  onFolderAdded: (folder: LocalFolder) => void;
   openSaved: (url: string) => void;
   openMonitored: (url: string) => void;
   selectedRepo: string | null;
@@ -80,20 +95,39 @@ export function RepositorySidebar({
   unread: number;
 }) {
   const [adding, setAdding] = useState(false),
+    [removeName, setRemoveName] = useState<string | null>(null),
     [name, setName] = useState(''),
+    [addError, setAddError] = useState(''),
     [comparison, setComparison] = useState<string | null>(null),
     [manage, setManage] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [showRepositories, setShowRepositories] = useState(true);
-  const [lastActive, setLastActive] = useState(activeUrl);
-  if (activeUrl !== lastActive) {
-    setLastActive(activeUrl);
-    if (activeUrl) setShowRepositories(true);
+  const [showLocalFolders, setShowLocalFolders] = useState(true);
+  const activeKind = activeUrl ? groups.find((group) => group.key === selectedRepo)?.kind : null;
+  const [lastActive, setLastActive] = useState({ activeUrl, activeKind });
+  if (activeUrl !== lastActive.activeUrl || activeKind !== lastActive.activeKind) {
+    setLastActive({ activeUrl, activeKind });
+    if (activeKind === 'local') setShowLocalFolders(true);
+    if (activeKind === 'github') setShowRepositories(true);
   }
   const selected = repos.find((r) => r.name === manage);
-  function openAdd() {
+  function addFolder() {
+    setBusy(true);
     setError('');
+    window.reviewer
+      .addLocalFolder()
+      .then((folder) => {
+        if (folder) {
+          setShowLocalFolders(true);
+          onFolderAdded(folder);
+        }
+      })
+      .catch((e: unknown) => setError(readableError(e)))
+      .finally(() => setBusy(false));
+  }
+  function openAdd() {
+    setAddError('');
     setName('');
     setAdding(true);
   }
@@ -151,22 +185,22 @@ export function RepositorySidebar({
       alive = false;
     };
   }, [activeUrl, setRepos]);
-  function update(work: () => Promise<Repository[]>, done?: () => void) {
+  function update(work: () => Promise<Repository[]>, done?: () => void, reportError = setError) {
     setBusy(true);
-    setError('');
+    reportError('');
     work()
       .then((rows) => {
         setRepos(rows);
         done?.();
       })
-      .catch((e) => setError(readableError(e)))
+      .catch((e) => reportError(readableError(e)))
       .finally(() => setBusy(false));
   }
   function add(e: FormEvent) {
     e.preventDefault();
     const parsed = repoName.safeParse(name);
     if (!parsed.success) {
-      setError('Enter owner/repository or its GitHub URL.');
+      setAddError('Enter owner/repository or its GitHub URL.');
       return;
     }
     if (busy) return;
@@ -179,6 +213,7 @@ export function RepositorySidebar({
         chooseRepository(parsed.data);
         setManage(parsed.data);
       },
+      setAddError,
     );
   }
   return (
@@ -237,64 +272,122 @@ export function RepositorySidebar({
             </span>
           )}
         </div>
-        <nav aria-label="Repositories">
-          <div className="sidebar-title">
-            <h2>
-              <button
-                className="repositories-disclosure"
-                aria-expanded={showRepositories}
-                aria-controls="repository-folders"
-                onClick={() => setShowRepositories(!showRepositories)}
-              >
-                Repositories{' '}
-                {showRepositories ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-              </button>
-            </h2>
-            <button aria-label="Add repository" title="Add repository" onClick={openAdd}>
-              <Plus size={16} />
-            </button>
-          </div>
-          <div id="repository-folders" hidden={!showRepositories}>
-            {groups.map((group) => (
-              <RepositoryFolder
-                key={group.key}
-                group={group}
-                activeUrl={selectedRepo === group.key ? activeUrl : null}
-                currentQueue={!activeUrl && selectedRepo === group.key && !repliesPane}
-                choose={() => chooseRepository(group.key)}
-                manage={() => {
-                  setError('');
-                  setManage(group.key);
-                }}
-                openSaved={openSaved}
-                openMonitored={openMonitored}
-                onError={setError}
-              />
-            ))}
-          </div>
-        </nav>
-        {error && !manage && !adding && <p role="alert">{error}</p>}
+        {(['github', 'local'] as const).map((kind) => {
+          const github = kind === 'github';
+          const title = github ? 'Repositories' : 'Local folders';
+          const expanded = github ? showRepositories : showLocalFolders;
+          const setExpanded = github ? setShowRepositories : setShowLocalFolders;
+          const id = github ? 'repository-folders' : 'local-folders';
+          return (
+            <nav key={kind} aria-label={title}>
+              <div className="sidebar-title">
+                <h2>
+                  <button
+                    className="repositories-disclosure"
+                    aria-expanded={expanded}
+                    aria-controls={id}
+                    onClick={() => setExpanded(!expanded)}
+                  >
+                    {title} {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  </button>
+                </h2>
+                {github && (
+                  <MenuTrigger>
+                    <Button
+                      className="repository-actions-trigger"
+                      aria-label="Repository actions"
+                      isDisabled={busy}
+                    >
+                      <Plus size={16}>
+                        <title>Repository actions</title>
+                      </Plus>
+                    </Button>
+                    <Popover placement="bottom end" className="review-menu repository-actions-menu">
+                      <Menu aria-label="Repository actions">
+                        <MenuItem onAction={openAdd}>
+                          <Plus size={15} /> Add repository
+                        </MenuItem>
+                        <MenuItem
+                          isDisabled={!repos.length}
+                          onAction={() => {
+                            setError('');
+                            setRemoveName(
+                              repos.find((repo) => repo.name === selectedRepo)?.name ??
+                                repos[0]?.name ??
+                                '',
+                            );
+                          }}
+                        >
+                          <Minus size={15} /> Remove repository
+                        </MenuItem>
+                        <MenuItem onAction={addFolder}>
+                          <FolderPlus size={15} /> Add local folder
+                        </MenuItem>
+                      </Menu>
+                    </Popover>
+                  </MenuTrigger>
+                )}
+              </div>
+              <div id={id} hidden={!expanded}>
+                {groups
+                  .filter((group) => group.kind === kind)
+                  .map((group) => (
+                    <RepositoryFolder
+                      key={group.key}
+                      group={group}
+                      activeUrl={selectedRepo === group.key ? activeUrl : null}
+                      currentQueue={!activeUrl && selectedRepo === group.key && !repliesPane}
+                      choose={() => chooseRepository(group.key)}
+                      manage={() => {
+                        setError('');
+                        setManage(group.key);
+                      }}
+                      openSaved={openSaved}
+                      openMonitored={openMonitored}
+                      onError={setError}
+                    />
+                  ))}
+              </div>
+            </nav>
+          );
+        })}
+        {error && !manage && !adding && removeName === null && <p role="alert">{error}</p>}
       </div>
       {repliesPane}
       {comparison && (
         <CrossPrComparison key={comparison} repo={comparison} close={() => setComparison(null)} />
       )}
       {adding && (
-        <WorkspaceDialog title="Add repository" busy={busy} onClose={() => setAdding(false)}>
+        <WorkspaceDialog
+          className="repository-actions-dialog"
+          title="Add repository"
+          busy={busy}
+          onClose={() => setAdding(false)}
+        >
           <p>Connect a GitHub repository, then choose whose pull requests to follow.</p>
           <form onSubmit={add} className="dialog-form">
             <label htmlFor="repo-add">Repository</label>
             <input
               id="repo-add"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              disabled={busy}
+              aria-invalid={!!addError}
+              aria-describedby={addError ? 'repo-add-error' : undefined}
+              onChange={(e) => {
+                setName(e.target.value);
+                setAddError('');
+              }}
               placeholder="owner/repository or GitHub URL"
               autoFocus
               autoComplete="off"
               spellCheck={false}
               required
             />
-            {error && <p role="alert">{error}</p>}
+            {addError && (
+              <p id="repo-add-error" role="alert">
+                {addError}
+              </p>
+            )}
             <div className="dialog-actions">
               <button
                 type="button"
@@ -311,8 +404,59 @@ export function RepositorySidebar({
           </form>
         </WorkspaceDialog>
       )}
+      {removeName !== null && (
+        <WorkspaceDialog
+          className="repository-actions-dialog"
+          title="Remove repository"
+          busy={busy}
+          onClose={() => setRemoveName(null)}
+        >
+          <form
+            className="dialog-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!busy && repos.some((repo) => repo.name === removeName))
+                update(
+                  () => window.reviewer.removeRepository(removeName),
+                  () => setRemoveName(null),
+                );
+            }}
+          >
+            <label htmlFor="repo-remove">Repository</label>
+            <select
+              id="repo-remove"
+              value={removeName}
+              onChange={(e) => setRemoveName(e.target.value)}
+              disabled={busy}
+            >
+              {repos.map((repo) => (
+                <option key={repo.name}>{repo.name}</option>
+              ))}
+            </select>
+            <p>Stop following this repository. Saved reviews stay in your workspace.</p>
+            {error && <p role="alert">{error}</p>}
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="quiet"
+                disabled={busy}
+                onClick={() => setRemoveName(null)}
+              >
+                Cancel
+              </button>
+              <button disabled={busy || !repos.some((repo) => repo.name === removeName)}>
+                Remove repository
+              </button>
+            </div>
+          </form>
+        </WorkspaceDialog>
+      )}
       {selected && (
-        <WorkspaceDialog title={selected.name} onClose={() => setManage(null)}>
+        <WorkspaceDialog
+          className="repository-actions-dialog"
+          title={selected.name}
+          onClose={() => setManage(null)}
+        >
           <button
             className="quiet"
             onClick={() => {

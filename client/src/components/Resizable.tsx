@@ -27,7 +27,11 @@ const layoutStorage = {
   },
 };
 
-export function ResizablePanelGroup({ id, ...props }: GroupProps & { id: string }) {
+export function ResizablePanelGroup({
+  id,
+  restoreLayout = true,
+  ...props
+}: GroupProps & { id: string; restoreLayout?: boolean }) {
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id,
     storage: layoutStorage,
@@ -38,8 +42,8 @@ export function ResizablePanelGroup({ id, ...props }: GroupProps & { id: string 
       {...props}
       id={id}
       orientation="horizontal"
-      defaultLayout={defaultLayout}
-      onLayoutChanged={onLayoutChanged}
+      defaultLayout={restoreLayout ? defaultLayout : undefined}
+      onLayoutChanged={props.onLayoutChanged ?? onLayoutChanged}
       resizeTargetMinimumSize={{ coarse: 44, fine: 12 }}
       onPointerCancel={(event) => {
         if (event.currentTarget.querySelector(':scope > [data-separator="active"]')) {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { discussions } from '../shared/discussions.js';
 import { listDiscussions, resolveDiscussion, sendDiscussionReply } from './discussions.js';
 
 await test('discussion pagination, reply targets, account switching and recovery after a lost receipt', async () => {
@@ -103,13 +104,14 @@ await test('review threads carry their resolved state across pages and can be re
     created_at: '2026-01-01T00:00:00Z',
     path: 'src/feature.ts',
     line: id,
+    node_id: 'comment_' + id,
   });
   const node = (id: string, root: number | null) => ({
     id,
     isResolved: resolved.has(id),
     viewerCanResolve: !resolved.has(id),
     viewerCanUnresolve: resolved.has(id),
-    comments: { nodes: root ? [{ databaseId: root }] : [] },
+    comments: { nodes: root ? [{ id: 'comment_' + root }] : [] },
   });
   const connect = () =>
     Promise.resolve({
@@ -191,4 +193,87 @@ await test('review threads carry their resolved state across pages and can be re
     resolveDiscussion({ ...request, node: 'T_gone' }, signal, connect),
     /did not confirm/,
   );
+});
+
+await test('inline comments remain readable when the review summaries request fails', async () => {
+  const identity = () => Promise.resolve('alice');
+  const connect = () =>
+    Promise.resolve({
+      actor: 'alice',
+      serverTime: 0,
+      api: (path: string) => {
+        if (path.includes('/reviews?'))
+          return Promise.reject(Error('review summaries unavailable'));
+        if (path.includes('/pulls/7/comments?'))
+          return Promise.resolve(
+            JSON.stringify([
+              {
+                id: 1,
+                user: { login: 'alice' },
+                node_id: 'C_1',
+                body: 'Resolved on an older diff.',
+                path: 'src/feature.ts',
+                line: 0,
+                original_line: 28,
+                side: 'RIGHT',
+              },
+            ]),
+          );
+        if (path.endsWith('/pulls/7'))
+          return Promise.resolve(
+            JSON.stringify({ head: { sha: 'head' }, base: { sha: 'base', ref: 'main' } }),
+          );
+        return Promise.resolve('[]');
+      },
+      graphql: (_query: string, variables: Record<string, string>) =>
+        variables.after
+          ? Promise.reject(Error('Later thread statuses unavailable'))
+          : Promise.resolve(
+              JSON.stringify({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      reviewThreads: {
+                        pageInfo: { hasNextPage: true, endCursor: 'next' },
+                        nodes: [
+                          {
+                            id: 'T_1',
+                            isResolved: true,
+                            viewerCanResolve: false,
+                            viewerCanUnresolve: true,
+                            comments: { nodes: [{ id: 'C_1' }] },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+      postComment: () => Promise.reject(Error('unused')),
+    });
+  const result = discussions.parse(
+    await listDiscussions(
+      'https://github.com/example/project/pull/7',
+      new AbortController().signal,
+      connect,
+      identity,
+      true,
+    ),
+  );
+  assert.equal(result.threads[0]?.messages[0]?.body, 'Resolved on an older diff.');
+  assert.equal(result.threads[0]?.resolution?.resolved, true);
+  assert.equal(result.threads[0]?.line, null);
+  assert.equal(result.threads[0]?.originalLine, 28);
+  assert.deepEqual(result.unavailable?.sort(), ['review summaries', 'thread status']);
+  await assert.rejects(
+    listDiscussions(
+      'https://github.com/example/project/pull/7',
+      new AbortController().signal,
+      connect,
+      identity,
+    ),
+    /review summaries unavailable/,
+  );
+  assert.deepEqual(result.anchorRevision, { head: 'head', base: 'base', baseBranch: 'main' });
 });

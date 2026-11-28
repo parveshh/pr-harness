@@ -8,6 +8,7 @@ import {
   metadata,
   splitHunks,
   type ReaderView,
+  type FileInfo,
 } from '../shared/reader.js';
 import {
   diffSearchRequest,
@@ -96,20 +97,36 @@ export function readerStore(db: DatabaseSync) {
       url: string,
       snapshot: Snapshot,
       heads: HeadComparison = { ancestry: 'unknown', partial: true, files: [] },
+      reopenFile?: Pick<FileInfo, 'path' | 'previousPath'>,
     ) {
       db.exec('BEGIN IMMEDIATE');
       try {
         const previous = db.prepare('SELECT selected,revision FROM snapshots WHERE url=?').get(url);
         const advanced = !!previous && previous.revision !== snapshot.revision;
         if (advanced) revisions.archive(url);
-        const selected =
-          snapshot.files.find((f) => f.info.path === previous?.selected)?.info.path ??
-          snapshot.files[0]?.info.path ??
-          null;
+        let selected = snapshot.files.find(
+          (f) => f.info.path === (reopenFile?.path ?? previous?.selected),
+        )?.info.path;
+        if (reopenFile && !selected) {
+          const original = reopenFile.previousPath ?? reopenFile.path;
+          const matches = snapshot.files.filter(
+            ({ info }) => info.previousPath === original || info.path === original,
+          );
+          if (matches.length !== 1 || !matches[0])
+            throw Error(
+              'Could not find this file in the updated local diff. Use Refresh to review the other changes.',
+            );
+          selected = matches[0].info.path;
+        }
         db.prepare(
           `INSERT INTO snapshots VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET
           revision=excluded.revision,meta=excluded.meta,selected=excluded.selected`,
-        ).run(url, snapshot.revision, JSON.stringify(snapshot.meta), selected);
+        ).run(
+          url,
+          snapshot.revision,
+          JSON.stringify(snapshot.meta),
+          selected ?? snapshot.files[0]?.info.path ?? null,
+        );
         saveDraftStatus(db, url, snapshot.meta.isDraft);
         revisions.begin(url, snapshot.revision);
         const old = new Map(
@@ -120,6 +137,7 @@ export function readerStore(db: DatabaseSync) {
             .all(url)
             .map((row) => [String(row.path), row]),
         );
+        const reopenedPosition = reopenFile ? old.get(reopenFile.path) : undefined;
         const absent = new Map(
           db
             .prepare(
@@ -178,6 +196,12 @@ export function readerStore(db: DatabaseSync) {
                 hunks.findIndex((h) => !previousHunks.has(h)),
               )
             : 0;
+          const position =
+            file.info.path === selected && reopenedPosition
+              ? reopenedPosition
+              : restored
+                ? returning
+                : undefined;
           insert.run(
             url,
             file.info.path,
@@ -188,8 +212,10 @@ export function readerStore(db: DatabaseSync) {
             hunks.length,
             lastReviewed,
             Number(verifiable && lastReviewed === file.signature),
-            restored ? Number(returning.hunk) : firstChanged,
-            restored ? Number(returning.scroll) : 0,
+            position
+              ? Math.min(Number(position.hunk), Math.max(0, hunks.length - 1))
+              : firstChanged,
+            position ? Number(position.scroll) : 0,
           );
         }
         const remove = db.prepare('DELETE FROM review_files WHERE url=? AND path=?');
@@ -201,7 +227,7 @@ export function readerStore(db: DatabaseSync) {
           remove.run(url, path);
         }
         if (advanced) {
-          revisions.compare(url, snapshot, heads);
+          revisions.compare(url, snapshot, heads, !reopenFile);
           revisions.reattach(url, snapshot);
         }
         questions.sync(url, snapshot.revision, snapshot.meta);

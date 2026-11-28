@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { localFolder, type LocalFolder } from '../shared/local.js';
 import { localReviewKey } from '../shared/reviews.js';
 
 // Local branch reviews are keyed by an opaque `local://` id. The repository path lives only
@@ -18,6 +19,12 @@ CREATE TABLE IF NOT EXISTS local_reviews (
   detached TEXT
 ) STRICT;
 CREATE INDEX IF NOT EXISTS local_reviews_repo ON local_reviews(repo_path, base_ref);`;
+export const localFolderMigration = `
+CREATE TABLE IF NOT EXISTS local_folders (
+  path TEXT PRIMARY KEY, repository TEXT NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO local_folders SELECT repo_path, COALESCE(NULLIF(repository, ''), repo_path) FROM local_reviews;
+PRAGMA user_version=29;`;
 const replyTracking = `
 DROP VIEW IF EXISTS tracked_pulls;
 CREATE VIEW tracked_pulls AS SELECT url FROM saved_reviews WHERE url LIKE 'https://github.com/%' UNION SELECT 'https://github.com/'||name||'/pull/'||json_extract(p.value,'$.number') FROM repositories,json_each(pulls) p,json_each(watching) w WHERE json_extract(p.value,'$.author')=w.value;
@@ -73,8 +80,29 @@ export function localStore(db: DatabaseSync) {
     const found = db.prepare('SELECT ' + columns + ' FROM local_reviews WHERE url=?').get(url);
     return found ? row.parse(found) : null;
   }
+  function addFolder(folder: LocalFolder) {
+    db.prepare('INSERT OR IGNORE INTO local_folders (path, repository) VALUES (?, ?)').run(
+      folder.path,
+      folder.repository || folder.path,
+    );
+  }
   return {
     get,
+    addFolder,
+    folders() {
+      return localFolder
+        .array()
+        .parse(
+          db.prepare('SELECT path, repository FROM local_folders ORDER BY repository, path').all(),
+        );
+    },
+    requireFolder(input: unknown) {
+      const found = db
+        .prepare('SELECT path, repository FROM local_folders WHERE path=?')
+        .get(z.string().parse(input));
+      if (!found) throw Error('Add this local folder first.');
+      return localFolder.parse(found);
+    },
     require(input: unknown) {
       const review = get(input);
       if (!review) throw Error('This local review is no longer saved.');
@@ -85,6 +113,7 @@ export function localStore(db: DatabaseSync) {
     save(input: Omit<LocalReview, 'url'>) {
       db.exec('BEGIN IMMEDIATE');
       try {
+        addFolder(input);
         const existing = db
           .prepare(
             'SELECT url FROM local_reviews WHERE repo_path=? AND base_ref=? AND branch IS ? AND detached IS ? ORDER BY created LIMIT 1',

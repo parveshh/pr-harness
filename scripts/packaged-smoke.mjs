@@ -18,6 +18,11 @@ try {
     const page = await app.firstWindow();
     await page.getByRole('heading', { name: 'Pull requests' }).waitFor();
     assert.equal(await app.evaluate(({ app }) => app.isPackaged), true);
+    if (process.platform === 'darwin')
+      assert.equal(
+        await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.items[0]?.label),
+        'Local Reviewer',
+      );
     await page.context().setOffline(true);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const settings = page.getByRole('dialog', { name: 'Settings' });

@@ -1013,9 +1013,13 @@
   font-size: 0.6875rem;
   font-weight: 600;
 }
-/* A resolved thread stays readable but steps back. */
-.pr-discussion[data-resolved] .discussion-message {
-  opacity: 0.62;
+.file-conversations {
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+}
+.file-conversations h3 {
+  font-size: 0.875rem;
+  margin: 0 0 4px;
 }
 /* Pipeline: the title bar button, and the runs, jobs and steps behind it. */
 .pipeline-trigger {

@@ -12,6 +12,7 @@ import { localReviewKey } from '../shared/reviews.js';
 import {
   insideFolder,
   inspectRepository,
+  repositoryRoot,
   LocalReviewError,
   localSnapshot,
 } from './local-branch.js';
@@ -30,6 +31,13 @@ export type LocalPlatform = {
 
 const version = z.number().int().nonnegative();
 const revision = z.string().min(1).max(400);
+
+async function checkFolderLocation(path: string) {
+  if ((await realpath(path).catch(() => null)) !== path)
+    throw new LocalReviewError(
+      'This folder moved or is unavailable. Choose its current location using Add local folder.',
+    );
+}
 
 export function localOperations(store: Store, platform: LocalPlatform) {
   const { signal } = platform;
@@ -67,10 +75,22 @@ export function localOperations(store: Store, platform: LocalPlatform) {
   }
 
   return {
-    async choose() {
-      const folder = await platform.chooseFolder();
+    async addFolder() {
+      const selected = await platform.chooseFolder();
+      if (!selected) return null;
+      const path = await repositoryRoot(selected, signal);
+      const folder = { path, repository: basename(path) || path };
+      store.local.addFolder(folder);
+      return folder;
+    },
+    async choose(savedPath?: unknown) {
+      const folder =
+        savedPath === undefined
+          ? await platform.chooseFolder()
+          : store.local.requireFolder(savedPath).path;
       if (!folder) return null;
       candidate = undefined;
+      if (savedPath !== undefined) await checkFolderLocation(folder);
       const info = await inspectRepository(folder, signal);
       if (!info.bases.length)
         throw new LocalReviewError(
@@ -94,6 +114,7 @@ export function localOperations(store: Store, platform: LocalPlatform) {
       if (chosen?.id !== request.id) throw Error('Choose the repository folder again.');
       const base = chosen.bases.find((b) => b.ref === request.base);
       if (!base) throw Error('Choose a base branch from the list.');
+      await checkFolderLocation(chosen.root);
       const snapshot = await localSnapshot(chosen.root, base.ref, signal);
       // The review is keyed by what the dialog showed: the branch, or the detached commit.
       const moved =

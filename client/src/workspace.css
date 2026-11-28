@@ -82,7 +82,7 @@ button {
   font-size: 0.875rem;
   font-weight: 600;
 }
-button:hover {
+button:where(:enabled:hover) {
   background: var(--control-hover);
 }
 button:disabled {

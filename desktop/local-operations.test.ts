@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -81,6 +82,52 @@ async function started(t: TestContext) {
   store.reader.select(url);
   return { root, store, operations, state, outside, url, shell };
 }
+
+await test('adding a folder persists it once and allows a review without choosing it again', async (t) => {
+  const root = repository(t);
+  const { shell, outside } = platform(t, root);
+  const dbFile = join(outside, 'workspace.sqlite');
+  const initial = openStore(dbFile);
+  try {
+    const operations = localOperations(initial, shell);
+    const folder = await operations.addFolder();
+    assert.equal(folder?.path, root);
+    await operations.addFolder();
+    assert.deepEqual(initial.local.folders(), [folder]);
+    assert.deepEqual(initial.list(), []);
+  } finally {
+    initial.close();
+  }
+  const reopened = openStore(dbFile);
+  t.after(() => reopened.close());
+  shell.chooseFolder = () => Promise.resolve(null);
+  const operations = localOperations(reopened, shell);
+  assert.equal(await operations.addFolder(), null);
+  await assert.rejects(operations.choose(outside), /Add this local folder first/);
+  const candidate = await operations.choose(root);
+  assert.equal(candidate?.branch, 'topic');
+  const started = await operations.start({ id: candidate?.id, base: 'refs/heads/main' });
+  assert.equal(started.reviews[0]?.local?.path, root);
+});
+
+await test('a saved folder moved behind a symlink must be chosen again', async (t) => {
+  const root = repository(t);
+  const { shell, outside } = platform(t, root);
+  const store = openStore(':memory:');
+  t.after(() => store.close());
+  const operations = localOperations(store, shell);
+  await operations.addFolder();
+  const candidate = await operations.choose(root);
+  const moved = join(outside, 'moved');
+  renameSync(root, moved);
+  symlinkSync(moved, root, 'junction');
+  await assert.rejects(
+    operations.start({ id: candidate?.id, base: 'refs/heads/main' }),
+    /current location/,
+  );
+  await assert.rejects(operations.choose(root), /current location/);
+  assert.deepEqual(store.list(), []);
+});
 
 await test('starting refuses a clone that switched branches after it was chosen', async (t) => {
   const root = repository(t);

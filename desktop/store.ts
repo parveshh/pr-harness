@@ -18,7 +18,12 @@ import {
 } from './assistant-store.js';
 import { readerMigration, readerStore } from './reader-store.js';
 import { pullRequestUrl, reviewList } from '../shared/reviews.js';
-import { ensureLocalReviewSchema, localReviewMigration, localStore } from './local-store.js';
+import {
+  ensureLocalReviewSchema,
+  localFolderMigration,
+  localReviewMigration,
+  localStore,
+} from './local-store.js';
 import {
   ensureReviewRequestSchema,
   reviewRequestMigration,
@@ -30,7 +35,7 @@ export function openStore(filename: string) {
   try {
     db.exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || version < 0 || version > 27)
+    if (typeof version !== 'number' || version < 0 || version > 29)
       throw new Error('This workspace requires a newer Local Reviewer.');
     if (version === 0) {
       db.exec(`CREATE TABLE saved_reviews (url TEXT PRIMARY KEY, saved_at TEXT NOT NULL) STRICT;
@@ -111,7 +116,13 @@ export function openStore(filename: string) {
         );
       db.exec('PRAGMA user_version=27');
     }
+    // Old pixel offsets were relative to one hunk. Resume at its first row in the full file.
+    if (version < 28)
+      db.exec(
+        'UPDATE review_files SET scroll=0; UPDATE absent_files SET scroll=0; PRAGMA user_version=28',
+      );
     ensureLocalReviewSchema(db);
+    if (version < 29) db.exec(localFolderMigration);
     ensureReviewRequestSchema(db);
     if (version === 0)
       db.prepare('UPDATE workspace SET appearance=?, accent=? WHERE id=1').run('ink', 'green');

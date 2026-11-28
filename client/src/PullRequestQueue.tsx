@@ -106,7 +106,7 @@ export function PullRequestRow({
 }
 
 export function PullRequestQueue({
-  group: { key: repository, monitored, pulls, saved },
+  group: { kind, key: repository, monitored, pulls, saved },
   open,
   openSaved,
   onError,
@@ -181,7 +181,7 @@ export function PullRequestQueue({
           ))}
         </section>
       )}
-      {!pulls.length && !saved.length && (
+      {kind === 'github' && !pulls.length && !saved.length && (
         <div className="queue-empty">
           <GitPullRequest size={26} />
           <h2>

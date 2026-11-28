@@ -36,7 +36,6 @@ await test('each key maps to its reader action', () => {
     v: 'toggle-reviewed',
     c: 'comment',
     a: 'ask',
-    f: 'toggle-full-file',
     '?': 'show-help',
   };
   for (const [key, action] of Object.entries(expected))
